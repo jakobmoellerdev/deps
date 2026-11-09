@@ -15,8 +15,11 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -168,9 +171,9 @@ func (l Locker) Process(ctx context.Context, dir string, manifests, files map[st
 // (locks) alike, to exactly the update's version: `composer update <name>:<version>…
 // --with-dependencies --minimal-changes`, so only those packages move, and their dependencies
 // only where the new versions need it; the inline constraint keeps Composer from locking a
-// newer version the rewritten constraint admits. Without updates (a patched manifest only)
-// `composer update --lock` refreshes the lock's content-hash. It returns the lockfile when it
-// changed.
+// newer version the rewritten constraint admits. Composer before 2.7 lacks --minimal-changes
+// and runs without it (updateFlags). Without updates (a patched manifest only) `composer
+// update --lock` refreshes the lock's content-hash. It returns the lockfile when it changed.
 func (Locker) ProcessUpdates(ctx context.Context, dir string, manifests, files map[string][]byte, ups, locks map[string][]dep.Update) (map[string][]byte, error) {
 	orig, ok := files[lockFile]
 	if !ok {
@@ -195,9 +198,62 @@ func (Locker) ProcessUpdates(ctx context.Context, dir string, manifests, files m
 	}
 	args := []string{"update", "--lock"}
 	if len(pkgs) > 0 {
-		args = append(append([]string{"update"}, pkgs...), "--with-dependencies", "--minimal-changes")
+		extra, err := updateFlags(ctx)
+		if err != nil {
+			return nil, err
+		}
+		args = slices.Concat([]string{"update"}, pkgs, extra)
 	}
 	return run(ctx, dir, src, orig, args)
+}
+
+// composerVersion matches the version `composer --version` prints ("Composer version 2.8.4
+// 2024-12-11 11:57:23", "Composer 1.10.27 2023-09-29").
+var composerVersion = regexp.MustCompile(`Composer (?:version )?(\d+)\.(\d+)`)
+
+// versions caches the [major, minor] version of each composer binary by path.
+var versions sync.Map
+
+// updateFlags returns the flags of a `composer update <name>:<version>…`: --with-dependencies,
+// and --minimal-changes from Composer 2.7 on. Before 2.7 the updated packages still move to
+// exactly their versions, but their dependencies may move to the newest versions the
+// constraints admit; Composer 1 is refused. A version that cannot be read counts as current.
+func updateFlags(ctx context.Context) ([]string, error) {
+	bin, err := exec.LookPath("composer")
+	if err != nil {
+		return nil, fmt.Errorf("composer not found (needed to update %s)", lockFile)
+	}
+	v, ok := versions.Load(bin)
+	if !ok {
+		v = readVersion(ctx, bin)
+		versions.Store(bin, v)
+	}
+	switch ver := v.([2]int); {
+	case ver[0] == 0:
+		return []string{"--with-dependencies", "--minimal-changes"}, nil
+	case ver[0] < 2:
+		return nil, fmt.Errorf("composer %d.%d cannot update %s: deps needs Composer 2.7 or later (2.0 to 2.6 without --minimal-changes)", ver[0], ver[1], lockFile)
+	case ver[0] == 2 && ver[1] < 7:
+		slog.DebugContext(ctx, "composer before 2.7: updating without --minimal-changes", "version", fmt.Sprintf("%d.%d", ver[0], ver[1]))
+		return []string{"--with-dependencies"}, nil
+	default:
+		return []string{"--with-dependencies", "--minimal-changes"}, nil
+	}
+}
+
+// readVersion returns the [major, minor] version `bin --version` prints, or zeros.
+func readVersion(ctx context.Context, bin string) [2]int {
+	cmd, cancel := toolrun.Command(ctx, bin, "--version", "--no-ansi")
+	defer cancel()
+	cmd.Env = toolrun.Env("COMPOSER_NO_INTERACTION=1", "NO_COLOR=1")
+	out, _ := cmd.CombinedOutput()
+	m := composerVersion.FindSubmatch(out)
+	if m == nil {
+		return [2]int{}
+	}
+	major, _ := strconv.Atoi(string(m[1]))
+	minor, _ := strconv.Atoi(string(m[2]))
+	return [2]int{major, minor}
 }
 
 // Maintain implements engine.LockMaintainer (lockFileMaintenance): `composer update` in a copy

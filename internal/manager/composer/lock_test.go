@@ -79,7 +79,8 @@ func TestLockRoots(t *testing.T) {
 
 // stub installs a fake composer on PATH (only it: it uses shell builtins) that logs its
 // arguments, the COMPOSER file and what of the mirror is visible, and appends its arguments
-// to composer.lock; with STUB_FAIL set it fails, with STUB_NOOP it changes nothing.
+// to composer.lock; with STUB_FAIL set it fails, with STUB_NOOP it changes nothing. It
+// answers --version with STUB_VERSION (2.8.4 by default).
 func stub(t *testing.T) (log string) {
 	t.Helper()
 	if _, err := os.Stat("/bin/sh"); err != nil {
@@ -88,6 +89,10 @@ func stub(t *testing.T) (log string) {
 	bin := t.TempDir()
 	log = filepath.Join(t.TempDir(), "log")
 	script := `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "Composer version ${STUB_VERSION:-2.8.4} 2024-12-11 11:57:23"
+  exit 0
+fi
 {
   echo "args: $*"
   [ "$COMPOSER" = "$PWD/composer.json" ] || echo "COMPOSER=$COMPOSER PWD=$PWD"
@@ -111,6 +116,7 @@ fi
 	t.Setenv("STUB_LOG", log)
 	t.Setenv("STUB_FAIL", "")
 	t.Setenv("STUB_NOOP", "")
+	t.Setenv("STUB_VERSION", "")
 	t.Setenv("COMPOSER", "/elsewhere/composer.json") // overridden for the mirror
 	return log
 }
@@ -186,6 +192,39 @@ func TestProcessOutcomes(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(log); !strings.Contains(string(b), "args: update a/b:1.1.0 --with-dependencies") {
 		t.Errorf("log:\n%s", b)
+	}
+}
+
+func TestProcessUpdatesComposerVersion(t *testing.T) {
+	tests := []struct {
+		version, want, err string
+	}{
+		{version: "2.7.0", want: "update a/b:1.1.0 --with-dependencies --minimal-changes"},
+		{version: "2.6.6", want: "update a/b:1.1.0 --with-dependencies" + lockFlags},
+		{version: "unknown", want: "update a/b:1.1.0 --with-dependencies --minimal-changes"},
+		{version: "1.10.27", err: "composer 1.10 cannot update composer.lock: deps needs Composer 2.7 or later (2.0 to 2.6 without --minimal-changes)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.version, func(t *testing.T) {
+			stub(t) // a new binary path per case: versions are cached by path
+			t.Setenv("STUB_VERSION", tt.version)
+			dir := t.TempDir()
+			write(t, dir, map[string]string{"composer.json": "{}"})
+			out, err := Locker{}.ProcessUpdates(t.Context(), dir, nil, map[string][]byte{"composer.lock": []byte("lock\n")}, map[string][]dep.Update{"composer.json": {update("a/b", "1.1.0")}}, nil)
+			if tt.err != "" {
+				if err == nil || err.Error() != tt.err {
+					t.Fatalf("err = %v, want %s", err, tt.err)
+				}
+				return
+			}
+			if err != nil || !strings.HasPrefix(string(out["composer.lock"]), "lock\n"+tt.want) {
+				t.Errorf("ProcessUpdates = %q, %v", out["composer.lock"], err)
+			}
+		})
+	}
+	t.Setenv("PATH", t.TempDir())
+	if _, err := updateFlags(t.Context()); err == nil || err.Error() != "composer not found (needed to update composer.lock)" {
+		t.Errorf("no composer: %v", err)
 	}
 }
 
