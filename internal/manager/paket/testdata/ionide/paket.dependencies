@@ -1,0 +1,24 @@
+source https://api.nuget.org/v3/index.json
+storage: none
+framework: netstandard2.0
+
+nuget Fable.Core
+nuget Fable.Promise
+nuget Fable.Node
+nuget Fable.Browser.Dom
+
+nuget Fable.HtmlConverter
+
+nuget Thoth.Json
+
+git https://github.com/ionide/ionide-fsgrammar.git master
+
+github ionide/ionide-vscode-helpers:8e81bc03f11f07b8e0811b3d4598eadc78f32f2f src/Fable.Import.VSCode.fs
+github ionide/ionide-vscode-helpers:8e81bc03f11f07b8e0811b3d4598eadc78f32f2f src/Helpers.fs
+github ionide/ionide-vscode-helpers:8e81bc03f11f07b8e0811b3d4598eadc78f32f2f src/Fable.Import.VSCode.LanguageServer.fs
+
+group fsac
+  source https://api.nuget.org/v3/index.json
+  storage: packages
+  framework: netstandard2.0
+  nuget fsautocomplete

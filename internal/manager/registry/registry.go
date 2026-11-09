@@ -49,6 +49,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/npm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/nuget"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/osgi"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/paket"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pep621"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pep723"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pipenv"
@@ -142,6 +143,7 @@ var Builtin = []Entry{
 	{bazel.BazeliskDoc, bazel.NewBazelisk},
 	{nuget.Doc, nuget.New},
 	{nuget.CakeDoc, nuget.NewCake},
+	{paket.Doc, paket.New},
 	{ansible.GalaxyDoc, ansible.NewGalaxy},
 	{ansible.Doc, ansible.New},
 	{sbt.Doc, sbt.New},

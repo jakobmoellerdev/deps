@@ -25,6 +25,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/nix"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/npm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/nuget"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/paket"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pep621"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pipenv"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/piprequirements"
@@ -67,7 +68,7 @@ func postProcessors(s *session) map[string]engine.PostProcessor {
 		piprequirements.Name: pytool.Compiler{Hashes: hashes},
 		gradle.Name:          jvmtool.GradleLocker{}, gradlewrapper.Name: jvmtool.GradleWrapper{}, mavenwrapper.Name: jvmtool.MavenWrapper{},
 		swift.Name: swiftLocker(s), julia.Name: julia.Locker{}, pub.Name: pub.Locker{}, beam.NameMix: beam.MixLocker{}, beam.NameGleam: beam.GleamLocker{},
-		nix.Name: nixLocker(s), nuget.Name: nuget.Locker{}, conda.Name: conda.Locker{},
+		nix.Name: nixLocker(s), nuget.Name: nuget.Locker{}, conda.Name: conda.Locker{}, paket.Name: paket.Locker{},
 	}
 }
 
