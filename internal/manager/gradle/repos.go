@@ -1,7 +1,9 @@
 package gradle
 
 import (
+	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -31,6 +33,15 @@ type repoDecls struct {
 	project            repoList // build script: top-level repositories
 	allprojects        repoList // build script: allprojects { repositories }
 	subprojects        repoList // build script: subprojects { repositories }
+	// applies are the ids of the plugins a build script applies (`plugins { id("x") }`,
+	// `apply plugin: 'x'`): the project repositories of a convention plugin of the run apply too.
+	applies []string
+	// convention is the id of a precompiled script plugin (`src/main/kotlin/x.gradle.kts`);
+	// "" = not one.
+	convention string
+	// imports are the catalog files a settings file imports with `from(files("…"))`: the
+	// catalog's deps may be used by that build's projects too.
+	imports []string
 }
 
 // repoFilter is a repository content filter: a module is served when it matches no exclude
@@ -144,6 +155,12 @@ var (
 	// arguments follow the match.
 	filterRe        = regexp.MustCompile(`\b(include|exclude)(GroupAndSubgroups|GroupByRegex|Group|ModuleByRegex|Module|VersionByRegex|Version)\b[ \t]*\(?[ \t]*`)
 	snapshotsOnlyRe = regexp.MustCompile(`\bsnapshotsOnly\b`)
+	// forReposRe: forRepository( or forRepositories( in an exclusiveContent block; the
+	// arguments follow.
+	forReposRe = regexp.MustCompile(`\bforRepositor(?:y|ies)[ \t]*\(`)
+	// repoBindRe: `val corp = maven`, `def corp = repositories.google`, `corp: MavenArtifactRepository = maven`;
+	// the argument list or block follows.
+	repoBindRe = regexp.MustCompile(`\b([A-Za-z_]\w*)[ \t]*(?::[ \t]*[\w.]+[ \t]*)?=[ \t]*(?:repositories[ \t]*\.[ \t]*)?(mavenCentral|jcenter|google|gradlePluginPortal|maven)\b`)
 	// unescape decodes the escapes of Groovy and Kotlin string literals used in patterns.
 	unescape = strings.NewReplacer(`\\`, `\`, `\"`, `"`, `\'`, `'`, `\$`, `$`)
 )
@@ -184,11 +201,70 @@ func (s *source) repositories(settings bool) repoDecls {
 	return r
 }
 
+var (
+	// appliedRe: id("x"), id 'x' in a plugins block; apply plugin: 'x', apply(plugin = "x").
+	appliedRe = regexp.MustCompile(`\bid[ \t]*\(?[ \t]*["']|\bapply[ \t]*\(?[ \t]*plugin[ \t]*[:=][ \t]*["']`)
+	// backtickRe: a Kotlin plugin id in backticks (`` `my-convention` ``) in a plugins block.
+	backtickRe = regexp.MustCompile("`([A-Za-z0-9_.\\-]+)`")
+	// conventionRe: a precompiled script plugin; group 1 is the file name without `.gradle(.kts)`.
+	conventionRe = regexp.MustCompile(`(?:^|/)src/main/(?:groovy|kotlin)/(?:.+/)?([^/]+)\.gradle(?:\.kts)?$`)
+	packageRe    = regexp.MustCompile(`(?m)^[ \t]*package[ \t]+([A-Za-z_][\w.]*)`)
+	// importRe: from(files("…")), from files('…') in a settings versionCatalogs block.
+	importRe = regexp.MustCompile(`\bfrom[ \t]*\(?[ \t]*files[ \t]*\(?[ \t]*["']`)
+)
+
+// conventions sets the plugin ids the build script file applies and, for a precompiled script
+// plugin, its id: the file name, behind the Kotlin package if one is declared.
+func (s *source) conventions(file string, r *repoDecls) {
+	if m := conventionRe.FindStringSubmatch(file); m != nil {
+		r.convention = m[1]
+		if p := packageRe.FindSubmatch(s.code); p != nil && !s.groovy {
+			r.convention = string(p[1]) + "." + m[1]
+		}
+	}
+	for _, m := range appliedRe.FindAllIndex(s.code, -1) {
+		inPlugins := s.within(s.enclosing(m[0]), "plugins")
+		if s.code[m[0]] == 'i' && !inPlugins {
+			continue
+		}
+		if l, ok := s.lit(m[1]); ok && plainString(s.text(l)) {
+			r.applies = append(r.applies, s.text(l))
+		}
+	}
+	for b, blk := range s.blocks {
+		if blk.label != "plugins" {
+			continue
+		}
+		for _, m := range backtickRe.FindAllSubmatchIndex(s.code[blk.open+1:blk.end], -1) {
+			if s.enclosing(blk.open+1+m[0]) == b {
+				r.applies = append(r.applies, string(s.code[blk.open+1+m[2]:blk.open+1+m[3]]))
+			}
+		}
+	}
+}
+
+// catalogImports returns the catalog files the settings file imports in its versionCatalogs
+// (`from(files("../gradle/libs.versions.toml"))`), as slash paths of the run.
+func (s *source) catalogImports(file string) []string {
+	var out []string
+	for _, m := range importRe.FindAllIndex(s.code, -1) {
+		l, ok := s.lit(m[1])
+		if !ok || !s.within(s.enclosing(m[0]), "versionCatalogs") || !plainString(s.text(l)) {
+			continue
+		}
+		if p := path.Join(path.Dir(file), s.text(l)); p != ".." && !strings.HasPrefix(p, "../") && !path.IsAbs(s.text(l)) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // repoEntries returns the repositories declared directly in block b (a repositories or an
-// exclusiveContent forRepository block).
+// exclusiveContent forRepository block). A repository an exclusiveContent block names by
+// reference is exclusive only: its plain declaration is dropped.
 func (s *source) repoEntries(b int, exclusive bool) repoList {
 	blk := s.blocks[b]
-	var out repoList
+	var out, excl repoList
 	for _, m := range repoRe.FindAllSubmatchIndex(s.code[blk.open+1:blk.end], -1) {
 		off := blk.open + 1 + m[0]
 		if s.enclosing(off) != b {
@@ -198,34 +274,60 @@ func (s *source) repoEntries(b int, exclusive bool) repoList {
 		if j >= len(s.code) || s.code[j] != '(' && s.code[j] != '{' {
 			continue
 		}
-		r := repo{exclusive: exclusive}
-		var body int
-		switch string(s.code[off : blk.open+1+m[1]]) {
-		case "mavenCentral", "jcenter": // JCenter is sunset; its artifacts are on Maven Central
-			r.entry, body = centralRepo, s.trailingBlock(j)
-		case "google":
-			r.entry, body = googleRepo, s.trailingBlock(j)
-		case "gradlePluginPortal":
-			r.entry, body = portalRepo, s.trailingBlock(j)
-		case "exclusiveContent":
+		name := string(s.code[off : blk.open+1+m[1]])
+		if name == "exclusiveContent" {
 			if !exclusive {
-				out = joinRepos(out, s.exclusiveContent(s.blockAt(j)))
+				excl = joinRepos(excl, s.exclusiveContent(s.blockAt(j)))
 			}
 			continue
-		default:
-			r.entry, body = s.mavenRepo(j)
 		}
-		if r.entry == "" {
-			continue
+		if r := s.repoCall(name, j); r.entry != "" {
+			r.exclusive = exclusive
+			out = joinRepos(out, repoList{r})
 		}
-		r.filter = s.filter(body)
-		out = joinRepos(out, repoList{r})
 	}
-	return out
+	if len(excl) == 0 {
+		return out
+	}
+	out = slices.DeleteFunc(out, func(r repo) bool {
+		return slices.ContainsFunc(excl, func(x repo) bool { return repoURL(x.entry) == repoURL(r.entry) })
+	})
+	return joinRepos(out, excl)
 }
 
-// exclusiveContent returns the repositories of `exclusiveContent { forRepository { … }
-// filter { … } }` at block b, exclusive for the modules the filter includes.
+// repoCall parses the repository declared by calling name (mavenCentral, google, maven, …)
+// with the argument list or block at j ('(' or '{'); its entry is "" when deps cannot query
+// it.
+func (s *source) repoCall(name string, j int) repo {
+	var r repo
+	var body int
+	switch name {
+	case "mavenCentral", "jcenter": // JCenter is sunset; its artifacts are on Maven Central
+		r.entry, body = centralRepo, s.trailingBlock(j)
+	case "google":
+		r.entry, body = googleRepo, s.trailingBlock(j)
+	case "gradlePluginPortal":
+		r.entry, body = portalRepo, s.trailingBlock(j)
+	default:
+		r.entry, body = s.mavenRepo(j)
+	}
+	if r.entry != "" {
+		r.filter = s.filter(body)
+	}
+	return r
+}
+
+// wellKnownRepos are the entries of the repository shortcuts a Kotlin function reference
+// (`forRepository(::google)`) can name.
+var wellKnownRepos = map[string]string{"mavenCentral": centralRepo, "jcenter": centralRepo, "google": googleRepo, "gradlePluginPortal": portalRepo}
+
+// repoNames are the RepositoryHandler methods that declare a repository deps can query.
+var repoNames = map[string]bool{"mavenCentral": true, "jcenter": true, "google": true, "gradlePluginPortal": true, "maven": true}
+
+// exclusiveContent returns the repositories of an exclusiveContent block b (`forRepository
+// { … }`, `forRepository(::google)`, `forRepositories(repo, google())` with repositories
+// declared by a call or named by a variable bound to one), exclusive for the modules its
+// `filter { … }` includes.
 func (s *source) exclusiveContent(b int) repoList {
 	if b < 0 {
 		return nil
@@ -243,6 +345,17 @@ func (s *source) exclusiveContent(b int) repoList {
 			f = s.filter(c)
 		}
 	}
+	blk := s.blocks[b]
+	for _, m := range forReposRe.FindAllSubmatchIndex(s.code[blk.open+1:blk.end], -1) {
+		if s.enclosing(blk.open+1+m[0]) != b {
+			continue
+		}
+		for _, a := range s.callArgs(blk.open + 1 + m[1]) {
+			if r := s.repoArg(a); r.entry != "" {
+				repos = joinRepos(repos, repoList{r})
+			}
+		}
+	}
 	if f == nil {
 		return nil // without a filter Gradle rejects the declaration
 	}
@@ -250,6 +363,78 @@ func (s *source) exclusiveContent(b int) repoList {
 		repos[i].filter, repos[i].exclusive = f, true
 	}
 	return repos
+}
+
+// repoArg returns the repository an argument of forRepository/forRepositories names: a
+// function reference (`::google`), a repository call (`google()`, `maven("…")`) or a
+// variable bound to one (`val corp = maven("…")`).
+func (s *source) repoArg(a [2]int) repo {
+	i := s.skipBlank(a[0])
+	ref := i+1 < a[1] && s.code[i] == ':' && s.code[i+1] == ':'
+	if ref {
+		i += 2
+	}
+	j := i
+	for j < a[1] && isIdent(s.code[j]) {
+		j++
+	}
+	name := string(s.code[i:j])
+	k := s.skipBlank(j)
+	switch {
+	case name == "":
+		return repo{}
+	case ref:
+		return repo{entry: wellKnownRepos[name]}
+	case k < a[1] && (s.code[k] == '(' || s.code[k] == '{') && repoNames[name]:
+		return s.repoCall(name, k)
+	case k == a[1]:
+		return s.namedRepo(name)
+	}
+	return repo{}
+}
+
+// namedRepo returns the repository the variable name is bound to (`val corp = maven("…")`,
+// `def corp = repositories.maven { … }`); the last binding wins.
+func (s *source) namedRepo(name string) repo {
+	var r repo
+	for _, m := range repoBindRe.FindAllSubmatchIndex(s.code, -1) {
+		if string(s.code[m[2]:m[3]]) != name {
+			continue
+		}
+		if j := s.skipSpace(m[1]); j < len(s.code) && (s.code[j] == '(' || s.code[j] == '{') {
+			r = s.repoCall(string(s.code[m[4]:m[5]]), j)
+		}
+	}
+	return r
+}
+
+// callArgs returns the spans of the comma-separated arguments of the call whose argument list
+// starts at i (after the '('), nested parentheses, brackets and braces skipped.
+func (s *source) callArgs(i int) [][2]int {
+	var out [][2]int
+	depth, start := 0, i
+	for ; i < len(s.code); i++ {
+		switch s.code[i] {
+		case '(', '[', '{':
+			depth++
+		case ']', '}':
+			depth--
+		case ')':
+			if depth == 0 {
+				if s.skipBlank(start) < i {
+					out = append(out, [2]int{start, i})
+				}
+				return out
+			}
+			depth--
+		case ',':
+			if depth == 0 {
+				out = append(out, [2]int{start, i})
+				start = i + 1
+			}
+		}
+	}
+	return out
 }
 
 // blockAt returns the block whose '{' is at off, -1 = none.

@@ -24,6 +24,9 @@ import (
 //   - testdata/mentorship.Dependencies.kt: https://raw.githubusercontent.com/anitab-org/mentorship-android/develop/buildSrc/src/main/kotlin/Dependencies.kt
 //   - testdata/nowinandroid.settings.gradle.kts: https://raw.githubusercontent.com/android/nowinandroid/main/settings.gradle.kts
 //   - testdata/savvagen.build.gradle: https://raw.githubusercontent.com/savvagen/github-actions-sample-project/master/build.gradle
+//   - testdata/bisq/ (fetched 2026-11-09): https://github.com/bisq-network/bisq at 6e1ea27f,
+//     {settings.gradle,build.gradle,core/build.gradle,gradle/libs.versions.toml,build-logic/settings.gradle,
+//     build-logic/commons/build.gradle,build-logic/commons/src/main/groovy/bisq.java-conventions.gradle}
 
 // loadDir returns the files below testdata/dir by slash path.
 func loadDir(t *testing.T, dir string) map[string]string {
@@ -478,17 +481,19 @@ func TestRepositories(t *testing.T) {
 		pm   = portalRepo + " https://p.example/m2/"
 		drm  = centralRepo + " corp=https://lib.example/repo/"
 		root = all + " https://root.example/"
+		app  = " https://app.example/ named=https://named.example/ https://assign.example/ " + centralRepo
 	)
 	for _, tc := range []struct{ file, name, want string }{
 		{"build.gradle.kts", "g:cp", googleRepo},
 		{"build.gradle.kts", "p", pm},
 		{"build.gradle.kts", "g:root", root},
-		{"app/build.gradle", "g:app", all + " " + sub + " https://app.example/ named=https://named.example/ https://assign.example/ " + centralRepo},
-		{"app/extra.gradle", "g:applied", all + " " + sub + " https://app.example/ named=https://named.example/ https://assign.example/ " + centralRepo},
+		{"app/build.gradle", "g:app", all + " " + sub + app},
+		{"app/extra.gradle", "g:applied", all + " " + sub + app},
 		{"lib/build.gradle.kts", "g:lib", all + " " + sub},
-		{"gradle/libs.versions.toml", "g:cat", all},
+		// Catalog and buildSrc deps: the repositories of every project, root project first.
+		{"gradle/libs.versions.toml", "g:cat", root + " " + sub + app},
 		{"gradle/libs.versions.toml", "cat.plugin", pm},
-		{"buildSrc/src/main/kotlin/D.kt", "g:bs", all},
+		{"buildSrc/src/main/kotlin/D.kt", "g:bs", root + " " + sub + app},
 		{"other/build.gradle", "g:other", "https://settings.example/"},
 		{"bare/build.gradle.kts", "bp", PluginRepositories},
 		{"bare/build.gradle.kts", "g:bare", "central=https://repo.maven.apache.org/maven2/ google=https://dl.google.com/dl/android/maven2/ gradlePluginPortal=https://plugins.gradle.org/m2/"},
@@ -932,6 +937,88 @@ func TestRepositoryContentFilters(t *testing.T) {
 	} {
 		if _, ok := moduleRule(tc.kind, tc.args); ok != tc.ok {
 			t.Errorf("moduleRule(%s, %q) ok = %v", tc.kind, tc.args, ok)
+		}
+	}
+}
+
+// The bisq catalog's jitpack deps are used by projects applying the bisq.java-conventions
+// precompiled script plugin, which declares jitpack; no build script or settings file does.
+// build-logic imports the catalog with from(files(…)): its plugin libraries come from the
+// plugin portal its commons project declares.
+func TestConventionPluginRepositories(t *testing.T) {
+	deps := runBuild(t, loadDir(t, "bisq"), false)
+	const jitpack = centralRepo + " https://jitpack.io/ " + portalRepo
+	for _, name := range []string{"com.github.bisq-network:bitcoinj", "com.github.bisq-network:jsonrpc4j", "com.google.guava:guava", "org.gradlex:reproducible-builds"} {
+		if got := get(t, deps, "gradle/libs.versions.toml", name).Source; got != jitpack {
+			t.Errorf("%s: Source %q, want %q", name, got, jitpack)
+		}
+	}
+	deps = runBuild(t, map[string]string{
+		"settings.gradle.kts": "includeBuild(\"build-logic\")\n",
+		"build-logic/settings.gradle.kts": "dependencyResolutionManagement {\n  versionCatalogs {\n" +
+			"    create(\"libs\") { from(files(\"../gradle/libs.versions.toml\")) }\n" +
+			"    create(\"abs\") { from(files(\"/abs.toml\")) }\n    create(\"out\") { from(files(\"../../out.toml\")) }\n" +
+			"  }\n}\nfrom(files(\"elsewhere.toml\"))\n",
+		"build-logic/build.gradle.kts": "repositories { gradlePluginPortal() }\n",
+		"build-logic/src/main/kotlin/com/acme/base.gradle.kts": "package com.acme\n" +
+			"repositories { maven(\"https://base.example\") }\n",
+		"build-logic/src/main/kotlin/lib.gradle.kts":     "plugins { id(\"com.acme.base\") }\nrepositories { maven(\"https://lib.example\") }\n",
+		"build-logic/src/main/groovy/groovy-conv.gradle": "repositories { maven { url 'https://groovy.example' } }\n",
+		"app/build.gradle.kts":                           "plugins { `lib` }\ndependencies { implementation(\"g:app:1\") }\n",
+		"app/extra.gradle.kts":                           "dependencies { implementation(\"g:extra:1\") }\n",
+		"tool/build.gradle":                              "apply plugin: 'groovy-conv'\nrepositories { mavenCentral() }\ndependencies { implementation 'g:tool:1' }\n",
+		"other/build.gradle.kts":                         "plugins { id(\"unknown\") }\nid(\"not-a-plugin\")\ndependencies { implementation(\"g:other:1\") }\n",
+		"gradle/libs.versions.toml":                      "[libraries]\nc = \"g:cat:1\"\n",
+	}, false)
+	const conv = "https://base.example/ https://lib.example/"
+	for _, tc := range []struct{ file, name, want string }{
+		{"app/build.gradle.kts", "g:app", conv},
+		{"app/extra.gradle.kts", "g:extra", conv},
+		{"tool/build.gradle", "g:tool", "https://groovy.example/ " + centralRepo},
+		{"other/build.gradle.kts", "g:other", LibraryRepositories},
+		{"gradle/libs.versions.toml", "g:cat", conv + " https://groovy.example/ " + centralRepo + " " + portalRepo},
+	} {
+		if got := get(t, deps, tc.file, tc.name).Source; got != tc.want {
+			t.Errorf("%s %s: Source %q, want %q", tc.file, tc.name, got, tc.want)
+		}
+	}
+	// The root project exists without a build script: it uses the settings repositories.
+	deps = runBuild(t, map[string]string{
+		"settings.gradle.kts":       "dependencyResolutionManagement { repositories { mavenCentral() } }\n",
+		"sub/build.gradle":          "repositories { maven { url 'https://jitpack.io' } }\n",
+		"gradle/libs.versions.toml": "[libraries]\nc = \"g:cat:1\"\n",
+	}, false)
+	if got := get(t, deps, "gradle/libs.versions.toml", "g:cat").Source; got != centralRepo+" https://jitpack.io/" {
+		t.Errorf("root without build script: Source %q", got)
+	}
+}
+
+// exclusiveContent naming its repositories by reference: a Kotlin function reference, a
+// variable bound to a repository and a repository call as forRepositories arguments.
+func TestExclusiveContentByReference(t *testing.T) {
+	deps := runBuild(t, map[string]string{
+		"build.gradle.kts": "repositories {\n" +
+			"  val corp = maven(\"https://corp.example\")\n" +
+			"  mavenCentral()\n" +
+			"  exclusiveContent {\n    forRepositories(corp, gradlePluginPortal())\n    filter { includeGroup(\"corp\") }\n  }\n" +
+			"  exclusiveContent {\n    forRepository(::google)\n    filter { includeGroupByRegex(\"androidx.*\") }\n  }\n" +
+			"  exclusiveContent {\n    forRepositories(unknown, listOf(1), 1)\n    filter { includeGroup(\"u\") }\n  }\n" +
+			"}\n" +
+			"dependencies {\n  implementation(\"corp:a:1\")\n  implementation(\"androidx.core:core:1\")\n  implementation(\"org:x:1\")\n  implementation(\"u:x:1\")\n}\n",
+		"app/build.gradle": "def jit = repositories.maven { url 'https://jitpack.io' }\n" +
+			"repositories {\n  mavenCentral()\n  exclusiveContent {\n    forRepositories(jit)\n    filter { includeGroup 'com.github.x' }\n  }\n}\n" +
+			"dependencies { implementation 'com.github.x:y:1'; implementation 'org:z:1' }\n",
+	}, false)
+	for _, tc := range []struct{ file, name, want string }{
+		{"build.gradle.kts", "corp:a", "https://corp.example/ " + portalRepo},
+		{"build.gradle.kts", "androidx.core:core", googleRepo},
+		{"build.gradle.kts", "org:x", centralRepo}, // corp serves only its exclusive group
+		{"build.gradle.kts", "u:x", centralRepo},
+		{"app/build.gradle", "com.github.x:y", "https://jitpack.io/"},
+		{"app/build.gradle", "org:z", centralRepo},
+	} {
+		if got := get(t, deps, tc.file, tc.name).Source; got != tc.want {
+			t.Errorf("%s %s: Source %q, want %q", tc.file, tc.name, got, tc.want)
 		}
 	}
 }

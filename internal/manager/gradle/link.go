@@ -11,16 +11,20 @@ import (
 
 // index locates the files of a run by directory and build.
 type index struct {
-	files    map[string]*fileState
-	settings map[string]string   // dir → settings file
-	builds   map[string]string   // dir → build script
-	byDir    map[string][]string // dir → scripts (build script first) and gradle.properties last; settings excluded
-	sources  []string            // buildSrc / convention plugin sources, sorted
-	roots    map[string]string   // memo of root
+	files       map[string]*fileState
+	settings    map[string]string   // dir → settings file
+	builds      map[string]string   // dir → build script
+	byDir       map[string][]string // dir → scripts (build script first) and gradle.properties last; settings excluded
+	sources     []string            // buildSrc / convention plugin sources, sorted
+	roots       map[string]string   // memo of root
+	conventions map[string]string   // precompiled script plugin id → file
+	importers   map[string][]string // catalog file → roots of the other builds importing it (from(files(…)))
+	buildRepos  map[string]repoList // memo of libraryRepos, by build root
 }
 
 func newIndex(files map[string]*fileState) *index {
-	ix := &index{files: files, settings: map[string]string{}, builds: map[string]string{}, byDir: map[string][]string{}, roots: map[string]string{}}
+	ix := &index{files: files, settings: map[string]string{}, builds: map[string]string{}, byDir: map[string][]string{}, roots: map[string]string{},
+		conventions: map[string]string{}, importers: map[string][]string{}, buildRepos: map[string]repoList{}}
 	names := make([]string, 0, len(files))
 	for f := range files {
 		names = append(names, f)
@@ -34,10 +38,16 @@ func newIndex(files map[string]*fileState) *index {
 			if ix.settings[dir] == "" {
 				ix.settings[dir] = f
 			}
+			for _, c := range files[f].repos.imports {
+				ix.importers[c] = append(ix.importers[c], dir)
+			}
 		case kindScript:
 			ix.byDir[dir] = append(ix.byDir[dir], f)
 			if isBuildScript(f) && ix.builds[dir] == "" {
 				ix.builds[dir] = f
+			}
+			if id := files[f].repos.convention; id != "" && ix.conventions[id] == "" {
+				ix.conventions[id] = f
 			}
 		case kindProperties:
 			props[dir] = f
@@ -181,9 +191,11 @@ type repoLevels struct {
 
 // levels returns the repositories of the deps of file: plugins use the settings
 // pluginManagement repositories; buildscript classpath deps the buildscript repositories;
-// other deps the project's repositories (its own, plus allprojects/subprojects of the parent
-// build scripts; for catalogs, settings and sources the root project's allprojects), else
-// the settings dependencyResolutionManagement repositories (first under PREFER_SETTINGS).
+// other deps of a build script the project's repositories (its own, those of the convention
+// plugins it applies, plus allprojects/subprojects of the parent build scripts), else the
+// settings dependencyResolutionManagement repositories (first under PREFER_SETTINGS).
+// Catalog, settings and source deps may be used by any project of the build: they take the
+// repositories of every project (see libraryRepos).
 func (ix *index) levels(file string, st *fileState) repoLevels {
 	root := ix.consumer(file)
 	var set repoDecls
@@ -193,14 +205,52 @@ func (ix *index) levels(file string, st *fileState) repoLevels {
 	var project repoList
 	if st.kind == kindScript {
 		project = ix.projectRepos(file, st, root)
-	} else if bf := ix.builds[root]; bf != "" {
-		project = ix.files[bf].repos.allprojects
+	} else {
+		project = ix.libraryRepos(root)
+		for _, r := range ix.importers[file] {
+			if r != root {
+				project = joinRepos(project, ix.libraryRepos(r))
+			}
+		}
 	}
 	lv := repoLevels{plugins: []repoList{set.plugins}, classpath: []repoList{st.repos.buildscript}, libraries: []repoList{project, set.libraries}}
 	if set.preferSettings && len(set.libraries) > 0 {
 		lv.libraries = []repoList{set.libraries}
 	}
 	return lv
+}
+
+// libraryRepos returns the repositories of the projects of the build at root, root project
+// first (it exists without a build script too), then by directory: those of each project's
+// build script (see projectRepos), or the settings repositories for a project that declares
+// none (Gradle's PREFER_PROJECT default); only the settings ones under PREFER_SETTINGS. The
+// result is clipped, so appending copies.
+func (ix *index) libraryRepos(root string) repoList {
+	if r, ok := ix.buildRepos[root]; ok {
+		return r
+	}
+	var set repoDecls
+	if sf := ix.settings[root]; sf != "" {
+		set = ix.files[sf].repos
+	}
+	var out repoList
+	if set.preferSettings && len(set.libraries) > 0 {
+		out = set.libraries
+	} else {
+		for _, dir := range ix.projectDirs(root) {
+			var r repoList
+			if bf := ix.builds[dir]; bf != "" {
+				r = ix.projectRepos(bf, ix.files[bf], root)
+			}
+			if len(r) == 0 {
+				r = set.libraries
+			}
+			out = joinRepos(out, r)
+		}
+	}
+	out = slices.Clip(out)
+	ix.buildRepos[root] = out
+	return out
 }
 
 // source returns the Source of the dep named name: the first level whose repositories
@@ -247,10 +297,40 @@ func (ix *index) projectRepos(file string, st *fileState, root string) repoList 
 		if d != dir {
 			out = joinRepos(out, r.subprojects)
 		} else if bf != file {
+			out = ix.conventionRepos(out, bf)
 			out = joinRepos(out, r.project)
 		}
 	}
+	out = ix.conventionRepos(out, file)
 	return joinRepos(out, st.repos.project)
+}
+
+// conventionRepos appends to out the project repositories of the convention plugins (precompiled
+// script plugins of the run) the scripts apply, and of those these apply, in order.
+func (ix *index) conventionRepos(out repoList, scripts ...string) repoList {
+	if len(ix.conventions) == 0 {
+		return out
+	}
+	seen := map[string]bool{}
+	var walk func(ids []string)
+	walk = func(ids []string) {
+		for _, id := range ids {
+			f := ix.conventions[id]
+			if f == "" || seen[f] {
+				continue
+			}
+			seen[f] = true
+			r := ix.files[f].repos
+			walk(r.applies)
+			out = joinRepos(out, r.project)
+		}
+	}
+	for _, f := range scripts {
+		if st := ix.files[f]; st != nil {
+			walk(st.repos.applies)
+		}
+	}
+	return out
 }
 
 // lockDirs returns the project directories whose lockfiles may lock the deps of file: the
@@ -259,7 +339,12 @@ func (ix *index) lockDirs(file string, st *fileState) []string {
 	if st.kind == kindScript && isBuildScript(file) {
 		return []string{path.Dir(file)}
 	}
-	root := ix.consumer(file)
+	return ix.projectDirs(ix.consumer(file))
+}
+
+// projectDirs returns the directories of the build at root holding a build script, root
+// first (whether or not it has one), the others sorted.
+func (ix *index) projectDirs(root string) []string {
 	var dirs []string
 	for dir := range ix.builds {
 		if dir != root && ix.root(dir) == root {

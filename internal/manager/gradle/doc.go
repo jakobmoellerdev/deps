@@ -69,13 +69,17 @@ var Doc = refdoc.Manager{
 				"`mavenLocal()`, non-http(s) and interpolated URLs, and repositories nested deeper (conditionals) are ignored.",
 			"Content filters: `content { }`/`mavenContent { }` of a repository (`includeGroup`, `includeGroupAndSubgroups`, `includeGroupByRegex`, `includeModule`, `includeModuleByRegex`, " +
 				"`includeVersion…` (as its module) and the `exclude…` counterparts except version excludes; `snapshotsOnly()` serves no release) drop the repositories that do not serve a dep; " +
-				"`exclusiveContent { forRepository { … }; filter { … } }` makes its repositories the only ones of the modules the filter includes and serves nothing else. " +
+				"`exclusiveContent { forRepository { … }; filter { … } }` makes its repositories the only ones of the modules the filter includes and serves nothing else; " +
+				"the repositories may also be named by reference: `forRepository(::google)`, `forRepositories(corp, google())` with `val corp = maven(\"…\")`/`def corp = repositories.maven { … }` in the same script (a repository named so is exclusive only). " +
 				"Plugins are matched as their marker artifact `<id>:<id>.gradle.plugin`. When every declared repository of a level excludes a dep, the next level applies.",
 			"Plugins (build-script and catalog): `settings.gradle(.kts)` `pluginManagement { repositories }` of the build, else the Gradle plugin portal then Google Maven.",
 			"Buildscript classpath deps: the script's `buildscript { repositories }`, else Maven Central, Google Maven, then the Gradle plugin portal.",
 			"Other deps: the project's repositories — `allprojects { repositories }` of the build scripts from the root down, `subprojects { repositories }` of the parent ones, " +
-				"and the script's top-level `repositories` (catalogs and `buildSrc` sources: the root project's `allprojects`) — else `dependencyResolutionManagement { repositories }` " +
-				"(first when `RepositoriesMode.PREFER_SETTINGS`), else Maven Central, Google Maven, then the Gradle plugin portal (plugin artifacts and markers declared as libraries).",
+				"the top-level `repositories` of the convention plugins the script applies (precompiled script plugins `src/main/groovy|kotlin/<id>.gradle(.kts)` of the run, Kotlin ids prefixed by the file's `package`, " +
+				"applied with `plugins { id(\"<id>\") }`, `` `<id>` `` or `apply plugin: '<id>'`, also through other convention plugins) and the script's own top-level `repositories` — " +
+				"else `dependencyResolutionManagement { repositories }` (first when `RepositoriesMode.PREFER_SETTINGS`), else Maven Central, Google Maven, then the Gradle plugin portal (plugin artifacts and markers declared as libraries).",
+			"Catalog, settings and `buildSrc` deps may be used by any project of the build: they take the repositories of every project, root project first, " +
+				"each project's own (as above) or the settings repositories for a project without any.",
 		}},
 		{Title: "Lockfiles and dynamic versions", Items: []string{
 			"Dynamic versions become ranges: `1.+`/`1.2.+` (prefix, prereleases included), `[1.0,2.0)`, `(1.0,2.0]`, `[1.0,)`, `(,2.0)`, `]1.0,2.0[`, " +
@@ -106,8 +110,9 @@ var Doc = refdoc.Manager{
 			"`latest.<status>` for statuses other than release and integration (`latest.milestone`, custom statuses) depend on component metadata deps does not read; they are skipped even with a lockfile.",
 			"Prefixes without a dot (`1.2+`): Gradle matches the text before the `+` as a string prefix (https://docs.gradle.org/current/userguide/dependency_versions.html: " +
 				"\"Only versions exactly matching the portion before the + are included\"), so `1.2+` also admits 1.20–1.29, which no semver constraint expresses; they are skipped. Renovate's gradle versioning accepts neither (a prefix needs a `.`, `-` or `_` before the `+`).",
-			"`exclusiveContent { forRepositories(…) }` by reference, `onlyForConfigurations`/`notForConfigurations`, version-specific excludes and Ivy/flatDir repositories " +
-				"(no Maven metadata to look versions up in; Renovate ignores them too). `mavenLocal()` is the machine's `~/.m2` cache, not a repository deps can read.",
+			"`onlyForConfigurations`/`notForConfigurations`, version-specific excludes and Ivy/flatDir repositories " +
+				"(no Maven metadata to look versions up in; Renovate ignores them too). `mavenLocal()` is the machine's `~/.m2` cache, not a repository deps can read. " +
+				"Repositories added by binary plugins (not precompiled script plugins of the repository) are not known.",
 		}},
 	},
 }

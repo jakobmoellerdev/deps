@@ -103,6 +103,12 @@ func extractScript(file string, src []byte, kind fileKind) ([]dep.Dep, []depMeta
 	if kind != kindSource {
 		repos = s.repositories(kind == kindSettings)
 	}
+	switch kind {
+	case kindScript:
+		s.conventions(file, &repos)
+	case kindSettings:
+		repos.imports = s.catalogImports(file)
+	}
 	sort.SliceStable(x.out, func(i, j int) bool { return x.out[i].off < x.out[j].off })
 	deps := make([]dep.Dep, len(x.out))
 	meta := make([]depMeta, len(x.out))

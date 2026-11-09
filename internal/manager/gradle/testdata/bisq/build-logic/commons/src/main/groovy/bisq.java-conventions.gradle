@@ -1,0 +1,34 @@
+plugins {
+    id 'java'
+    id 'bisq.reproducible-build'
+    id 'org.gradlex.reproducible-builds'
+}
+
+repositories {
+    mavenCentral()
+    maven { url = "https://jitpack.io" }
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+dependencies {
+    compileOnly libs.google.findbugs
+
+    testCompileOnly libs.google.findbugs
+    testImplementation libs.hamcrest
+    testImplementation libs.junit.jupiter.api
+    testImplementation libs.junit.jupiter.params
+    testImplementation libs.mockito.core
+    testImplementation libs.mockito.junit.jupiter
+
+    testRuntimeOnly libs.junit.jupiter.engine
+    testRuntimeOnly libs.junit.platform.launcher
+}
+
+test {
+    useJUnitPlatform()
+}
