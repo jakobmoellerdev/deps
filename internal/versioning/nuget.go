@@ -125,10 +125,10 @@ func compareNuGet(a, b nugetVersion) int {
 }
 
 func compareNuGetLabel(a, b string) int {
-	na, errA := strconv.ParseUint(a, 10, 64)
-	nb, errB := strconv.ParseUint(b, 10, 64)
+	na, numA := decimalUint(a)
+	nb, numB := decimalUint(b)
 	switch {
-	case errA == nil && errB == nil:
+	case numA && numB:
 		if na != nb {
 			if na < nb {
 				return -1
@@ -136,9 +136,9 @@ func compareNuGetLabel(a, b string) int {
 			return 1
 		}
 		return 0
-	case errA == nil:
+	case numA:
 		return -1
-	case errB == nil:
+	case numB:
 		return 1
 	}
 	return strings.Compare(strings.ToLower(a), strings.ToLower(b))

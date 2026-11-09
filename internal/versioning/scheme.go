@@ -607,22 +607,33 @@ func compareSemverPrePart(s, o string) int {
 	case o == "":
 		return 1
 	}
-	si, errS := strconv.ParseUint(s, 10, 64)
-	oi, errO := strconv.ParseUint(o, 10, 64)
+	si, numS := decimalUint(s)
+	oi, numO := decimalUint(o)
 	switch {
-	case errS != nil && errO != nil:
+	case !numS && !numO:
 		if s > o {
 			return 1
 		}
 		return -1
-	case errO != nil:
+	case !numO:
 		return -1
-	case errS != nil:
+	case !numS:
 		return 1
 	case si > oi:
 		return 1
 	}
 	return -1
+}
+
+// decimalUint is strconv.ParseUint(s, 10, 64) as an ok flag, without the error allocation
+// for the common alphanumeric identifiers ("canary", "rc"): only all-digit s reach
+// ParseUint, which then fails only on overflow.
+func decimalUint(s string) (uint64, bool) {
+	if !allDigits(s) {
+		return 0, false
+	}
+	n, err := strconv.ParseUint(s, 10, 64)
+	return n, err == nil
 }
 
 func semverKind(cur, next semverVersion) dep.UpdateType {

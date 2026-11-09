@@ -14,7 +14,16 @@ type benchCorpus struct {
 }
 
 func benchCorpora() []benchCorpus {
-	var semver, loose, pep, maven, hc, cargo, gov []string
+	var semver, loose, pep, maven, hc, cargo, gov, canary []string
+	// next.js-like: thousands of canaries and rcs per line, few releases in between.
+	for mnr := range 6 {
+		for pat := range 5 {
+			for n := range 100 {
+				canary = append(canary, fmt.Sprintf("13.%d.%d-canary.%d", mnr, pat, n))
+			}
+			canary = append(canary, fmt.Sprintf("13.%d.%d-rc.0", mnr, pat), fmt.Sprintf("13.%d.%d", mnr, pat))
+		}
+	}
 	for i := range 3000 {
 		maj, mnr, pat := i/600, i/30%20, i%30
 		plain := fmt.Sprintf("%d.%d.%d", maj, mnr, pat)
@@ -48,6 +57,7 @@ func benchCorpora() []benchCorpus {
 	}
 	return []benchCorpus{
 		{"semver", "1.2.3", semver},
+		{"semver", "13.0.0-canary.0", canary}, // reported as semver#01
 		{"cargo", "1.2.3", cargo},
 		{"hashicorp", "1.2.3", hc},
 		{"go", "v1.2.3", gov},

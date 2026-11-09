@@ -43,15 +43,15 @@ func compareJulia(a, b cargoVersion) int {
 	}
 	as, bs := strings.Split(ab, "."), strings.Split(bb, ".")
 	for i := range min(len(as), len(bs)) {
-		x, errX := strconv.ParseUint(as[i], 10, 64)
-		y, errY := strconv.ParseUint(bs[i], 10, 64)
+		x, numX := decimalUint(as[i])
+		y, numY := decimalUint(bs[i])
 		var c int
 		switch {
-		case errX == nil && errY == nil:
+		case numX && numY:
 			c = cmpUint(x, y)
-		case errX == nil:
+		case numX:
 			c = -1
-		case errY == nil:
+		case numY:
 			c = 1
 		default:
 			c = strings.Compare(as[i], bs[i])
