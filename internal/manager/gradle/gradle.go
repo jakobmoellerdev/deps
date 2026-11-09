@@ -54,15 +54,17 @@ const (
 	kindSource                     // buildSrc / convention plugin source
 )
 
+// kindOf checks the suffix each regexp requires first: they have no literal prefix, so they
+// try every offset of the path.
 func kindOf(file string) fileKind {
 	switch base := path.Base(file); {
-	case catalogRe.MatchString(file):
+	case strings.HasSuffix(file, ".toml") && catalogRe.MatchString(file):
 		return kindCatalog
 	case base == "gradle.properties":
 		return kindProperties
 	case base == "settings.gradle" || base == "settings.gradle.kts":
 		return kindSettings
-	case scriptRe.MatchString(file):
+	case (strings.HasSuffix(file, ".gradle") || strings.HasSuffix(file, ".gradle.kts")) && scriptRe.MatchString(file):
 		return kindScript
 	}
 	return kindSource

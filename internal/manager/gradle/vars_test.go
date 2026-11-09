@@ -24,6 +24,8 @@ var lineForms = []struct {
 	{"coordRe", coordRe, func(c []byte) []int { return wordLines(c, configWords) }},
 	{"mapRe", mapRe, func(c []byte) []int { return wordLines(c, configWords) }},
 	{"pluginRe", pluginRe, func(c []byte) []int { return litLines(c, "version") }},
+	{"appliedRe", appliedRe, func(c []byte) []int { return wordLines(c, appliedWords) }},
+	{"importRe", importRe, func(c []byte) []int { return wordLines(c, importWords) }},
 }
 
 func quotedLines(c []byte) []int { return valueLines(c, quotedValue) }
@@ -63,6 +65,7 @@ func FuzzInLines(f *testing.F) {
 		"def x = '1'; val y = \"2\"\nString z = '3'", "=", "\n=\n'", "x =",
 		"implementationgroup: 'g'", "api'g:n:v'\nxapi 'g:n:v'", "compileOnlyApi(group = \"g\", name = \"n\")",
 		"id 'x' version 'y'", "kotlin(\"jvm\").version(\"1\")", "id(\"x\")\nversion \"1\"", "implementation\n'g:n:v'",
+		"applyplugin:'x'", "apply(plugin = \"x\")", "xid 'y'\nid'z'", "fromfiles('a')", "from(files(\"a\"))", "id\n'x'",
 	} {
 		f.Add([]byte(s))
 	}

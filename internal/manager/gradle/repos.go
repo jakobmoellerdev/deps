@@ -201,6 +201,10 @@ func (s *source) repositories(settings bool) repoDecls {
 	return r
 }
 
+// appliedRe, conventionRe and importRe have no literal prefix, so they try every offset of
+// their input: the paths are checked for a literal conventionRe needs first, and appliedRe
+// and importRe (which do not match a newline) run only on the lines holding one of their
+// words (see inLines).
 var (
 	// appliedRe: id("x"), id 'x' in a plugins block; apply plugin: 'x', apply(plugin = "x").
 	appliedRe = regexp.MustCompile(`\bid[ \t]*\(?[ \t]*["']|\bapply[ \t]*\(?[ \t]*plugin[ \t]*[:=][ \t]*["']`)
@@ -211,18 +215,27 @@ var (
 	packageRe    = regexp.MustCompile(`(?m)^[ \t]*package[ \t]+([A-Za-z_][\w.]*)`)
 	// importRe: from(files("…")), from files('…') in a settings versionCatalogs block.
 	importRe = regexp.MustCompile(`\bfrom[ \t]*\(?[ \t]*files[ \t]*\(?[ \t]*["']`)
+
+	// appliedWords and importWords are the words appliedRe and importRe matches start with
+	// (their second word can follow directly: `applyplugin:`, `fromfiles(`).
+	appliedWords = map[string]bool{"id": true, "apply": true, "applyplugin": true}
+	importWords  = map[string]bool{"from": true, "fromfiles": true}
 )
 
 // conventions sets the plugin ids the build script file applies and, for a precompiled script
 // plugin, its id: the file name, behind the Kotlin package if one is declared.
 func (s *source) conventions(file string, r *repoDecls) {
-	if m := conventionRe.FindStringSubmatch(file); m != nil {
+	var m []string
+	if strings.Contains(file, "src/main/") {
+		m = conventionRe.FindStringSubmatch(file)
+	}
+	if m != nil {
 		r.convention = m[1]
 		if p := packageRe.FindSubmatch(s.code); p != nil && !s.groovy {
 			r.convention = string(p[1]) + "." + m[1]
 		}
 	}
-	for _, m := range appliedRe.FindAllIndex(s.code, -1) {
+	for m := range inLines(appliedRe, s.code, wordLines(s.code, appliedWords)) {
 		inPlugins := s.within(s.enclosing(m[0]), "plugins")
 		if s.code[m[0]] == 'i' && !inPlugins {
 			continue
@@ -247,7 +260,7 @@ func (s *source) conventions(file string, r *repoDecls) {
 // (`from(files("../gradle/libs.versions.toml"))`), as slash paths of the run.
 func (s *source) catalogImports(file string) []string {
 	var out []string
-	for _, m := range importRe.FindAllIndex(s.code, -1) {
+	for m := range inLines(importRe, s.code, wordLines(s.code, importWords)) {
 		l, ok := s.lit(m[1])
 		if !ok || !s.within(s.enclosing(m[0]), "versionCatalogs") || !plainString(s.text(l)) {
 			continue
