@@ -99,11 +99,12 @@ func TestAge(t *testing.T) {
 func TestResolve(t *testing.T) {
 	auth := httpx.NewAuth(platform.Info{Host: "git.example"}, "tok", func(string) string { return "" })
 	sources := map[string]datasource.Datasource{
-		dsNpm:    &fakeSource{repo: "git+ssh://git@github.com/eslint/eslint.git"},
-		dsDocker: &fakeSource{err: errors.New("no config")},
-		dsPypi:   &fakeSource{repo: "https://github.com/psf/requests"},
-		dsMaven:  &fakeSource{repo: "https://github.com/FasterXML/jackson-databind"},
-		dsVcpkg:  &fakeSource{repo: "https://github.com/fmtlib/fmt"},
+		dsNpm:     &fakeSource{repo: "git+ssh://git@github.com/eslint/eslint.git"},
+		dsDocker:  &fakeSource{err: errors.New("no config")},
+		dsPypi:    &fakeSource{repo: "https://github.com/psf/requests"},
+		dsMaven:   &fakeSource{repo: "https://github.com/FasterXML/jackson-databind"},
+		dsVcpkg:   &fakeSource{repo: "https://github.com/fmtlib/fmt"},
+		dsClojure: &fakeSource{repo: "https://github.com/ring-clojure/ring"},
 	}
 	n := New(nil, nil, auth, nil, sources).WithGitLab([]string{"https://gitlab.com", "http://gl.example:8929"})
 	gh := func(o, r, prefix string) repoRef {
@@ -155,6 +156,7 @@ func TestResolve(t *testing.T) {
 		{"docker error", dep.Dep{Datasource: dsDocker, Name: "alpine"}, repoRef{}, false},
 		{"maven", dep.Dep{Datasource: dsMaven, Name: "com.fasterxml.jackson.core:jackson-databind"}, gh("FasterXML", "jackson-databind", ""), true},
 		{"vcpkg", dep.Dep{Datasource: dsVcpkg, Name: "fmt"}, gh("fmtlib", "fmt", ""), true},
+		{"clojure", dep.Dep{Datasource: dsClojure, Name: "ring:ring-core"}, gh("ring-clojure", "ring", ""), true},
 		{"toolchain", dep.Dep{Datasource: "go-toolchain", Name: "go"}, repoRef{}, false},
 	}
 	for _, tt := range tests {

@@ -27,6 +27,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bazel"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/beam"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bundler"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/clojure"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/composer"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/custom"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/devcontainer"
@@ -143,16 +144,16 @@ var digestManagers = map[string]bool{"github-actions": true, "docker": true, pre
 // gitlabci, terraform (docker and kubernetes resources), ansible tasks and the CI pipeline managers, which are
 // edited like docker refs, the devcontainer image, and kustomize images with a newTag (pinned
 // as `newTag: 1.2@sha256:…`); gitlabci includes, remote includes and
-// components pinned to a commit, or with room for the version comment pinning writes. Custom, bazel-module and nix
-// deps, other kustomize deps and devcontainer features (never pinned, as Renovate's pinDigests: false) can only
+// components pinned to a commit, or with room for the version comment pinning writes. Custom, bazel-module, nix
+// and deps-edn deps, other kustomize deps and devcontainer features (never pinned, as Renovate's pinDigests: false) can only
 // refresh a digest they already carry (regex `digest` group, an annotated `@sha256:`, a
 // kustomize `digest` field or commit ref, an `oci.pull` digest, a git override commit, the commit a flake
-// input is locked or pinned to, `feature:1@sha256:…`); they have no place to insert a new one.
+// input is locked or pinned to, `feature:1@sha256:…`, a git lib's `:git/sha`); they have no place to insert a new one.
 // Neither have terraform and terragrunt module sources: a commit-pinned git source
 // (`?ref=<sha>`, git-refs) refreshes its commit, an OCI source (`?tag=`) is never pinned.
 func digestCapable(d dep.Dep) bool {
 	switch d.Manager {
-	case "custom", "cargo", bazel.Name, nix.Name:
+	case "custom", "cargo", bazel.Name, nix.Name, clojure.DepsEdnName:
 		return d.Digest != ""
 	case kustomize.Name:
 		return d.Digest != "" || kustomize.Pinnable(d)

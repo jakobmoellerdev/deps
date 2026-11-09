@@ -22,6 +22,7 @@ import (
 	bazelds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/bazel"
 	bitriseds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/bitrise"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/checksum"
+	clojureds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/clojure"
 	condads "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/conda"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/crate"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/customds"
@@ -471,6 +472,7 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 		hexds.Name:              hexds.New(client, sem, os.Getenv),
 		hexpmbob.Name:           hexpmbob.New(client, sem, os.Getenv),
 		glasskubepackages.Name:  glasskubepackages.New(client, sem),
+		clojureds.Name:          clojureds.New(maven, os.Getenv),
 	}
 	for name, src := range forges {
 		sources[name] = src

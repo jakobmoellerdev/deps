@@ -16,6 +16,7 @@ import (
 	bazelds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/bazel"
 	bitriseds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/bitrise"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/checksum"
+	clojureds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/clojure"
 	condads "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/conda"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/crate"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/customds"
@@ -181,7 +182,7 @@ const managersIntro = "A **manager** finds dependencies in files and edits them.
 func datasourceDocs() []refdoc.Datasource {
 	return []refdoc.Datasource{
 		gittags.Doc, gittags.RefsDoc, githubreleases.Doc, githubrunners.Doc, kubernetesapi.Doc, forgeds.GitLabReleasesDoc, forgeds.GitLabTagsDoc, forgeds.GiteaReleasesDoc, forgeds.GiteaTagsDoc, forgeds.ForgejoReleasesDoc, forgeds.ForgejoTagsDoc, goproxy.Doc, gotoolchain.Doc, dockerds.Doc, npmds.Doc, nodeversion.Doc, helmds.Doc, crate.Doc, pypi.Doc, pythonversion.Doc, condads.Doc, tfregistry.ProviderDoc, tfregistry.ModuleDoc, mavends.Doc, gradleversion.Doc, rubygems.Doc, rubyversion.Doc, rustversion.Doc, orb.Doc, azuretasks.Doc, bitriseds.Doc, vcpkgds.Doc, elmpackage.Doc, gitlabpackages.Doc, packagist.Doc, juliaregistry.Doc, bazelds.Doc, nugetds.Doc, dotnetversion.Doc, galaxy.Doc, galaxy.CollectionDoc, rpmds.Doc, apkds.Doc, debds.Doc, artifactory.Doc, endoflife.Doc, sbtds.PackageDoc, sbtds.PluginDoc, dart.Doc, dartversion.Doc, flutterversion.Doc, hexds.Doc, hexpmbob.Doc, customds.Doc,
-		javaversion.Doc, glasskubepackages.Doc,
+		javaversion.Doc, glasskubepackages.Doc, clojureds.Doc,
 	}
 }
 

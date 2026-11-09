@@ -76,6 +76,8 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`osgi`](#osgi)
 - [`smithy`](#smithy)
 - [`kotlin-script`](#kotlin-script)
+- [`leiningen`](#leiningen)
+- [`deps-edn`](#deps-edn)
 - [`pub`](#pub)
 - [`fvm`](#fvm)
 - [`mix`](#mix)
@@ -3563,6 +3565,84 @@ Updates the Maven dependencies of Kotlin scripts, as Renovate's kotlin-script ma
 
 - Like Kotlin's resolver, every dep is looked up in the repositories of all `@file:Repository("url", …)` annotations of the file, in file order (also those after the `DependsOn`), and in Maven Central only when the file has none; scripts list Central (`https://repo.maven.apache.org/maven2/`) next to other repositories to keep it. Local repositories (`file://…`) cannot be queried and are left out; a script with only those is looked up in Maven Central.
 
+## leiningen
+
+Updates the dependencies of Leiningen's `project.clj` as Renovate's leiningen manager: the dependency vectors of `:dependencies`, `:managed-dependencies`, `:plugins` and `:pom-plugins` anywhere in the `defproject` form (also in `:profiles`), and `:parent-project` `:coords`. The file is read with a small Clojure reader (comments, `#_` discards, metadata, reader conditionals); only the version bytes are rewritten.
+
+**Files:**
+
+- `project.clj` at any depth
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `dependencies` | dependency vectors `[group/artifact "1.2.3" & options]` (`[artifact "1.2.3"]` is `artifact:artifact`) of every `:dependencies` vector | `clojure` | `maven` | updated |
+| `managed-dependencies` | dependency vectors `[group/artifact "1.2.3" & options]` (`[artifact "1.2.3"]` is `artifact:artifact`) of every `:managed-dependencies` vector; vectors without a version (managed elsewhere) are none | `clojure` | `maven` | updated |
+| `plugins` | dependency vectors `[group/artifact "1.2.3" & options]` (`[artifact "1.2.3"]` is `artifact:artifact`) of every `:plugins` vector (looked up in `:plugin-repositories` when set) | `clojure` | `maven` | updated |
+| `pom-plugins` | dependency vectors `[group/artifact "1.2.3" & options]` (`[artifact "1.2.3"]` is `artifact:artifact`) of every `:pom-plugins` vector (Maven plugins of the generated pom) | `clojure` | `maven` | updated |
+| `parent-project` | `:parent-project {:coords [group/artifact "1.2.3"]}` (lein-parent) | `clojure` | `maven` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `unresolved version ~<name>` | a `~name` version that no top-level `(def name "…")` of the file defines as a string |
+| `non-literal version` | a version computed by an unquoted expression (`~(str …)`) |
+| `cannot locate value` | a version string with escapes |
+| `version range` | a range Maven rejects (`[2.0,1.0)`, `[1.0`) |
+| `dynamic version` | `"RELEASE"` or `"LATEST"` |
+
+**Versions.**
+
+- A `~name` version (Leiningen's unquote) is read from the top-level `(def name "1.2.3")` of the file; the update edits the `def`, and deps sharing it are grouped into one PR.
+- A version is a string: a plain version, or a Maven range (`[1.0,2.0)`) updated as the maven manager does (see its Version ranges); an exact `[1.0]` is updated like a plain version.
+- Libs are looked up with the `clojure` datasource: Clojars then Maven Central, unless the file names repositories (below). Versions are compared with the `maven` versioning.
+
+**Repositories.**
+
+- The http(s) URLs of the `defproject`'s `:repositories` (`[["name" "url"]]`, `[["name" {:url "url"}]]`, maps) follow Leiningen's defaults Maven Central and Clojars; `^:replace` drops the defaults. `:plugin-repositories`, when set, replace `:repositories` for `:plugins`. Credentials (`:creds`, `:username`) are not used.
+
+## deps-edn
+
+Updates the libs of the Clojure CLI's `deps.edn` and Babashka's `bb.edn` as Renovate's deps-edn manager: Maven libs (`:mvn/version`) and git libs (`:git/tag` with `:git/sha`, or `:git/sha` alone) of the top-level `:deps` and of each alias. `:local/root` libs are no deps. Only the version and commit bytes are rewritten.
+
+**Files:**
+
+- `deps.edn` at any depth
+- `bb.edn` at any depth
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `deps` | libs `group/artifact {:mvn/version "1.2.3"}` (`artifact` = `artifact:artifact`, a `$classifier` dropped) and git libs (`:git/url`, `:git/tag`, `:git/sha`) of the top-level `:deps` | `clojure` (Maven), `git-tags` (git tag), `git-refs` (git sha alone) | `maven` (Maven), `tag` (git) | updated |
+| `extra-deps` | libs `group/artifact {:mvn/version "1.2.3"}` (`artifact` = `artifact:artifact`, a `$classifier` dropped) and git libs (`:git/url`, `:git/tag`, `:git/sha`) of an alias's `:extra-deps` | `clojure` (Maven), `git-tags` (git tag), `git-refs` (git sha alone) | `maven` (Maven), `tag` (git) | updated |
+| `override-deps` | libs `group/artifact {:mvn/version "1.2.3"}` (`artifact` = `artifact:artifact`, a `$classifier` dropped) and git libs (`:git/url`, `:git/tag`, `:git/sha`) of an alias's `:override-deps` | `clojure` (Maven), `git-tags` (git tag), `git-refs` (git sha alone) | `maven` (Maven), `tag` (git) | updated |
+| `replace-deps` | libs `group/artifact {:mvn/version "1.2.3"}` (`artifact` = `artifact:artifact`, a `$classifier` dropped) and git libs (`:git/url`, `:git/tag`, `:git/sha`) of an alias's `:replace-deps` or `:deps` | `clojure` (Maven), `git-tags` (git tag), `git-refs` (git sha alone) | `maven` (Maven), `tag` (git) | updated |
+| `default-deps` | libs `group/artifact {:mvn/version "1.2.3"}` (`artifact` = `artifact:artifact`, a `$classifier` dropped) and git libs (`:git/url`, `:git/tag`, `:git/sha`) of an alias's `:default-deps` | `clojure` (Maven), `git-tags` (git tag), `git-refs` (git sha alone) | `maven` (Maven), `tag` (git) | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `cannot locate value` | a version or tag string with escapes |
+| `version range` | a range Maven rejects (`[2.0,1.0)`, `[1.0`) |
+| `dynamic version` | `"RELEASE"` or `"LATEST"` |
+| `unsupported git url` | a git lib whose `:git/url` is no http(s), ssh, git or scp-style repository URL, or without `:git/url` whose name infers none |
+| `git lib without tag or sha` | a git lib with neither `:git/tag` nor `:git/sha` |
+| `invalid git sha` | a `:git/sha` that is not 7 to 40 hex digits |
+
+**Versions.**
+
+- A version is a string: a plain version, or a Maven range (`[1.0,2.0)`) updated as the maven manager does (see its Version ranges); an exact `[1.0]` is updated like a plain version.
+- Libs are looked up with the `clojure` datasource: Clojars then Maven Central, unless the file names repositories (below). Versions are compared with the `maven` versioning.
+
+**Git libs.**
+
+- The repository is `:git/url`, else inferred from the lib name as the Clojure CLI does: `io.github.<owner>/<repo>` (also `com.github.`) on GitHub, `io.gitlab.`/`com.gitlab.` on GitLab, `io.bitbucket.`/`org.bitbucket.` on Bitbucket, `ht.sr.~<user>/<repo>` on SourceHut. The dep's name is the lib as written.
+- A lib with `:git/tag` is a `git-tags` dep: an update writes the new tag and, when `:git/sha` is set, the tag's commit at the length the sha is written with (`"1a2b3c4"` stays 7 digits). A lib with `:git/sha` alone tracks the default branch head (`git-refs`, version `HEAD`) and gets digest updates. The legacy unqualified `:tag` and `:sha` keys are read too.
+
+**Repositories.**
+
+- `:mvn/repos {"name" {:url "…"}}` adds repositories after Maven Central and Clojars (the Clojure CLI's defaults); `"central"` or `"clojars"` with another `:url` replace a default, with `nil` remove it. Without `:mvn/repos` the `clojure` datasource's defaults apply. Credentials (`~/.m2/settings.xml`) are not used.
+
 ## pub
 
 Updates the version constraints of Dart and Flutter packages and the Dart and Flutter SDK constraints in `pubspec.yaml`, and moves `pubspec.lock` with `dart pub upgrade`. pubspec.yaml is read as YAML; only the constraint strings that change are rewritten, so formatting, comments and key order are kept.
@@ -4072,6 +4152,7 @@ When a custom dep and a native manager's dep (docker, helm, …) cover the same 
 | `custom.<name>` | free-form | `customDatasources.<name>.url`, once per run, at most 10 MiB | none | none |
 | `java-version` | `java` or `java-jdk` (the JDK) or `java-jre` (the JRE), optionally followed by `?os=<os>&architecture=<arch>` (Renovate's form) | `GET <DEPS_JAVA_RELEASES_URL or https://api.adoptium.net/v3/info/release_versions>?image_type=<jdk\|jre>&project=jdk&release_type=ga&sort_method=DATE&sort_order=DESC&page_size=50&page=<n>` (Renovate's source, Eclipse Temurin) once per image type and filter per run, pages until a short page or a 404, at most 50: the GA versions as Adoptium semver (`21.0.5+11`), plus a derived `X.Y` and `X` per line | none | none: the Adoptium version list carries no dates (Renovate's has none either), so `minimumReleaseAge` treats versions as of unknown age (see `minimumReleaseAgeBehaviour`) |
 | `glasskube-packages` | the Glasskube package name (`cert-manager`); the dep's source is the package repository URL of its `PackageRepository` (glasskube manager) or `registryUrl` (custom managers; whitespace-separated URLs are tried in order, the first that has the package wins), default `https://packages.dl.glasskube.dev/packages`. Versioning `glasskube` (`v1.17.0+2`, the revision after the version) | `GET <repository>/<name>/versions.yaml` once per repository and package (redirects are followed: the default repository answers from glasskube.github.io): every `versions[].version` is a version, `latestVersion` the release the repository recommends (majors above it are not proposed, as npm's `latest`); a repository answering HTTP 404 does not have the package. Source repository (release notes): `GET <repository>/<name>/<latestVersion>/package.yaml` once per package, only for versions in a pull request: its `references` entry labeled `GitHub`, else one labeled `Website` on a forge | userinfo of the repository URL (`https://user:token@host/…`) as basic auth; redacted in errors and logs | none: versions.yaml has no release times, so `minimumReleaseAge` treats every version as of unknown age (`minimumReleaseAgeBehaviour`) |
+| `clojure` | `groupId:artifactId`; the repositories are the dep's `<url>/` list, Clojars (`https://repo.clojars.org/`, `DEPS_CLOJARS_URL`) then Maven Central when empty | as the `maven` datasource: `GET <repository>/<group/path>/<artifactId>/maven-metadata.xml` per repository, versions merged in repository order; a 404 contributes nothing; `DEPS_MAVEN_CENTRAL_URL` replaces Maven Central | none | as the `maven` datasource (POM `Last-Modified`) |
 
 Renovate datasource names are accepted as aliases (`custom[].datasource`, `rules[].datasources`, markers): `azure-tags` = `git-tags`, `bitbucket-server-tags` = `git-tags`, `bitbucket-tags` = `git-tags`, `github-digest` = `git-refs`, `github-release-attachments` = `github-releases`, `github-tags` = `git-tags`, `golang-version` = `go-toolchain`, `node` = `node-version`.
 
@@ -4151,7 +4232,7 @@ Release notes use the POM of the new version: `<scm><url>`, else `<scm><connecti
 ### Security advisories (OSV)
 
 - deps sends `POST https://api.osv.dev/v1/querybatch` requests of 100 packages each, concurrently, then one `GET /v1/vulns/{id}` per advisory as soon as the batch naming it returns.
-- Ecosystems: `Go` (gomod `direct`/`indirect`; the `go` and `toolchain` directives as packages `stdlib` and `toolchain`, so a vulnerable Go release gets the smallest fixed one of its line; a 2-part `go 1.22` is queried as `1.22.0` and only fixes outside its line count), `npm` (the locked version when package-lock.json has one), `crates.io` (crates.io deps of cargo, with the version Cargo.lock locks; without a lock a partial requirement such as `0.4` is queried as `0.4.0` and only fixes outside its range count), `PyPI` (`pypi` datasource, PEP 503-normalized names, the locked version when the lockfile has one), `Maven` (maven-datasource deps named `group:artifact`, with the version gradle.lockfile locks, and sbt-package deps with their Scala suffix, `cats-core_2.13`), `RubyGems` (`rubygems` datasource: gems of Gemfiles, gems.rb and gemspecs, with the version Gemfile.lock locks, else the requirement's floor), `Packagist` (`packagist` datasource: composer packages, lower-cased, with the version composer.lock locks without its `v`, else the constraint's anchor), `Pub` (`dart` datasource: hosted pub packages, with the version pubspec.lock locks, else the constraint's lower bound), `Hex` (`hex` datasource: mix and gleam packages, with the version mix.lock or manifest.toml locks, else the requirement's anchor; organization packages are not queried), and `GitHub Actions` (github.com actions; ranges are evaluated locally).
+- Ecosystems: `Go` (gomod `direct`/`indirect`; the `go` and `toolchain` directives as packages `stdlib` and `toolchain`, so a vulnerable Go release gets the smallest fixed one of its line; a 2-part `go 1.22` is queried as `1.22.0` and only fixes outside its line count), `npm` (the locked version when package-lock.json has one), `crates.io` (crates.io deps of cargo, with the version Cargo.lock locks; without a lock a partial requirement such as `0.4` is queried as `0.4.0` and only fixes outside its range count), `PyPI` (`pypi` datasource, PEP 503-normalized names, the locked version when the lockfile has one), `Maven` (maven-datasource deps named `group:artifact`, with the version gradle.lockfile locks, and sbt-package deps with their Scala suffix, `cats-core_2.13`, and clojure deps of the leiningen and deps-edn managers), `RubyGems` (`rubygems` datasource: gems of Gemfiles, gems.rb and gemspecs, with the version Gemfile.lock locks, else the requirement's floor), `Packagist` (`packagist` datasource: composer packages, lower-cased, with the version composer.lock locks without its `v`, else the constraint's anchor), `Pub` (`dart` datasource: hosted pub packages, with the version pubspec.lock locks, else the constraint's lower bound), `Hex` (`hex` datasource: mix and gleam packages, with the version mix.lock or manifest.toml locks, else the requirement's anchor; organization packages are not queried), and `GitHub Actions` (github.com actions; ranges are evaluated locally).
 - Terraform: OSV has no Terraform ecosystem, but providers and the CLIs are Go modules with `Go` advisories (GitHub's advisory database files them there). Providers of `registry.terraform.io` and `registry.opentofu.org` (`<namespace>/<type>`, published from `github.com/<namespace>/terraform-provider-<type>`) are queried as that module with the version `.terraform.lock.hcl` locks, else an exact constraint's; the Terraform and OpenTofu CLIs (`github-releases` `hashicorp/terraform` and `opentofu/opentofu`: `required_version`, `.terraform-version`, `.opentofu-version`, `tfe_workspace`) as `github.com/hashicorp/terraform` and `github.com/opentofu/opentofu` with an exact version. A range (`~> 5.0`, `>= 1.5`) names no installed version and is not queried. Fixed versions are bare (`1.5.7`).
 - Distribution packages: `deb`, `apk` and `rpm` deps are queried with the package name and the version as written (OSV matches server-side) in the ecosystem of the release their registry URL names (the first of several URLs that names one): deb suites by codename, with `-security`/`-updates`/`-backports` suffixes dropped (`bookworm` → `Debian:12`, also `buster`, `bullseye`, `trixie`, `forky`; `jammy` → `Ubuntu:22.04:LTS`, also `focal`, `noble`, `oracular`, `plucky`, `questing`, `resolute`; `Ubuntu:Pro:<release>` on `esm.ubuntu.com`); apk `branch=v3.20` or a `/v3.20/` path segment → `Alpine:v3.20`, `packages.wolfi.dev` → `Wolfi`, `packages.cgr.dev` → `Chainguard`; rpm repository paths on any mirror: `/rocky/9[.x]/` → `Rocky Linux:9`, `/almalinux/9[.x]/` → `AlmaLinux:9`, `/leap/15.6/` → `openSUSE:Leap 15.6`, `/rhel9/` or `/ubi9/` → `Red Hat`, of which only the `Red Hat:enterprise_linux:9:` streams count, their ranges evaluated locally with RPM ordering. Suite aliases (`stable`, `testing`, `sid`, the default deb registry's `stable`), Alpine `edge` and other repositories are not queried: their release changes over time or OSV has no ecosystem. OSV files Debian, Ubuntu and Alpine advisories under the source package, so a binary package named differently (`libssl3` of `openssl`) finds nothing. Fixed versions are returned as published, without a `0:` epoch.
 - Not queried, because OSV has no ecosystem for them (checked 2026-11-06): container images (OSV covers the distribution packages inside an image, such as `Debian` or `Alpine`, not the image or its tag), Terraform modules (registry, git and OCI sources) and Terragrunt engines, and Helm charts.
@@ -4166,7 +4247,7 @@ Release notes use the POM of the new version: `<scm><url>`, else `<scm><connecti
 Release notes appear in PR bodies only.
 
 - deps fetches one page of the source repository's GitHub, GitLab or Gitea/Forgejo releases per run.
-- The source repository comes from the action, the module's forge repository (including a small vanity table), npm's `repository` field, the PyPI project URLs, the Maven POM's `<scm>` (or its parent's), the OCI `org.opencontainers.image.source` label, the GitHub, GitLab or Codeberg `homepage` of a vcpkg port's manifest in its registry, or the repository of a `gitlab-*`/`gitea-*`/`forgejo-*` releases or tags dep.
+- The source repository comes from the action, the module's forge repository (including a small vanity table), npm's `repository` field, the PyPI project URLs, the Maven POM's `<scm>` (or its parent's; also for clojure deps), the OCI `org.opencontainers.image.source` label, the GitHub, GitLab or Codeberg `homepage` of a vcpkg port's manifest in its registry, or the repository of a `gitlab-*`/`gitea-*`/`forgejo-*` releases or tags dep.
 - Repositories on gitlab.com and on the configured GitLab instance (`gitlabci.url`, `CI_SERVER_URL`, or the GitLab platform's server) use the GitLab releases API with the whole project path (subgroups included) and the token registered for the host (`Authorization: Bearer`, the CI job token as `JOB-TOKEN`); a Go module there is taken to be its project's root (compare link only when that project's releases were found). Issue (`#1`) and merge request (`!2`) references in GitLab release notes link to the project.
 - Bodies are capped at 2 KiB each and 40 KiB in total, and include a compare link (GitLab: `/-/compare/<from>...<to>`).
 - Failures only drop the notes.

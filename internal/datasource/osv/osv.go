@@ -37,7 +37,8 @@
 //     server-side. Affected entries are matched by normalized name.
 //     Fixed versions are bare, as OSV lists them ("2.32.0").
 //   - maven-datasource deps (maven, gradle, osgi, smithy and kotlin-script managers, custom entries) and sbt-package deps
-//     (the sbt manager's libraries, named with their Scala suffix) named `group:artifact` are
+//     (the sbt manager's libraries, named with their Scala suffix) and clojure-datasource deps
+//     (leiningen and deps-edn Maven libs) named `group:artifact` are
 //     queried as ecosystem "Maven" with that name and the locked version (dep.Dep.Locked),
 //     else the version; OSV matches server-side. A Gradle plugin id (no ":") is queried as
 //     its marker artifact `<id>:<id>.gradle.plugin`, the coordinate GitHub's advisories (and
@@ -253,7 +254,7 @@ func targetOf(d dep.Dep) *target {
 		}
 		return newTarget(query{Package: pkg{Name: pyreq.Normalize(d.Name), Ecosystem: ecoPyPI}, Version: v})
 	}
-	if d.Datasource == "maven" || d.Datasource == "sbt-package" {
+	if d.Datasource == "maven" || d.Datasource == "sbt-package" || d.Datasource == "clojure" {
 		v := cmp.Or(d.Locked, d.Version) // gradle.lockfile pins the resolved version
 		name := d.Name
 		if d.Datasource == "maven" {

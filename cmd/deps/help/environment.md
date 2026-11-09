@@ -46,6 +46,7 @@ Every flag reads its value from `DEPS_<FLAG>` (the flag name in upper case, `-` 
 | `DEPS_HEX_URL` | `hex` datasource | base of the hex.pm API (`/api/packages/<name>`; default `https://hex.pm`; a mirror serving its API) |
 | `HEX_API_KEY` | `hex` datasource | hex.pm API key sent as `Authorization`: lifts the API rate limit (100 to 500 requests per minute) and reads the packages of private organizations (`organization:` in mix.exs); `mix deps.update` reads it too |
 | `DEPS_HEXPM_BOB_URL` | `hexpm-bob` datasource | base of bob's build lists (`/builds/<name>/builds.txt`; default `https://builds.hex.pm`) |
+| `DEPS_CLOJARS_URL` | `clojure` datasource | Clojars repository (a mirror; default `https://repo.clojars.org/`), also where leiningen and deps-edn deps list Clojars |
 | `NuGetPackageSourceCredentials_<key>` | `nuget` datasource | NuGet's credentials of the nuget.config package source `<key>`: `Username=<user>;Password=<token>`; sent as basic auth to that source's host only |
 | `DEPS_DOTNET_RELEASES_URL` | `dotnet-version` datasource | URL of the .NET release metadata index (default `https://builds.dotnet.microsoft.com/dotnet/release-metadata/releases-index.json`); the channels' `releases.json` URLs come from it |
 | `DEPS_JAVA_RELEASES_URL` | `java-version` datasource | URL of the Adoptium release version list (default `https://api.adoptium.net/v3/info/release_versions`); the filter and page parameters are appended |

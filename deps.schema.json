@@ -75,6 +75,7 @@
                 "azure-pipelines-tasks",
                 "bazel",
                 "bitrise",
+                "clojure",
                 "conda",
                 "crate",
                 "dart",
@@ -2255,6 +2256,70 @@
               "managers": {
                 "items": {
                   "enum": [
+                    "leiningen"
+                  ]
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "managers"
+            ]
+          },
+          "then": {
+            "properties": {
+              "depTypes": {
+                "items": {
+                  "enum": [
+                    "dependencies",
+                    "managed-dependencies",
+                    "plugins",
+                    "pom-plugins",
+                    "parent-project"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "managers": {
+                "items": {
+                  "enum": [
+                    "deps-edn"
+                  ]
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "managers"
+            ]
+          },
+          "then": {
+            "properties": {
+              "depTypes": {
+                "items": {
+                  "enum": [
+                    "deps",
+                    "extra-deps",
+                    "override-deps",
+                    "replace-deps",
+                    "default-deps"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "managers": {
+                "items": {
+                  "enum": [
                     "pub"
                   ]
                 },
@@ -2611,6 +2676,8 @@
               "osgi",
               "smithy",
               "kotlin-script",
+              "leiningen",
+              "deps-edn",
               "pub",
               "fvm",
               "mix",
@@ -2801,6 +2868,14 @@
               "bundles",
               "framework",
               "artifacts",
+              "managed-dependencies",
+              "plugins",
+              "pom-plugins",
+              "parent-project",
+              "extra-deps",
+              "override-deps",
+              "replace-deps",
+              "default-deps",
               "dev_dependencies",
               "environment",
               "prod",
@@ -2841,6 +2916,7 @@
                   "azure-pipelines-tasks",
                   "bazel",
                   "bitrise",
+                  "clojure",
                   "conda",
                   "crate",
                   "dart",

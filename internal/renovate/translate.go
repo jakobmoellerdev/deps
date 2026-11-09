@@ -269,7 +269,7 @@ var managerMap = func() map[string][]expansion {
 		"custom.regex":      {{"custom", nil}},
 		"custom.jsonata":    {{"custom", nil}},
 	}
-	for n := range strings.FieldsSeq("gomod kustomize npm nvm nodenv asdf mise pre-commit gitlabci cargo pip_requirements pep621 pep723 setup-cfg pip_setup poetry pipenv pyenv runtime-version homeassistant-manifest terraform terraform-version tflint-plugin terragrunt maven gradle gradle-wrapper maven-wrapper swift bundler ruby-version git-submodules rust-toolchain devcontainer bitbucket-pipelines woodpecker crow droneci circleci azure-pipelines cloudbuild velaci travis buildkite bitrise composer julia bazel-module bazelisk nuget homebrew ansible ansible-galaxy sbt scalafmt kotlin-script pub fvm mix gleam nix quadlet crossplane tekton glasskube osgi smithy") {
+	for n := range strings.FieldsSeq("gomod kustomize npm nvm nodenv asdf mise pre-commit gitlabci cargo pip_requirements pep621 pep723 setup-cfg pip_setup poetry pipenv pyenv runtime-version homeassistant-manifest terraform terraform-version tflint-plugin terragrunt maven gradle gradle-wrapper maven-wrapper swift bundler ruby-version git-submodules rust-toolchain devcontainer bitbucket-pipelines woodpecker crow droneci circleci azure-pipelines cloudbuild velaci travis buildkite bitrise composer julia bazel-module bazelisk nuget homebrew ansible ansible-galaxy sbt scalafmt kotlin-script pub fvm mix gleam nix quadlet crossplane tekton glasskube osgi smithy leiningen deps-edn") {
 		m[n] = []expansion{{n, nil}}
 	}
 	return m
@@ -298,7 +298,7 @@ var categories = map[string][]string{
 	"terraform":  {"terraform", "terraform-version", "tflint-plugin", "terragrunt"},
 	"iac":        {"terraform", "terragrunt", "ansible", "ansible-galaxy", "crossplane"},
 	"ansible":    {"ansible", "ansible-galaxy"},
-	"java":       {"maven", "gradle", "gradle-wrapper", "maven-wrapper", "sbt", "scalafmt", "osgi", "smithy", "kotlin-script"},
+	"java":       {"maven", "gradle", "gradle-wrapper", "maven-wrapper", "sbt", "scalafmt", "osgi", "smithy", "kotlin-script", "leiningen", "deps-edn"},
 	"ruby":       {"bundler", "ruby-version"},
 	"swift":      {"swift"},
 	"php":        {"composer"},

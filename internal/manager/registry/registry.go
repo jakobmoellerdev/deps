@@ -18,6 +18,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bundler"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/cargo"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/circleci"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/clojure"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/cloudbuild"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/composer"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/conda"
@@ -38,8 +39,8 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/homeassistant"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/homebrew"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/julia"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/kubernetes"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/kotlinscript"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/kubernetes"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/kustomize"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/maven"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/mavenwrapper"
@@ -146,6 +147,8 @@ var Builtin = []Entry{
 	{osgi.Doc, osgi.New},
 	{smithy.Doc, smithy.New},
 	{kotlinscript.Doc, kotlinscript.New},
+	{clojure.LeiningenDoc, clojure.NewLeiningen},
+	{clojure.DepsEdnDoc, clojure.NewDepsEdn},
 	{pub.Doc, pub.New},
 	{fvm.Doc, fvm.New},
 	{beam.DocMix, beam.NewMix},

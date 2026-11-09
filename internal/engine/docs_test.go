@@ -15,6 +15,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/azuretasks"
 	bazelds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/bazel"
 	bitriseds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/bitrise"
+	clojureds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/clojure"
 	condads "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/conda"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/crate"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/customds"
@@ -256,7 +257,7 @@ func TestSkipDocsAreProducedByCode(t *testing.T) {
 		"bitbucket-pipelines": {"bitbucketpipelines", "docker"}, "woodpecker": {"woodpecker", "docker"}, "droneci": {"droneci", "docker"},
 		"circleci": {"circleci", "docker"}, "azure-pipelines": {"azurepipelines", "docker"}, "travis": {"travis", "toolversions"}, "buildkite": {"buildkite", "docker"}, "tekton": {"tekton", "docker"},
 		"crow": {"woodpecker", "docker"}, "cloudbuild": {"cloudbuild", "docker"}, "velaci": {"velaci", "docker"},
-		"bazel-module": {"bazel"}, "bazelisk": {"bazel"}, "scalafmt": {"sbt"}, "kotlin-script": {"kotlinscript"}, "mix": {"beam"}, "gleam": {"beam"},
+		"bazel-module": {"bazel"}, "bazelisk": {"bazel"}, "scalafmt": {"sbt"}, "kotlin-script": {"kotlinscript"}, "leiningen": {"clojure"}, "deps-edn": {"clojure"}, "mix": {"beam"}, "gleam": {"beam"},
 		"custom":  {"custom", filepath.Join("..", "datasource", "deb")},
 		"ansible": {"ansible", "docker"}, "ansible-galaxy": {"ansible", "../pyreq"},
 		"quadlet": {"quadlet", "docker"}, "crossplane": {"crossplane", "docker"},
@@ -293,7 +294,7 @@ func TestManagerDocsComplete(t *testing.T) {
 
 func TestDatasourceDocsComplete(t *testing.T) {
 	docs := []refdoc.Datasource{gittags.Doc, gittags.RefsDoc, githubreleases.Doc, githubrunners.Doc, kubernetesapi.Doc, forge.GitLabReleasesDoc, forge.GitLabTagsDoc, forge.GiteaReleasesDoc, forge.GiteaTagsDoc, forge.ForgejoReleasesDoc, forge.ForgejoTagsDoc, goproxy.Doc, gotoolchain.Doc, dockerds.Doc, npmds.Doc, nodeversion.Doc, helmds.Doc, crate.Doc, pypi.Doc, pythonversion.Doc, condads.Doc, tfregistry.ProviderDoc, tfregistry.ModuleDoc, mavends.Doc, gradleversion.Doc, rubygems.Doc, rubyversion.Doc, rustversion.Doc, orb.Doc, azuretasks.Doc, bitriseds.Doc, vcpkgds.Doc, elmpackage.Doc, gitlabpackages.Doc, packagist.Doc, juliaregistry.Doc, bazelds.Doc, nugetds.Doc, dotnetversion.Doc, galaxy.Doc, galaxy.CollectionDoc, rpmds.Doc, apkds.Doc, debds.Doc, endoflife.Doc, sbtds.PackageDoc, sbtds.PluginDoc, dart.Doc, dartversion.Doc, flutterversion.Doc, hexds.Doc, hexpmbob.Doc, customds.Doc, artifactory.Doc}
-	docs = append(docs, javaversion.Doc, glasskubepackages.Doc)
+	docs = append(docs, javaversion.Doc, glasskubepackages.Doc, clojureds.Doc)
 	var names []string
 	for _, d := range docs {
 		if d.Name == "" || d.NameForm == "" || d.Endpoints == "" || d.Auth == "" || d.ReleaseTimes == "" {
