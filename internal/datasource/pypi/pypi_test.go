@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -247,12 +248,14 @@ func TestSimpleAPI(t *testing.T) {
 	for _, c := range []struct {
 		name, fixture, path string
 		want                []string
-		times               map[string]string
+		times, deprecated   map[string]string
 	}{
 		{"requests", "requests-simple.json", "/simple/requests/", []string{"2.31.0", "2.32.2", "2.34.2"},
-			map[string]string{"2.31.0": "2023-05-22T15:12:42.313790Z"}},
+			map[string]string{"2.31.0": "2023-05-22T15:12:42.313790Z"},
+			map[string]string{"2.32.0": "version 2.32.0 yanked", "2.32.1": "version 2.32.1 yanked", "2.31.0": ""}},
 		{"zope.interface", "zope.interface-simple.json", "/simple/zope-interface/", []string{"3.3.0b2", "3.6.1", "8.7"},
-			map[string]string{"3.3.0b2": "2007-01-04T17:10:17Z", "3.6.1": "2010-05-03T15:13:11.689399Z", "8.7": "2026-10-15T07:23:45.197215Z", "5.5.0.dev0": ""}},
+			map[string]string{"3.3.0b2": "2007-01-04T17:10:17Z", "3.6.1": "2010-05-03T15:13:11.689399Z", "8.7": "2026-10-15T07:23:45.197215Z", "5.5.0.dev0": ""},
+			map[string]string{"5.5.0.dev0": "version 5.5.0.dev0 yanked", "5.5.0.DEV0": "version 5.5.0.DEV0 yanked", "8.7": ""}},
 	} {
 		for _, via := range []string{"source", "PIP_INDEX_URL"} {
 			t.Run(c.name+" via "+via, func(t *testing.T) {
@@ -277,6 +280,11 @@ func TestSimpleAPI(t *testing.T) {
 					got, err := s.ReleaseTime(t.Context(), d, v)
 					if err != nil || (want == "" && !got.IsZero()) || (want != "" && !got.Equal(mustTime(t, want))) {
 						t.Errorf("ReleaseTime(%s) = %v, %v; want %q", v, got, err, want)
+					}
+				}
+				for v, want := range c.deprecated {
+					if got := s.Deprecation(d, v); got != want {
+						t.Errorf("Deprecation(%s) = %q, want %q", v, got, want)
 					}
 				}
 				if repo, err := s.SourceRepo(t.Context(), d, ""); err != nil || repo != "" {
@@ -314,6 +322,11 @@ func TestSimpleAPIWithoutVersionsList(t *testing.T) {
 	}
 	if got, _ := s.ReleaseTime(t.Context(), d, "1.2"); !got.IsZero() {
 		t.Errorf("ReleaseTime(1.2) = %v", got)
+	}
+	for v, want := range map[string]string{"1.1": "version 1.1 yanked", "1.0": "", "9.9": ""} {
+		if got := s.Deprecation(d, v); got != want {
+			t.Errorf("Deprecation(%s) = %q, want %q; 1.0 has a file that is not yanked", v, got, want)
+		}
 	}
 }
 
@@ -656,8 +669,9 @@ func TestDecodeHTMLFiles(t *testing.T) {
 		t.Errorf("files =\n%+v\nwant\n%+v", got, want)
 	}
 	p, yanked, err := decodeHTML(strings.NewReader(body), nil, "pkg")
-	if err != nil || !slices.Equal(versions(p.rels), []string{"1.2", "1.3"}) || yanked != 2 {
-		t.Errorf("decodeHTML = %v, %d, %v", versions(p.rels), yanked, err)
+	if err != nil || !slices.Equal(versions(p.rels), []string{"1.2", "1.3"}) || yanked != 2 ||
+		!maps.Equal(p.yanked, map[string]bool{"1.0": true, "1.1": true}) {
+		t.Errorf("decodeHTML = %v, %d, %v, yanked %v", versions(p.rels), yanked, err, p.yanked)
 	}
 }
 

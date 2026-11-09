@@ -136,8 +136,9 @@ func (s *Source) SourceRepo(ctx context.Context, d dep.Dep, _ string) (string, e
 	return p.repo, err
 }
 
-// Deprecation implements datasource.DeprecationSource from the JSON API: the project is
-// classified `Development Status :: 7 - Inactive`, or every file of version is yanked.
+// Deprecation implements datasource.DeprecationSource: the project is classified
+// `Development Status :: 7 - Inactive` (JSON API only), or every file of version is yanked
+// (JSON API `yanked`, simple API PEP 592 `yanked` or `data-yanked`).
 func (s *Source) Deprecation(d dep.Dep, version string) string {
 	p, err := s.view(context.Background(), d) // built by the earlier Releases call
 	switch {
@@ -691,7 +692,8 @@ func (pg *simplePage) add(f simpleFile) {
 }
 
 // project returns the versions (nil: those of the filenames in order of appearance) that
-// have a file that is not yanked, and the number of yanked ones.
+// have a file that is not yanked, and the number of yanked ones, whose keys it records in
+// p.yanked.
 func (pg *simplePage) project(versions []string) (p project, yanked int) {
 	if versions == nil {
 		versions = make([]string, len(pg.order))
@@ -708,6 +710,10 @@ func (pg *simplePage) project(versions []string) (p project, yanked int) {
 			continue
 		case sv.yanked == sv.files:
 			yanked++
+			if p.yanked == nil {
+				p.yanked = map[string]bool{}
+			}
+			p.yanked[k] = true
 			continue
 		}
 		p.rels = append(p.rels, datasource.Release{Version: v})
