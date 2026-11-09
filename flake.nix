@@ -8,7 +8,7 @@
     let
       # The release binaries per Nix system. deps' nix manager moves the urls, hashes and the
       # version to each new release in one pull request.
-      version = "0.6.0";
+      version = "0.7.0";
       downloads = {
         x86_64-linux = {
           url = "https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/v0.6.0/deps_linux_amd64";
