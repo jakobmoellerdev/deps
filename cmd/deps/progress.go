@@ -191,7 +191,8 @@ func (p *progress) Clear(w io.Writer) { _, _ = io.WriteString(w, "\r\x1b[2K") }
 // wraps (Clear only erases one line).
 func (p *progress) Draw(w io.Writer) { _, _ = io.WriteString(w, p.render()) }
 
-// render returns the status line: `⠹ resolving 212/308 · 2.1s · in flight: registry.npmjs.org 18`.
+// render returns the status line: `⠹ resolving 212/308 · 2.1s · 20 open requests:
+// registry.npmjs.org 18, api.github.com 2`.
 func (p *progress) render() string {
 	p.mu.Lock()
 	elapsed := p.now().Sub(p.start)
@@ -201,10 +202,10 @@ func (p *progress) render() string {
 	return p.style.Paint(logx.Cyan, frame) + " " + p.style.Paint(logx.Dim, text)
 }
 
-// text describes the running phase: `resolving 212/308 · 2.1s · in flight:
-// registry.npmjs.org 18, api.github.com 2`. The requests in flight (the three busiest
-// hosts) come last, so a narrow terminal cuts them first, and only with inFlight (not in
-// the final line of a phase).
+// text describes the running phase: `resolving 212/308 · 2.1s · 20 open requests:
+// registry.npmjs.org 18, api.github.com 2`: the number of HTTP requests open now, then how
+// many of them go to each of the three busiest hosts. They come last, so a narrow terminal
+// cuts them first, and only with inFlight (not in the final line of a phase).
 func (p *progress) text(inFlight bool) string {
 	p.mu.Lock()
 	now := p.now()
@@ -227,7 +228,15 @@ func (p *progress) text(inFlight bool) string {
 	fmt.Fprintf(&b, " · %.1fs", elapsed.Seconds())
 	if inFlight && p.inFlight != nil {
 		if hosts := p.inFlight(); len(hosts) > 0 {
-			b.WriteString(" · in flight: ")
+			total := 0
+			for _, u := range hosts {
+				total += u.N
+			}
+			fmt.Fprintf(&b, " · %d open request", total)
+			if total > 1 {
+				b.WriteByte('s')
+			}
+			b.WriteString(": ")
 			for i, u := range hosts[:min(len(hosts), 3)] {
 				if i > 0 {
 					b.WriteString(", ")

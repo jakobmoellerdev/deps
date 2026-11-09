@@ -29,7 +29,7 @@ func TestStatusLineOverlay(t *testing.T) {
 	var buf bytes.Buffer
 	s, w, now := testStatusLine(&buf, 100, httpx.HostUse{Host: "registry.npmjs.org", N: 18}, httpx.HostUse{Host: "api.github.com", N: 2})
 	s.Start(engine.PhaseResolve, 308)
-	line0 := "⠋ resolving 0/308 · 0.0s · in flight: registry.npmjs.org 18, api.github.com 2"
+	line0 := "⠋ resolving 0/308 · 0.0s · 20 open requests: registry.npmjs.org 18, api.github.com 2"
 	if got := buf.String(); got != line0 {
 		t.Fatalf("start: %q", got)
 	}
@@ -42,7 +42,7 @@ func TestStatusLineOverlay(t *testing.T) {
 	w.Redraw()
 	s.End(engine.PhaseResolve)
 	_, _ = w.Write([]byte("after\n"))
-	line1 := "⠙ resolving 213/308 · 1 error · 2.1s · in flight: registry.npmjs.org 18, api.github.com 2"
+	line1 := "⠙ resolving 213/308 · 1 error · 2.1s · 20 open requests: registry.npmjs.org 18, api.github.com 2"
 	want := line0 + clearLine + "record\n" + line0 + clearLine + line1 + clearLine + "after\n"
 	if got := buf.String(); got != want {
 		t.Errorf("output:\n%q\nwant\n%q", got, want)
