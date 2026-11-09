@@ -23,6 +23,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/mavenwrapper"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/nix"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/npm"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/nuget"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pep621"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pipenv"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/piprequirements"
@@ -51,7 +52,8 @@ func newApply(o *rootOpts) *cli.Command {
 // (cargo update), uv.lock, poetry.lock, pdm.lock and Pipfile.lock (pytool), .terraform.lock.hcl
 // (terraform init; next to a terragrunt.hcl only by lock file maintenance), Gemfile.lock (bundle lock), composer.lock (composer update), Manifest.toml
 // (julia Pkg), pubspec.lock (dart pub), MODULE.bazel.lock (bazel mod deps), mix.lock (mix deps.update),
-// manifest.toml (gleam deps update), flake.lock (nix flake update), Gradle lockfiles and verification
+// manifest.toml (gleam deps update), flake.lock (nix flake update), packages.lock.json (dotnet
+// restore), Gradle lockfiles and verification
 // metadata and the Gradle and Maven wrapper files (jvmtool) on temporary copies, Chart.lock and
 // Package.resolved in process and requirements files (pytool.Compiler: pip-compile/uv output
 // regenerated, other hashes from the session's pypi datasource), for apply and run.
@@ -64,7 +66,7 @@ func postProcessors(s *session) map[string]engine.PostProcessor {
 		piprequirements.Name: pytool.Compiler{Hashes: hashes},
 		gradle.Name:          jvmtool.GradleLocker{}, gradlewrapper.Name: jvmtool.GradleWrapper{}, mavenwrapper.Name: jvmtool.MavenWrapper{},
 		swift.Name: swiftLocker(s), julia.Name: julia.Locker{}, pub.Name: pub.Locker{}, beam.NameMix: beam.MixLocker{}, beam.NameGleam: beam.GleamLocker{},
-		nix.Name: nixLocker(s),
+		nix.Name: nixLocker(s), nuget.Name: nuget.Locker{},
 	}
 }
 

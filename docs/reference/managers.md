@@ -3041,7 +3041,7 @@ Updates the Bazel version Bazelisk reads from `.bazelversion` (its first line), 
 
 ## nuget
 
-Updates NuGet package references, MSBuild project SDKs and .NET tools in MSBuild files, central package management (`Directory.Packages.props`), `global.json` (also the .NET SDK) and `dotnet-tools.json`. MSBuild files are scanned with encoding/xml at byte offsets and only the version is rewritten, so attribute order, quotes, comments, whitespace and a UTF-8 byte order mark are kept. NuGet is not run; `packages.lock.json` files are not updated.
+Updates NuGet package references, MSBuild project SDKs and .NET tools in MSBuild files, central package management (`Directory.Packages.props`), `global.json` (also the .NET SDK) and `dotnet-tools.json`. MSBuild files are scanned with encoding/xml at byte offsets and only the version is rewritten, so attribute order, quotes, comments, whitespace and a UTF-8 byte order mark are kept. `packages.lock.json` files are refreshed by `dotnet restore` in `apply` and `run` (see Lockfile below).
 
 **Files:**
 
@@ -3090,6 +3090,15 @@ Updates NuGet package references, MSBuild project SDKs and .NET tools in MSBuild
 
 - global.json's `sdk.version` is the .NET SDK (`dotnet-sdk`, datasource `dotnet-version`): updates move it to a newer SDK, feature bands included (`8.0.100` → `8.0.404`, a patch), and to newer majors as major updates; previews only from a preview. Its `msbuild-sdks` (`"Microsoft.Build.Traversal": "4.1.0"`) are NuGet packages of dep type `msbuild-sdk`.
 - dotnet-tools.json `tools.<id>.version` entries are NuGet packages of dep type `nuget` (`dotnet-ef`, `csharpier`); the `commands` are kept.
+
+**Lockfile (`apply`, `run`).**
+
+- A `packages.lock.json` next to a project (`RestorePackagesWithLockFile`) is its lockfile. A version in any MSBuild file can reach every project below it (Directory.Packages.props, Directory.Build.props, imports), so when an update patches an MSBuild file and the repository holds a lockfile, the repository is mirrored to a temporary directory (every directory recreated, files symlinked, the patched files and the lockfiles copied; `.git`, `bin`, `obj` and `node_modules` left out) and `dotnet restore <project> --use-lock-file -p:RestoreLockedMode=false` runs for each project next to a lockfile. NuGet re-resolves the projects whose references no longer match their lockfile and keeps the others; the changed lockfiles join the update. Updates of global.json and dotnet-tools.json run nothing.
+- `dotnet` (an SDK that can restore the projects' target frameworks) must be on `PATH`, e.g. from `actions/setup-dotnet`; package sources and credentials are NuGet's own (nuget.config, `NuGetPackageSourceCredentials_<key>`). Without it the update fails with `dotnet not found (needed to update packages.lock.json)`; a failed restore reports `dotnet restore in <dir>: <last 20 output lines>` and the update's changes are dropped. A lockfile moved with `NuGetLockFilePath` is not found. `plan` does not run dotnet, and prints `note    packages.lock.json changes are computed by apply/run`.
+
+**Lock file maintenance (`run`).**
+
+With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, every `packages.lock.json` next to a scanned project is refreshed with `dotnet restore --use-lock-file --force-evaluate` (same mirror and options), which moves floating versions (`13.*`) and ranges to the newest versions they admit, transitive packages included. All lockfiles share the PR on `<branchPrefix>lock-file-maintenance`; `minimumReleaseAge` does not apply to it.
 
 ## ansible-galaxy
 
