@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Builds the Debian, RPM, Arch Linux or Alpine packages for both architectures from the release
-# binaries dist/deps_linux_<goarch> (task release:build) with nfpm and packaging/nfpm/nfpm.yaml:
+# binaries $BIN/deps_linux_<goarch> (default dist/bin, task release:build) with nfpm and
+# packaging/nfpm/nfpm.yaml:
 #
 #   build.sh deb <tag>        ->  dist/deps_<version>_<arch>.deb
 #   build.sh rpm <tag>        ->  dist/deps-<version>-1.<arch>.rpm
@@ -15,6 +16,7 @@ set -euo pipefail
 format=${1:?usage: build.sh <deb|rpm|archlinux|apk> <tag>}
 tag=${2:?usage: build.sh <deb|rpm|archlinux|apk> <tag>}
 export DIST=${DIST:-dist}
+export BIN=${BIN:-$DIST/bin}
 nfpm=${NFPM:-nfpm}
 here=$(cd "$(dirname "$0")" && pwd)
 export LICENSE_FILE=${LICENSE_FILE:-$(cd "$here/../.." && pwd)/LICENSE}

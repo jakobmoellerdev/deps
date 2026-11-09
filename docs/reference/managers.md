@@ -4114,21 +4114,23 @@ With [lockFileMaintenance](configuration.md#lockfilemaintenance) enabled, every 
 
 ## nix
 
-Moves the inputs of Nix flakes to the newest commit of the branch they track (a `flake.lock` update with `nix flake update <input>`), to the newest version tag when their ref is one, and NixOS/nixpkgs release branches and channels to the next release (`nixos-24.05` → `nixos-24.11`), as Renovate's `nix` manager does. Renovate's manager is an opt-in beta; deps enables it like every other manager.
+Moves the inputs of Nix flakes to the newest commit of the branch they track (a `flake.lock` update with `nix flake update <input>`), to the newest version tag when their ref is one, and NixOS/nixpkgs release branches and channels to the next release (`nixos-24.05` → `nixos-24.11`), as Renovate's `nix` manager does. Renovate's manager is an opt-in beta; deps enables it like every other manager. It also updates the fixed-output downloads written in `flake.nix` (a `url` with its `hash` or `sha256`: GitHub, Gitea, Forgejo and GitLab tag archives and release assets, npm tarballs), computing the new hash, and the `version` attribute that goes with them.
 
 **Files:**
 
-- `flake.nix` at any depth (its lock: the `flake.lock` next to it; without one the inputs are skipped)
+- `flake.nix` at any depth (its lock: the `flake.lock` next to it; without one the inputs are skipped, the downloads are not)
 
 | Dep type | Extracted | Datasource | Versioning | Default |
 |---|---|---|---|---|
 | `input` | the inputs of `flake.nix` (`inputs.<name>.url = …;`, `inputs = { <name>.url = …; };`, or the attribute form `{ type = "github"; owner = …; repo = …; ref = …; rev = …; }`) that `flake.lock` locks to a commit: `github:`, `gitlab:`, `sourcehut:`, `git+https:`/`git+ssh:` references, forge archive tarballs locked through the lockable tarball protocol (Gitea, Forgejo: `https://<host>/<owner>/<repo>/archive/<ref>.tar.gz`) and NixOS release channels (`https://channels.nixos.org/<channel>/nixexprs.tar.xz`, the `<channel>` branch of `NixOS/nixpkgs`). The name is the input name (Renovate's depName), the source the repository's `https://` URL, the version the ref (none: `HEAD`, the default branch; `refs/heads/` and `refs/tags/` are dropped), the digest the rev `flake.nix` pins, else the commit `flake.lock` locks (none for a channel) | `git-refs` (a branch); `git-tags` when the ref is a version tag | `tag`; `nixpkgs` for a branch of `NixOS/nixpkgs` written verbatim (`nixos-24.05`, `nixpkgs-24.05-darwin`, `release-24.05`, `nixos-unstable`) and a release channel | updated |
+| `download` | a fixed-output download: an attribute set with a `url = "…";` string and a `hash = "…";` or `sha256 = "…";` in the same set, in any order: the argument of `fetchurl` (`pkgs.fetchurl { … }`, `builtins.fetchurl { … }`, `fetchurl rec { … }`) or a plain set (`x86_64-linux = { url = …; hash = …; };` in a let-bound set of per-system sources). The hash is SRI (`sha256-<base64>`) or 64 hex characters and is written back in its form. Inputs' `url`s, strings in `''…''` and comments are not downloads. URLs: `https://<host>/<owner>/<repo>/archive/[refs/tags/]<tag>.tar.gz` (also `.zip`, `.tgz`; GitHub, Gitea, Forgejo): name `<owner>/<repo>`, tags of the repository; `https://<host>/<path>/-/archive/<tag>/<file>` (GitLab, `.tar.gz`, `.tar.bz2`, `.tar`, `.tgz`, `.zip`): name the project path, its tags; `https://<host>/<owner>/<repo>/releases/download/<tag>/<asset>` (GitHub, Gitea, Forgejo): name `<owner>/<repo>`, its releases; `https://<host>/<path>/-/releases/<tag>/downloads/<asset>` (GitLab release asset links): name the project path, its releases; `https://registry.npmjs.org/[@<scope>/]<package>/-/<package>-<version>.tgz`: name the package. GitHub is `github.com`; Gitea and Forgejo are the checkout's forge (the platform's server, else the origin remote's host), `gitea.com`, `codeberg.org` and `code.forgejo.org`; GitLab is any host | archives: `git-tags`; releases: `github-releases`, `gitea-releases` (`forgejo-releases` on codeberg.org and code.forgejo.org, registry the host), `gitlab-releases` (registry the host); npm tarball: `npm` | forges: `loose`; npm: `semver` | updated |
+| `version` | a `version = "…";` attribute equal to the version of a supported download in the same set or a set nested in it (also a let block, `rec { version = …; src = fetchurl { … }; }`): moves with that download | the download's: archives: `git-tags`; releases: `github-releases`, `gitea-releases` (`forgejo-releases` on codeberg.org and code.forgejo.org, registry the host), `gitlab-releases` (registry the host); npm tarball: `npm` | the download's | updated |
 
 **Skips:**
 
 | Reason | When |
 |---|---|
-| `no flake.lock` | the `flake.nix` has no `flake.lock` next to it |
+| `no flake.lock` | an input of a `flake.nix` without `flake.lock` next to it |
 | `unreadable flake.lock` | `flake.lock` is not JSON or has no root node (also reported as an error) |
 | `not in flake.lock` | `flake.lock` has no root input of that name, or the input's node has no `locked`/`original` reference (run `nix flake lock`) |
 | `follows another input` | `flake.lock` records the input as a `follows` of another input |
@@ -4142,6 +4144,10 @@ Moves the inputs of Nix flakes to the newest commit of the branch they track (a 
 | `cannot locate rev` | a rev `flake.nix` pins but does not write verbatim, or that differs from `flake.lock`'s |
 | `input name not addressable by nix flake update` | an input tracking a branch without a pinned rev whose name `nix flake update` cannot address (only letters, digits, `_` and `-`, starting with a letter: nix reads `"a/b"` as input `b` of input `a` and rejects `"a.b"`), so its `flake.lock` cannot move alone. Its tag and rev updates change `flake.nix` and are re-locked without naming it |
 | `unsupported input type <type>` | a `file`, `hg` or other input type without a git repository |
+| `unsupported download url` | a download (a `url` with a `hash` or `sha256`) whose URL is none of the forms above (other hosts, `/archive/` and `/releases/download/` URLs of hosts not known as Gitea or Forgejo), whose tag has no digit, or whose version occurs more than three times in it. A `url` that is not a plain string (interpolated `${version}`) is not read |
+| `no hash` | a supported download URL without a `hash` or `sha256` string in its set |
+| `unsupported hash format` | a hash neither SRI sha256 (`sha256-<base64>`, padded) nor 64 hex characters: nix32 (`0aqdx…`), `sha256:` prefixed, `sha512-…`, or not written verbatim |
+| `hash of unpacked content` | the set is the argument of a fetcher other than `fetchurl` (`fetchzip`, `fetchTarball`, `fetchpatch`, …), or has `postFetch`, `downloadToTemp` or `recursiveHash`: its hash is that of the unpacked or processed content, not of the downloaded file |
 
 **Updates.**
 
@@ -4151,6 +4157,12 @@ Moves the inputs of Nix flakes to the newest commit of the branch they track (a 
 - A release branch of `NixOS/nixpkgs` (`github:NixOS/nixpkgs/nixos-24.05`, `git+https://github.com/NixOS/nixpkgs?ref=nixpkgs-24.05-darwin`) moves to the newest release branch of the same prefix and suffix under Renovate's `nixpkgs` versioning: `nixos-24.05` → `nixos-24.11` is a `minor` update, `nixos-24.11` → `nixos-25.05` a `major` one; `-small`, `-darwin`, `-aarch64` and the `nixos`/`nixpkgs`/`release` prefixes are kept and `unstable` is never proposed. The branch name is rewritten in `flake.nix` (with a pinned rev, the rev too) and `flake.lock` moves to the new branch. Without a newer release the input gets `digest` updates of its branch, as before. The candidates are the repository's branches, from the listing the branch commit is already read from: no other `git-refs` dep (forks of nixpkgs included) gets branch candidates or an extra request.
 - A NixOS release channel (`https://channels.nixos.org/nixos-24.05/nixexprs.tar.xz`) moves the same way to the next release channel, its name rewritten in the URL; it gets no `digest` update, as the channel's commit lags its branch (unstable channels stay skipped).
 - A new release branch exists in `NixOS/nixpkgs` from the branch-off, some weeks before the release, so it is proposed from then on, as in Renovate; hold it back with a rule (`{managers: [nix], updateTypes: [minor, major], dashboardApproval: true}`).
+
+**Downloads.**
+
+- The version of a download is its tag after the non-numeric prefix (`v1.2.3` → `1.2.3`), as for the homebrew manager; every occurrence of it in the URL (tag and asset name) is replaced together.
+- Forge archives, release assets and npm tarballs come without a sha256 to look up, so deps downloads each new URL and hashes it (see Checksums): the hash is that of the file, as `fetchurl` checks it. A plain set passed to another fetcher (`fetchzip url-and-hash-set`) cannot be told apart: its hash would be wrong, and nix reports the mismatch.
+- The downloads of one repository share its name (`<owner>/<repo>`), so per-system sources (`x86_64-linux`, `aarch64-darwin`, …) and their `version` attribute are updated in one PR. `flake.lock` does not lock downloads: their updates alone leave it as it is, and need no `nix`.
 
 **Lockfile (`apply`, `run`).**
 

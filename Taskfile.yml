@@ -173,26 +173,35 @@ tasks:
       - go build -trimpath -ldflags "-s -w -X main.version={{.VERSION}}" -o bin/deps ./cmd/deps
 
   release:build:
-    desc: Build static release binaries for linux, darwin and windows (amd64, arm64), deps.schema.json (with the release's $id) and checksums into dist/
+    desc: Build static release binaries for linux, darwin and windows (amd64, arm64) into dist/bin/, their archives, deps.schema.json (with the release's $id) and checksums into dist/
     env:
       CGO_ENABLED: "0"
     cmds:
-      - rm -rf dist && mkdir -p dist
+      - rm -rf dist && mkdir -p dist/bin
       - for:
           matrix:
             OS: [linux, darwin, windows]
             ARCH: [amd64, arm64]
-        cmd: GOOS={{.ITEM.OS}} GOARCH={{.ITEM.ARCH}} go build -trimpath -ldflags "-s -w -buildid= -X main.version={{.VERSION}}" -o dist/deps_{{.ITEM.OS}}_{{.ITEM.ARCH}}{{if eq .ITEM.OS "windows"}}.exe{{end}} ./cmd/deps
+        cmd: GOOS={{.ITEM.OS}} GOARCH={{.ITEM.ARCH}} go build -trimpath -ldflags "-s -w -buildid= -X main.version={{.VERSION}}" -o dist/bin/deps_{{.ITEM.OS}}_{{.ITEM.ARCH}}{{if eq .ITEM.OS "windows"}}.exe{{end}} ./cmd/deps
       - go run -ldflags "-X main.version={{.VERSION}}" ./cmd/deps schema > dist/deps.schema.json
+      - task: release:archives
       - task: release:checksums
 
+  release:archives:
+    desc: Write the reproducible archives dist/deps_<linux|darwin>_<arch>.tar.xz and dist/deps_windows_<arch>.zip (binary, LICENSE, shell completions) from the binaries in dist/bin/
+    preconditions:
+      - sh: test -f dist/bin/deps_linux_amd64 && test -f dist/bin/deps_linux_arm64
+        msg: "dist/bin/deps_linux_* are missing; run task release:build VERSION={{.VERSION}} first"
+    cmds:
+      - packaging/archive.sh "{{.VERSION}}"
+
   release:checksums:
-    desc: Write dist/checksums.txt (sha256sum) for the binaries and packages in dist/
+    desc: Write dist/checksums.txt (sha256sum) for the release files in dist/ (archives, packages, deps.schema.json), the files the release uploads besides checksums.txt itself
     cmds:
       - cd dist && find . -maxdepth 1 -type f -name 'deps*' -printf '%P\n' | LC_ALL=C sort | xargs sha256sum > checksums.txt
 
   release:packages:
-    desc: Build the Debian, RPM, Arch Linux and Alpine packages from the release binaries and update dist/checksums.txt
+    desc: Build the Debian, RPM, Arch Linux and Alpine packages from the release binaries in dist/bin/ and update dist/checksums.txt
     cmds:
       - task: release:deb
       - task: release:rpm
@@ -200,57 +209,64 @@ tasks:
       - task: release:apk
 
   release:deb:
-    desc: Build reproducible dist/deps_<version>_<arch>.deb packages (amd64, arm64) from the release binaries and add them to dist/checksums.txt
+    desc: Build reproducible dist/deps_<version>_<arch>.deb packages (amd64, arm64) from the release binaries in dist/bin/ and add them to dist/checksums.txt
     deps: [nfpm:install]
     preconditions:
-      - sh: test -f dist/deps_linux_amd64 && test -f dist/deps_linux_arm64
-        msg: "dist/deps_linux_* are missing; run task release:build VERSION={{.VERSION}} first"
+      - sh: test -f dist/bin/deps_linux_amd64 && test -f dist/bin/deps_linux_arm64
+        msg: "dist/bin/deps_linux_* are missing; run task release:build VERSION={{.VERSION}} first"
     cmds:
       - NFPM="{{.NFPM}}" packaging/nfpm/build.sh deb "{{.VERSION}}"
       - task: release:checksums
 
   release:rpm:
-    desc: Build reproducible dist/deps-<version>-1.<arch>.rpm packages (x86_64, aarch64) from the release binaries and add them to dist/checksums.txt
+    desc: Build reproducible dist/deps-<version>-1.<arch>.rpm packages (x86_64, aarch64) from the release binaries in dist/bin/ and add them to dist/checksums.txt
     deps: [nfpm:install]
     preconditions:
-      - sh: test -f dist/deps_linux_amd64 && test -f dist/deps_linux_arm64
-        msg: "dist/deps_linux_* are missing; run task release:build VERSION={{.VERSION}} first"
+      - sh: test -f dist/bin/deps_linux_amd64 && test -f dist/bin/deps_linux_arm64
+        msg: "dist/bin/deps_linux_* are missing; run task release:build VERSION={{.VERSION}} first"
     cmds:
       - NFPM="{{.NFPM}}" packaging/nfpm/build.sh rpm "{{.VERSION}}"
       - task: release:checksums
 
   release:arch:
-    desc: Build reproducible dist/deps-<pkgver>-1-<arch>.pkg.tar.zst Arch Linux packages (x86_64, aarch64) from the release binaries and add them to dist/checksums.txt
+    desc: Build reproducible dist/deps-<pkgver>-1-<arch>.pkg.tar.zst Arch Linux packages (x86_64, aarch64) from the release binaries in dist/bin/ and add them to dist/checksums.txt
     deps: [nfpm:install]
     preconditions:
-      - sh: test -f dist/deps_linux_amd64 && test -f dist/deps_linux_arm64
-        msg: "dist/deps_linux_* are missing; run task release:build VERSION={{.VERSION}} first"
+      - sh: test -f dist/bin/deps_linux_amd64 && test -f dist/bin/deps_linux_arm64
+        msg: "dist/bin/deps_linux_* are missing; run task release:build VERSION={{.VERSION}} first"
     cmds:
       - NFPM="{{.NFPM}}" packaging/nfpm/build.sh archlinux "{{.VERSION}}"
       - task: release:checksums
 
   release:apk:
-    desc: Build reproducible dist/deps-<pkgver>-r0-<arch>.apk Alpine packages (x86_64, aarch64) from the release binaries and add them to dist/checksums.txt
+    desc: Build reproducible dist/deps-<pkgver>-r0-<arch>.apk Alpine packages (x86_64, aarch64) from the release binaries in dist/bin/ and add them to dist/checksums.txt
     deps: [nfpm:install]
     preconditions:
-      - sh: test -f dist/deps_linux_amd64 && test -f dist/deps_linux_arm64
-        msg: "dist/deps_linux_* are missing; run task release:build VERSION={{.VERSION}} first"
+      - sh: test -f dist/bin/deps_linux_amd64 && test -f dist/bin/deps_linux_arm64
+        msg: "dist/bin/deps_linux_* are missing; run task release:build VERSION={{.VERSION}} first"
     cmds:
       - NFPM="{{.NFPM}}" packaging/nfpm/build.sh apk "{{.VERSION}}"
       - task: release:checksums
 
   release:sbom:
-    desc: Write an SPDX 2.3 SBOM of each release binary to dist/attest/deps_linux_<arch>.spdx.json (syft v{{.SYFT_VERSION}})
+    desc: "Write an SPDX 2.3 SBOM of each Linux release binary to dist/attest/<asset>.spdx.json, named after the release file that ships it: deps_linux_<arch>.tar.xz, or the bare deps_linux_<arch> of releases up to v0.6.0 (syft v{{.SYFT_VERSION}})"
     deps: [syft:install]
     preconditions:
-      - sh: test -f dist/deps_linux_amd64 && test -f dist/deps_linux_arm64
-        msg: "dist/deps_linux_* are missing; run task release:build VERSION={{.VERSION}} first"
+      - sh: '{ test -f dist/bin/deps_linux_amd64 && test -f dist/bin/deps_linux_arm64; } || { test -f dist/deps_linux_amd64 && test -f dist/deps_linux_arm64; }'
+        msg: "dist/bin/deps_linux_* are missing; run task release:build VERSION={{.VERSION}} first"
     env:
       SYFT_CHECK_FOR_APP_UPDATE: "false"
     cmds:
       - mkdir -p dist/attest
       - for: [amd64, arm64]
-        cmd: '"{{.SYFT}}" scan -q file:dist/deps_linux_{{.ITEM}} -o spdx-json=dist/attest/deps_linux_{{.ITEM}}.spdx.json'
+        cmd: |
+          set -eu
+          if [ -f dist/bin/deps_linux_{{.ITEM}} ]; then
+            bin=dist/bin/deps_linux_{{.ITEM}} asset=deps_linux_{{.ITEM}}.tar.xz
+          else
+            bin=dist/deps_linux_{{.ITEM}} asset=deps_linux_{{.ITEM}}
+          fi
+          "{{.SYFT}}" scan -q "file:$bin" -o "spdx-json=dist/attest/$asset.spdx.json"
 
   release:attest-from-github:
     desc: "Verify the GitHub attestations of TAG against the Gitea release files (DIR, default: download them) and attach them to the Gitea release (TAG=vX.Y.Z [DIR=dist])"

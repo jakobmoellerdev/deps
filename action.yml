@@ -82,8 +82,9 @@ inputs:
       Reuse a verified binary of the same version instead of downloading it. The runner's tool cache
       (`$RUNNER_TOOL_CACHE/deps/<version>/<arch>`, kept between jobs on self-hosted runners) is
       checked first, then the forge's Actions cache (key `deps-<version>-<os>-<arch>`), which is
-      filled after a download. A cached binary is used only if its sha256 matches the checksum
-      recorded from the release's checksums.txt. `false` downloads every run.
+      filled after a download. A cached binary is used only if its sha256 matches the one recorded
+      when it was installed from the release archive verified against the release's checksums.txt.
+      `false` downloads every run.
     default: "true"
 outputs:
   version:
@@ -242,20 +243,35 @@ runs:
           host="${REPO%/*/*}"; path="${REPO#"$host"/}"
           tmp="$(mktemp -d "$RUNNER_TEMP/deps-download.XXXXXX")"
           echo "deps: downloading $VERSION (linux/$ARCH) from $REPO"
+          # gh downloads through the API with the job token, which also works for private repositories.
           if [ "$host" = https://github.com ] && [ "$SERVER_URL" = https://github.com ] && command -v gh >/dev/null; then
-            # gh downloads through the API with the job token, which also works for private repositories.
-            GH_TOKEN="$TOKEN" gh release download "$VERSION" -R "$path" -D "$tmp" -p checksums.txt -p "deps_linux_$ARCH"
+            fetch() { GH_TOKEN="$TOKEN" gh release download "$VERSION" -R "$path" -D "$tmp" -p "$1"; }
           else
-            base="$REPO/releases/download/$VERSION"
-            curl -fsSL -o "$tmp/checksums.txt" "$base/checksums.txt"
-            curl -fsSL -o "$tmp/deps_linux_$ARCH" "$base/deps_linux_$ARCH"
+            fetch() { curl -fsSL -o "$tmp/$1" "$REPO/releases/download/$VERSION/$1"; }
           fi
-          sum="$(sed -n "s/^\([0-9a-f]\{64\}\)  deps_linux_$ARCH\$/\1/p" "$tmp/checksums.txt")"
-          [ -n "$sum" ] || { echo "deps: checksums.txt of $VERSION has no entry for deps_linux_$ARCH" >&2; exit 1; }
-          (cd "$tmp" && printf '%s  deps_linux_%s\n' "$sum" "$ARCH" | sha256sum -c --quiet -)
+          fetch checksums.txt
+          # Releases after v0.6.0 ship deps_linux_<arch>.tar.xz; earlier ones the bare binary.
+          lookup() { awk -v f="$1" '$2 == f { print $1; exit }' "$tmp/checksums.txt"; }
+          asset="deps_linux_$ARCH.tar.xz"
+          sum="$(lookup "$asset")"
+          if [ -z "$sum" ]; then asset="deps_linux_$ARCH"; sum="$(lookup "$asset")"; fi
+          [ -n "$sum" ] || { echo "deps: checksums.txt of $VERSION has no entry for deps_linux_$ARCH.tar.xz or deps_linux_$ARCH" >&2; exit 1; }
+          fetch "$asset"
+          (cd "$tmp" && printf '%s  %s\n' "$sum" "$asset" | sha256sum -c --quiet -)
+          bin="$tmp/$asset"
+          if [ "$asset" != "deps_linux_$ARCH" ]; then
+            if ! tar -xJf "$tmp/$asset" -C "$tmp" deps; then
+              if ! command -v xz >/dev/null; then
+                echo "deps: extracting $asset needs xz, which is not on PATH; install it on the runner (Debian/Ubuntu: xz-utils, Alpine/Fedora/Arch: xz)" >&2
+              fi
+              exit 1
+            fi
+            bin="$tmp/deps"
+          fi
           # Write next to the binary atomically; concurrent jobs on one runner share the tool cache.
-          install -m 0755 "$tmp/deps_linux_$ARCH" "$DIR/.deps.$$"
-          printf '%s  deps\n' "$sum" > "$DIR/.deps.sha256.$$"
+          # The recorded checksum is the binary's own: the archive it came from was verified above.
+          install -m 0755 "$bin" "$DIR/.deps.$$"
+          printf '%s  deps\n' "$(sha256sum "$DIR/.deps.$$" | cut -d' ' -f1)" > "$DIR/.deps.sha256.$$"
           mv -f "$DIR/.deps.$$" "$DIR/deps"
           mv -f "$DIR/.deps.sha256.$$" "$DIR/deps.sha256"
           rm -rf "$tmp"

@@ -59,7 +59,7 @@ The repository root has a composite [`action.yml`](../action.yml). The same file
 
 1. **Resolve.** It picks the release (see `version`) and the binary for the runner (linux/amd64 or linux/arm64).
 2. **Preinstalled.** If `deps` is on PATH and `deps version` prints the resolved version, the action uses it and skips the cache and download steps (log: `deps: using preinstalled deps <version> (<path>)`). That binary is trusted as is, not checked against `checksums.txt`; set `use-preinstalled: false` to always take the cache/download path. It is not a cache, so `cache: false` does not disable it.
-3. **Reuse or download.** Otherwise, with `cache: true` it reuses a binary of that version from the tool cache or the Actions cache (see **Binary cache** below). Otherwise it downloads it with `checksums.txt`, verifies it with `sha256sum`, and saves it to the Actions cache. It prints `deps version`.
+3. **Reuse or download.** Otherwise, with `cache: true` it reuses a binary of that version from the tool cache or the Actions cache (see **Binary cache** below). Otherwise it downloads `checksums.txt` and the release archive `deps_linux_<arch>.tar.xz`, verifies the archive with `sha256sum`, extracts `deps` with `tar -xJ` (the runner needs `xz`; without it the step fails with `deps: extracting deps_linux_<arch>.tar.xz needs xz, which is not on PATH; …`), and saves the binary to the Actions cache. Releases up to v0.6.0 have no archives; when `checksums.txt` does not list one, the action downloads and verifies the bare binary `deps_linux_<arch>` instead. It prints `deps version`.
 4. **Run.** It runs `deps <args>` with `DEPS_TOKEN` set to the `token` input, and `DEPS_DRY_RUN`, `DEPS_LOG_LEVEL`, `DEPS_CONFIG`, `DEPS_SHOW_SKIPPED` and `DEPS_MAX_NEW_PRS` set to the `dry-run`, `log-level`, `config`, `show-skipped` and `max-new-prs` inputs (or, for an empty input, the job env's variable). Every deps flag reads `DEPS_<FLAG>` when not given, so other flags can be set in the job `env:`; a flag in `args` wins.
 
 Go is not needed to run it; only go.mod updates need `go` for `go mod tidy`.
@@ -71,7 +71,7 @@ The inputs (`token`, `signing-key`, `allow-tasks`, `dry-run`, `log-level`, `conf
 1. **The runner's tool cache**, `$RUNNER_TOOL_CACHE/deps/<version>/<arch>`. Self-hosted runners that keep it between jobs reuse the binary without any network request (only the latest-release lookup remains, unless `version` or a release-tag ref is set). The log shows `deps: cache hit, using <version> from the tool cache`.
 2. **The forge's Actions cache**, key `deps-<version>-linux-<arch>`, restored into that directory with `actions/cache/restore`. GitHub serves it from its cache service, Gitea and Forgejo from the runner's cache server (act_runner `cache:` settings). The log shows `Cache restored from key: deps-<version>-linux-<arch>` and `deps: cache hit, using <version> restored from the Actions cache`.
 
-On a miss the binary is downloaded and verified, then saved under that key (`Cache saved with key: …`). Each cached binary has its checksum line from the release's `checksums.txt` stored next to it (`deps.sha256`), and it runs only if `sha256sum -c` passes; a mismatch logs a warning and downloads again. A new release is a new key, so nothing has to be evicted by hand. If the runner has no cache server, the restore and save steps only log a warning and the action downloads as before.
+On a miss the binary is downloaded and verified, then saved under that key (`Cache saved with key: …`). Each cached binary has its own checksum line stored next to it (`deps.sha256`, written when it was installed from the archive verified against the release's `checksums.txt`), and it runs only if `sha256sum -c` passes; a mismatch logs a warning and downloads again. A new release is a new key, so nothing has to be evicted by hand. If the runner has no cache server, the restore and save steps only log a warning and the action downloads as before.
 
 **Version pinning.** Pin a release tag (`@v0.1.0`) so runs are reproducible; `@main` downloads the latest release.
 
@@ -299,12 +299,12 @@ jobs:
 
 ## GitLab CI
 
-GitLab has no actions, so the job downloads the release binary and runs it:
+GitLab has no actions, so the job downloads the release archive, verifies it and runs the binary in it:
 
 ```yaml
 # .gitlab-ci.yml
 deps:
-  image: golang:1.27 # has git, curl and sha256sum; go is only needed for go.mod updates
+  image: golang:1.27 # has git, curl, sha256sum and xz; go is only needed for go.mod updates
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "web"
     - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH # see "Run on push to the default branch"
@@ -314,8 +314,8 @@ deps:
   script:
     - |
       base=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/$DEPS_VERSION
-      (cd /tmp && curl -fsSLO "$base/deps_linux_amd64" -O "$base/checksums.txt" &&
-        grep ' deps_linux_amd64$' checksums.txt | sha256sum -c - && install -m 0755 deps_linux_amd64 /usr/local/bin/deps)
+      (cd /tmp && curl -fsSLO "$base/deps_linux_amd64.tar.xz" -O "$base/checksums.txt" &&
+        sha256sum -c --ignore-missing checksums.txt && tar -xJf deps_linux_amd64.tar.xz -C /usr/local/bin deps)
     # The job token can't push: push with the deps token instead.
     - git remote set-url origin "${CI_SERVER_PROTOCOL}://oauth2:${DEPS_TOKEN}@${CI_SERVER_FQDN}/${CI_PROJECT_PATH}.git"
     - deps run --show-skipped --log-level info
@@ -1203,21 +1203,27 @@ GitHub runners download from the mirror because the Gitea instance's edge blocks
 
 Pushing a `v*` tag runs `.gitea/workflows/ci.yml`. Its `check` job (`task check`) and `test` job (`task cover`) run in parallel, each with Go from `actions/setup-go@v7.0.0` (`go-version-file: go.mod`, i.e. `toolchain go1.27.3`, and `cache: true`); `check` also restores the pinned golangci-lint binary from `actions/cache`. Then the `release` job runs (`needs: [check, test]`, `contents: write`):
 
-1. `task release:build VERSION=<tag>` builds `dist/deps_<os>_<arch>` for `linux`, `darwin` and `windows` (`.exe`) on `amd64` and `arm64` with `CGO_ENABLED=0`, `-trimpath` and `-ldflags "-s -w -buildid= -X main.version=<tag>"`. It writes `dist/checksums.txt` (`sha256sum`).
-2. Each Linux binary is checked to be static: `readelf -l` must not show `Requesting program interpreter`, because the action runs it on arbitrary runner images.
+1. `task release:build VERSION=<tag>` builds `dist/bin/deps_<os>_<arch>` for `linux`, `darwin` and `windows` (`.exe`) on `amd64` and `arm64` with `CGO_ENABLED=0`, `-trimpath` and `-ldflags "-s -w -buildid= -X main.version=<tag>"`. `task release:archives` (`packaging/archive.sh`, which runs `hack/archive`) packs each into the release archive, and `task release:checksums` writes `dist/checksums.txt` (`sha256sum`) over the files to upload; `dist/bin/` itself is not released:
+   - `dist/deps_<linux|darwin>_<arch>.tar.xz`: `deps` (0755), `LICENSE` and `completions/deps.bash`, `completions/_deps` (zsh), `completions/deps.fish` (0644);
+   - `dist/deps_windows_<arch>.zip`: `deps.exe`, `LICENSE` and `completions/deps.ps1` (PowerShell).
+
+   The completions come from `deps completion <shell>` of the build machine's Linux binary (`packaging/common.sh`). The archives are byte-reproducible on any host: entries sorted, modes fixed, owner `root` (uid and gid 0), every mtime `SOURCE_DATE_EPOCH` (the commit time of the tag), and Go compresses them ([ulikunitz/xz](https://github.com/ulikunitz/xz) and `compress/flate`, pinned by `go.mod`), not the host's `xz`, whose output differs between versions. That keeps the GitHub and Gitea builds identical, which the attestations rely on. Releases up to v0.6.0 have no archives; they ship the bare binaries `deps_<os>_<arch>`.
+2. Each Linux binary in `dist/bin/` is checked to be static: `readelf -l` must not show `Requesting program interpreter`, because the action runs it on arbitrary runner images.
 3. `task release:notes` runs [git-cliff](https://git-cliff.org) with `cliff.toml` and writes the notes of the tag, `git-cliff --latest --strip header`, to `dist/RELEASE_NOTES.md`.
    - git-cliff is pinned to v2.14.2, installed and sha512-verified by `task changelog:install`.
    - The checkout uses `fetch-depth: 0`, so git-cliff sees all commits and tags.
-4. `task release:packages VERSION=<tag>` builds the Debian, RPM, Arch Linux and Alpine packages from those binaries (`release:deb`, `release:rpm`, `release:arch` and `release:apk`), then rewrites `dist/checksums.txt` to cover the binaries and the packages (`task release:checksums`):
+4. `task release:packages VERSION=<tag>` builds the Debian, RPM, Arch Linux and Alpine packages from the binaries in `dist/bin/` (`release:deb`, `release:rpm`, `release:arch` and `release:apk`), then rewrites `dist/checksums.txt` to cover the archives, the packages and `deps.schema.json` (`task release:checksums`):
    - `dist/deps_<version>_amd64.deb` and `dist/deps_<version>_arm64.deb`, by `packaging/nfpm/build.sh deb`;
    - `dist/deps-<version>-1.x86_64.rpm` and `dist/deps-<version>-1.aarch64.rpm`, by `packaging/nfpm/build.sh rpm`;
    - `dist/deps-<pkgver>-1-x86_64.pkg.tar.zst` and `dist/deps-<pkgver>-1-aarch64.pkg.tar.zst`, by `packaging/nfpm/build.sh archlinux`;
    - `dist/deps-<pkgver>-r0-x86_64.apk` and `dist/deps-<pkgver>-r0-aarch64.apk`, by `packaging/nfpm/build.sh apk`.
 5. `packaging/publish.sh dist/*.deb dist/*.rpm dist/*.pkg.tar.zst dist/*.apk` uploads the packages to the owner's Debian, RPM, Arch Linux and Alpine package registries (see below).
-6. `gt release create <tag> --verify-tag --notes-file dist/RELEASE_NOTES.md` publishes the release with the notes, the binaries, the packages and `checksums.txt`. `gt` is the Gitea CLI on the runner, authenticated with `GITEA_TOKEN`, the job token. The GitHub release gets the same assets.
+6. `gt release create <tag> --verify-tag --notes-file dist/RELEASE_NOTES.md` publishes the release with the notes, the archives, the packages, `deps.schema.json` and `checksums.txt`. `gt` is the Gitea CLI on the runner, authenticated with `GITEA_TOKEN`, the job token. The GitHub release gets the same assets.
 7. `task release:attest-from-github TAG=<tag> DIR=dist` waits for the GitHub release's attestations, verifies them against `dist/` and attaches them (see [Attestations](#attestations)). The release is already public at this point, so a failure here only leaves it without attestations until the backfill runs.
 
-**Homebrew.** The repository is its own Homebrew tap: `Formula/deps.rb` installs the `deps_<darwin|linux>_<amd64|arm64>` binaries of a Gitea release. The release job does not touch it; deps' own run (`.gitea/workflows/deps.yml`) finds the new release with its `homebrew` manager and opens one PR that moves the four `url`s, their `sha256` (downloaded and hashed) and the `version` statement together.
+**Homebrew and Nix.** The repository is its own Homebrew tap (`Formula/deps.rb`) and a flake (`flake.nix`), both installing the darwin and linux release files per platform. The release job touches neither; deps' own run (`.gitea/workflows/deps.yml`) finds the new release with its `homebrew` and `nix` managers and opens one PR per file that moves the four URLs, their hashes (downloaded and hashed) and the version together.
+
+Both still point at v0.6.0, whose files are bare binaries. The first release with archives renames the assets, which the managers do not follow, so after that release switch both by hand: append `.tar.xz` to the four URLs and set version and hashes (from `checksums.txt`; SRI `sha256-<base64>` in the flake), and install from the archive. In the formula, `bin.install "deps"`, `bash_completion.install "completions/deps.bash" => "deps"`, `zsh_completion.install "completions/_deps"` and `fish_completion.install "completions/deps.fish"` replace the `chmod`/`generate_completions_from_executable` lines. In the flake, `sourceRoot = ".";` replaces `dontUnpack = true;`, and the install phase runs `install -Dm755 deps "$out/bin/deps"` and `installShellCompletion --cmd deps --bash completions/deps.bash --zsh completions/_deps --fish completions/deps.fish` (no `postInstall`). Both forms were tried against locally built archives (`brew install`/`brew test`, `nix build`). From then on the bot keeps them current.
 
 git-cliff is installed from its GitHub release instead of through `orhun/git-cliff-action`. That action always sends `github.token` to api.github.com to find the release, and on Gitea that token is a Gitea token, so the request fails with 401.
 
@@ -1280,11 +1286,13 @@ Workflows that use the action at `@main`, or without a release ref, pick up a ne
 
 Users verify downloads with `gh attestation verify` or cosign ([Verify a download](install.md#verify-a-download)). The chain:
 
-1. **GitHub signs.** After `task release:packages`, `.github/workflows/release.yml` runs `task release:sbom`: [syft](https://github.com/anchore/syft) v1.56.0 (installed and sha256-verified by `task syft:install`) writes an SPDX 2.3 SBOM of each binary to `dist/attest/deps_linux_<arch>.spdx.json`. Then [`actions/attest`](https://github.com/actions/attest) v4.2.2 (pinned by commit) creates, keyless with the job's OIDC token, Fulcio and the public Rekor log:
-   - one SLSA build provenance attestation (`https://slsa.dev/provenance/v1`) whose subjects are both binaries, all six packages and `checksums.txt`;
-   - one SBOM attestation (`https://spdx.dev/Document/v2.3`) per binary.
+1. **GitHub signs.** After `task release:packages`, `.github/workflows/release.yml` runs `task release:sbom`: [syft](https://github.com/anchore/syft) v1.56.0 (installed and sha256-verified by `task syft:install`) writes an SPDX 2.3 SBOM of each Linux binary in `dist/bin/` to `dist/attest/deps_linux_<arch>.tar.xz.spdx.json`, named after the archive that ships the binary. Then [`actions/attest`](https://github.com/actions/attest) v4.2.2 (pinned by commit) creates, keyless with the job's OIDC token, Fulcio and the public Rekor log:
+   - one SLSA build provenance attestation (`https://slsa.dev/provenance/v1`) whose subjects are the six archives, all eight packages, `deps.schema.json` and `checksums.txt`;
+   - one SBOM attestation (`https://spdx.dev/Document/v2.3`) per Linux binary, whose subject is its archive `deps_linux_<arch>.tar.xz`.
 
-   The job needs `id-token: write` and `attestations: write` besides `contents: write`; `artifact-metadata: write` is only needed for registry storage records, which deps does not create. The attestations land in the repository's attestations API, and the Sigstore bundles become release assets: `<file>.sigstore.json` for every file (copies of the one provenance bundle; a bundle with several subjects verifies each of them), `deps_linux_<arch>.sbom.sigstore.json` and `deps_linux_<arch>.spdx.json`. The packages are not SBOM-attested on their own: they contain the same binary, whose SBOM describes them.
+   A `workflow_dispatch` republish of a release up to v0.6.0 builds with that tag's Taskfile, which writes bare binaries and no archives; the workflow then attests those binaries as before (`release:sbom` and the SBOM steps pick whichever file exists).
+
+   The job needs `id-token: write` and `attestations: write` besides `contents: write`; `artifact-metadata: write` is only needed for registry storage records, which deps does not create. The attestations land in the repository's attestations API, and the Sigstore bundles become release assets: `<file>.sigstore.json` for every file (copies of the one provenance bundle; a bundle with several subjects verifies each of them), `deps_linux_<arch>.tar.xz.sbom.sigstore.json` and `deps_linux_<arch>.tar.xz.spdx.json`. The packages are not SBOM-attested on their own: they contain the same binary, whose SBOM describes them.
 2. **Gitea reuses them.** Gitea can't sign itself:
    - Gitea 28 Actions has no OIDC tokens ([go-gitea/gitea#39052](https://github.com/go-gitea/gitea/issues/39052), planned for 29.0);
    - the public Fulcio trusts only known OIDC issuers, and no Gitea instance is one of them;

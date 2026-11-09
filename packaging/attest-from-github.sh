@@ -45,15 +45,17 @@ if [[ -z $dir ]]; then
 fi
 (cd "$dir" && sha256sum -c --quiet checksums.txt)
 
-# The provenance bundle of every release file, and the SBOM and its bundle of every binary.
+# The provenance bundle of every release file, and the SBOM and its bundle of every Linux archive
+# deps_linux_<arch>.tar.xz (the SBOM describes the binary in it; releases up to v0.6.0 have the
+# bare binary deps_linux_<arch> instead).
 mapfile -t files < <(awk '{print $2}' "$dir/checksums.txt")
 files+=(checksums.txt)
-binaries=()
+linux=()
 want=()
 for f in "${files[@]}"; do
 	want+=("$f.sigstore.json")
 	if [[ $f == deps_linux_* ]]; then
-		binaries+=("$f")
+		linux+=("$f")
 		want+=("$f.spdx.json" "$f.sbom.sigstore.json")
 	fi
 done
@@ -91,7 +93,7 @@ verify() { # <bundle> <type> <file>
 for f in "${files[@]}"; do
 	verify "$out/$f.sigstore.json" slsaprovenance1 "$dir/$f"
 done
-for f in "${binaries[@]}"; do
+for f in "${linux[@]}"; do
 	verify "$out/$f.sbom.sigstore.json" "$spdx_type" "$dir/$f"
 	# The SBOM asset must be the attested one.
 	jq -r .dsseEnvelope.payload "$out/$f.sbom.sigstore.json" | base64 -d | jq -S .predicate >"$tmp/predicate.json"

@@ -35,7 +35,7 @@ deps finds the dependencies in a repository, looks up newer versions, and opens 
 <summary><img src="https://cdn.simpleicons.org/linux/_/white" height="16" alt=""> <img src="https://cdn.simpleicons.org/apple/_/white" height="16" alt=""> <b>Linux / macOS</b> (binary, amd64 and arm64)</summary>
 
 ```sh
-mkdir -p ~/.local/bin && curl -fsSL -o ~/.local/bin/deps "https://github.com/jakobmoellerdev/deps/releases/latest/download/deps_$(uname -s | tr A-Z a-z)_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" && chmod +x ~/.local/bin/deps
+mkdir -p ~/.local/bin && curl -fsSL "https://github.com/jakobmoellerdev/deps/releases/latest/download/deps_$(uname -s | tr A-Z a-z)_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.xz" | tar -xJf - -C ~/.local/bin deps
 ```
 
 </details>
@@ -46,6 +46,15 @@ mkdir -p ~/.local/bin && curl -fsSL -o ~/.local/bin/deps "https://github.com/jak
 ```sh
 brew tap jakobmoellerdev/deps https://git.jakob-moeller.cloud/jakobmoellerdev/deps
 brew install jakobmoellerdev/deps/deps
+```
+
+</details>
+
+<details>
+<summary><img src="https://cdn.simpleicons.org/nixos" height="16" alt=""> <b>Nix</b> (flake, macOS / Linux)</summary>
+
+```sh
+nix profile install github:jakobmoellerdev/deps
 ```
 
 </details>
@@ -101,7 +110,8 @@ apk add deps
 
 ```powershell
 $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'amd64' }
-iwr "https://github.com/jakobmoellerdev/deps/releases/latest/download/deps_windows_$arch.exe" -OutFile deps.exe
+iwr "https://github.com/jakobmoellerdev/deps/releases/latest/download/deps_windows_$arch.zip" -OutFile deps.zip
+Expand-Archive deps.zip -DestinationPath deps   # deps\deps.exe, LICENSE, completions\deps.ps1
 ```
 
 </details>

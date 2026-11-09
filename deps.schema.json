@@ -2693,7 +2693,9 @@
               "depTypes": {
                 "items": {
                   "enum": [
-                    "input"
+                    "input",
+                    "download",
+                    "version"
                   ]
                 }
               }
@@ -3330,6 +3332,7 @@
               "prod",
               "dev",
               "input",
+              "download",
               "configuration",
               "function",
               "tekton-bundle",

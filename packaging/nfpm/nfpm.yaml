@@ -1,5 +1,5 @@
 # nfpm configuration of the Debian, RPM, Arch Linux and Alpine packages. packaging/nfpm/build.sh sets GOARCH,
-# PKG_VERSION, PKG_RELEASE, DIST and COMPLETIONS; every mtime is SOURCE_DATE_EPOCH.
+# PKG_VERSION, PKG_RELEASE, BIN and COMPLETIONS; every mtime is SOURCE_DATE_EPOCH.
 name: deps
 arch: ${GOARCH}
 platform: linux
@@ -14,7 +14,7 @@ priority: optional
 homepage: https://git.jakob-moeller.cloud/jakobmoellerdev/deps
 license: Apache-2.0
 contents:
-  - src: ${DIST}/deps_linux_${GOARCH}
+  - src: ${BIN}/deps_linux_${GOARCH}
     dst: /usr/bin/deps
     expand: true
     file_info:

@@ -3,6 +3,7 @@
 In CI you don't need to install anything: the composite action downloads, verifies and caches the release binary ([Running deps in CI](ci.md)). Install deps to run it on your machine, in a container image, or in a plain `run:` step.
 
 - [Homebrew (macOS, Linux)](#homebrew)
+- [Nix (macOS, Linux)](#nix)
 - [Packages](#packages)
 - [Static binary](#static-binary)
 - [From source](#from-source)
@@ -19,6 +20,24 @@ brew install jakobmoellerdev/deps/deps
 ```
 
 The formula installs the release binary as `deps` with bash, zsh and fish completions and checks it against the release's sha256. deps keeps it current itself: its `homebrew` manager opens a pull request for each new release, and once it is merged, `brew upgrade deps` picks up the new version. `deps run` needs `git`, which macOS ships with the Command Line Tools.
+
+## Nix
+
+The repository is a flake (`flake.nix`) for `x86_64-linux`, `aarch64-linux`, `x86_64-darwin` and `aarch64-darwin`. Its package installs the release binary with bash, zsh and fish completions; Nix checks it against the hash in the flake.
+
+```sh
+nix run github:jakobmoellerdev/deps -- version          # GitHub mirror
+nix profile install git+https://git.jakob-moeller.cloud/jakobmoellerdev/deps
+```
+
+In a flake, add the input and use `packages.<system>.default`, or `overlays.default` for `pkgs.deps`:
+
+```nix
+inputs.deps.url = "github:jakobmoellerdev/deps";
+inputs.deps.inputs.nixpkgs.follows = "nixpkgs";
+```
+
+As with the formula, deps' own `nix` manager moves the flake's download URLs, hashes and version to each new release in one pull request.
 
 ## Packages
 
@@ -68,15 +87,22 @@ apk checks the index signature against the key file name, so keep the name. The 
 
 ## Static binary
 
-For linux, macOS (`darwin`) and Windows on amd64 and arm64: `deps_<os>_<arch>`, with `.exe` on Windows. Download it from the [releases](https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases) and verify it:
+For linux, macOS (`darwin`) and Windows on amd64 and arm64. Each release has one archive per platform on the [releases](https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases) page:
+
+- `deps_<linux|darwin>_<arch>.tar.xz` with `deps`, `LICENSE` and the shell completions `completions/deps.bash`, `completions/_deps` (zsh) and `completions/deps.fish`;
+- `deps_windows_<arch>.zip` with `deps.exe`, `LICENSE` and `completions/deps.ps1` (PowerShell).
+
+Download it, verify it against `checksums.txt` and extract the binary (replace `vX.Y.Z` with the release):
 
 ```sh
-base=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/v0.2.5
-curl -fsSLO "$base/deps_linux_amd64" -O "$base/checksums.txt"
-grep ' deps_linux_amd64$' checksums.txt | sha256sum -c - && install -m 0755 deps_linux_amd64 ~/.local/bin/deps
+base=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/vX.Y.Z
+curl -fsSLO "$base/deps_linux_amd64.tar.xz" -O "$base/checksums.txt"
+sha256sum -c --ignore-missing checksums.txt && tar -xJf deps_linux_amd64.tar.xz -C ~/.local/bin deps
 ```
 
-On macOS use `shasum -a 256 -c` instead of `sha256sum -c`, or install with [Homebrew](#homebrew). The composite action and the Debian, RPM, Arch Linux and Alpine packages stay Linux-only.
+On macOS use `shasum -a 256 -c --ignore-missing` instead of `sha256sum -c --ignore-missing`, or install with [Homebrew](#homebrew). On Windows, compare `Get-FileHash deps_windows_amd64.zip` with its line in `checksums.txt` and extract with `Expand-Archive deps_windows_amd64.zip`. The composite action and the Debian, RPM, Arch Linux and Alpine packages stay Linux-only.
+
+Releases up to v0.6.0 have no archives: they ship the bare binaries `deps_<os>_<arch>` (`.exe` on Windows), verified the same way (`install -m 0755 deps_linux_amd64 ~/.local/bin/deps` after the check).
 
 ## From source
 
@@ -84,33 +110,33 @@ On macOS use `shasum -a 256 -c` instead of `sha256sum -c`, or install with [Home
 
 ## Verify a download
 
-Every release file is attested with [Sigstore](https://www.sigstore.dev) by the release workflow on the GitHub mirror (`.github/workflows/release.yml`): SLSA build provenance for each binary, package and `checksums.txt`, and an SPDX 2.3 SBOM (syft) for each binary. The packages contain the same binary, so the binary's SBOM describes them too. Both forges serve byte-identical files, so the same attestation verifies a download from either one. The bundles are release assets on both forges: `<file>.sigstore.json` (provenance), `deps_linux_<arch>.sbom.sigstore.json` and the SBOM itself, `deps_linux_<arch>.spdx.json`.
+Every release file is attested with [Sigstore](https://www.sigstore.dev) by the release workflow on the GitHub mirror (`.github/workflows/release.yml`): SLSA build provenance for each archive, package, `deps.schema.json` and `checksums.txt`, and an SPDX 2.3 SBOM (syft) of each Linux binary, attested for the archive that ships it (`deps_linux_<arch>.tar.xz`). The packages contain the same binary, so the binary's SBOM describes them too. Both forges serve byte-identical files, so the same attestation verifies a download from either one. The bundles are release assets on both forges: `<file>.sigstore.json` (provenance), `deps_linux_<arch>.tar.xz.sbom.sigstore.json` and the SBOM itself, `deps_linux_<arch>.tar.xz.spdx.json`. Releases up to v0.6.0 attest the bare binaries instead, so their bundles and SBOMs are named after `deps_linux_<arch>`.
 
 With [gh](https://cli.github.com), against GitHub's attestations API:
 
 ```sh
-gh attestation verify deps_linux_amd64 -R jakobmoellerdev/deps
-gh attestation verify deps_linux_amd64 -R jakobmoellerdev/deps --predicate-type https://spdx.dev/Document/v2.3   # the SBOM
+gh attestation verify deps_linux_amd64.tar.xz -R jakobmoellerdev/deps
+gh attestation verify deps_linux_amd64.tar.xz -R jakobmoellerdev/deps --predicate-type https://spdx.dev/Document/v2.3   # the SBOM
 ```
 
 With the bundle from the release instead of the API (works with the Gitea release alone):
 
 ```sh
-base=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/v0.2.5
-curl -fsSLO "$base/deps_linux_amd64" -O "$base/deps_linux_amd64.sigstore.json"
-gh attestation verify deps_linux_amd64 -R jakobmoellerdev/deps --bundle deps_linux_amd64.sigstore.json
+base=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/vX.Y.Z
+curl -fsSLO "$base/deps_linux_amd64.tar.xz" -O "$base/deps_linux_amd64.tar.xz.sigstore.json"
+gh attestation verify deps_linux_amd64.tar.xz -R jakobmoellerdev/deps --bundle deps_linux_amd64.tar.xz.sigstore.json
 ```
 
 Fully offline, add `--custom-trusted-root trusted_root.jsonl` from an earlier `gh attestation trusted-root > trusted_root.jsonl`. Or with [cosign](https://github.com/sigstore/cosign) v3:
 
 ```sh
-cosign verify-blob-attestation --bundle deps_linux_amd64.sigstore.json --type slsaprovenance1 \
+cosign verify-blob-attestation --bundle deps_linux_amd64.tar.xz.sigstore.json --type slsaprovenance1 \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp '^https://github\.com/jakobmoellerdev/deps/\.github/workflows/release\.yml@refs/(tags/v0\.2\.5|heads/main)$' \
-  deps_linux_amd64
+  --certificate-identity-regexp '^https://github\.com/jakobmoellerdev/deps/\.github/workflows/release\.yml@refs/(tags/vX\.Y\.Z|heads/main)$' \
+  deps_linux_amd64.tar.xz
 ```
 
-The signing identity is the release workflow at the tag (`…/release.yml@refs/tags/<tag>`), or at `refs/heads/main` when a release was republished by hand (`workflow_dispatch`). For the SBOM use `deps_linux_amd64.sbom.sigstore.json` with `--type https://spdx.dev/Document/v2.3`.
+The signing identity is the release workflow at the tag (`…/release.yml@refs/tags/<tag>`), or at `refs/heads/main` when a release was republished by hand (`workflow_dispatch`). For the SBOM use `deps_linux_amd64.tar.xz.sbom.sigstore.json` with `--type https://spdx.dev/Document/v2.3`.
 
 **Checksum chain.** `checksums.txt` is attested too, so verifying it covers every file it lists:
 
