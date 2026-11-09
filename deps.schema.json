@@ -2169,6 +2169,64 @@
               "managers": {
                 "items": {
                   "enum": [
+                    "osgi"
+                  ]
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "managers"
+            ]
+          },
+          "then": {
+            "properties": {
+              "depTypes": {
+                "items": {
+                  "enum": [
+                    "bundles",
+                    "framework",
+                    "artifacts"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "managers": {
+                "items": {
+                  "enum": [
+                    "smithy"
+                  ]
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "managers"
+            ]
+          },
+          "then": {
+            "properties": {
+              "depTypes": {
+                "items": {
+                  "enum": [
+                    "maven"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "managers": {
+                "items": {
+                  "enum": [
                     "pub"
                   ]
                 },
@@ -2522,6 +2580,8 @@
               "ansible",
               "sbt",
               "scalafmt",
+              "osgi",
+              "smithy",
               "pub",
               "fvm",
               "mix",
@@ -2709,6 +2769,9 @@
               "scala",
               "sbt",
               "scalafmt",
+              "bundles",
+              "framework",
+              "artifacts",
               "dev_dependencies",
               "environment",
               "prod",

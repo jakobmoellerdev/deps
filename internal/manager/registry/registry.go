@@ -45,6 +45,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/nix"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/npm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/nuget"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/osgi"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pep621"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pep723"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/pipenv"
@@ -57,6 +58,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/rusttoolchain"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/sbt"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/setupcfg"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/smithy"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/swift"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/tekton"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/terraform"
@@ -140,6 +142,8 @@ var Builtin = []Entry{
 	{ansible.Doc, ansible.New},
 	{sbt.Doc, sbt.New},
 	{sbt.ScalafmtDoc, sbt.NewScalafmt},
+	{osgi.Doc, osgi.New},
+	{smithy.Doc, smithy.New},
 	{pub.Doc, pub.New},
 	{fvm.Doc, fvm.New},
 	{beam.DocMix, beam.NewMix},

@@ -73,6 +73,8 @@ The tables give the dep types (for [`rules[].depTypes`](configuration.md#rulesde
 - [`ansible`](#ansible)
 - [`sbt`](#sbt)
 - [`scalafmt`](#scalafmt)
+- [`osgi`](#osgi)
+- [`smithy`](#smithy)
 - [`pub`](#pub)
 - [`fvm`](#fvm)
 - [`mix`](#mix)
@@ -3483,6 +3485,58 @@ Updates the scalafmt version of `.scalafmt.conf` (the top-level `version = 3.8.3
 | Dep type | Extracted | Datasource | Versioning | Default |
 |---|---|---|---|---|
 | `scalafmt` | the `version` key (name `scalameta/scalafmt`) | `github-releases` (`scalameta/scalafmt`) | `semver` | updated |
+
+## osgi
+
+Updates the Maven artifacts of OSGi feature models (OSGi Compendium R8 159, Apache Sling's feature model), as Renovate's osgi manager. Only the version inside the identifier string is rewritten; the file keeps its formatting and comments.
+
+**Files:**
+
+- `*.json` below a `src/main/features/` directory at any depth (only files whose `feature-resource-version` is absent or `1.x`)
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `bundles` | artifact identifiers `group:artifact[:type[:classifier]]:version` (`/` also separates), as a string or the `id` of an object, in `bundles` | `maven` | `maven` | updated |
+| `framework` | artifact identifiers `group:artifact[:type[:classifier]]:version` (`/` also separates), as a string or the `id` of an object, in `framework` of `execution-environment:JSON\|false` | `maven` | `maven` | updated |
+| `artifacts` | artifact identifiers `group:artifact[:type[:classifier]]:version` (`/` also separates), as a string or the `id` of an object, in the array of an artifact list extension `<name>:ARTIFACTS\|<kind>` | `maven` | `maven` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `invalid value` | an identifier with fewer than 3 or more than 5 parts |
+| `variable reference` | a version with a `${…}` variable |
+| `no version` | an identifier ending with `:` |
+| `cannot locate value` | a JSON string with escapes |
+
+**Repositories.**
+
+- Artifacts are looked up in Maven Central (settings.xml mirrors and repositories apply through the maven datasource).
+
+## smithy
+
+Updates the Maven dependencies of Smithy build files (`smithy-build.json`), as Renovate's smithy manager. Only the version inside the coordinate string is rewritten; the file keeps its formatting.
+
+**Files:**
+
+- `smithy-build.json` at any depth
+
+| Dep type | Extracted | Datasource | Versioning | Default |
+|---|---|---|---|---|
+| `maven` | every string `group:artifact:version` of `maven.dependencies`; non-string items are ignored | `maven` | `maven` | updated |
+
+**Skips:**
+
+| Reason | When |
+|---|---|
+| `invalid dependency specification` | a coordinate without group or artifact, or with more than 3 parts |
+| `variable reference` | a coordinate with a `${…}` variable |
+| `no version` | `group:artifact` without a version |
+| `cannot locate value` | a JSON string with escapes |
+
+**Repositories.**
+
+- Dependencies are looked up in the `url`s of `maven.repositories` (in order, URLs with `${…}` ignored), then Maven Central; without repositories only in Maven Central.
 
 ## pub
 
