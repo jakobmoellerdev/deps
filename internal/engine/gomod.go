@@ -99,7 +99,7 @@ func (r *resolver) headUpdate(dir string, reject func(v, reason string)) ([]dep.
 func (r *resolver) majorPathUpdates(t *Trace, ups []dep.Update, scheme versioning.Scheme, dir string, accept func(string, dep.UpdateType) (bool, string), reject func(v, reason string)) ([]dep.Update, error) {
 	d := r.d
 	mps, ok := r.ds.(datasource.MajorPathSource)
-	if !ok || d.Manager != gomod.Name || !r.pol.cfg.GomodUpdateImportPathsEnabled() || !r.pol.allows(dep.Major) {
+	if !ok || d.Manager != gomod.Name || r.skipGomodPaths || !r.pol.allows(dep.Major) {
 		return ups, nil
 	}
 	paths, err := mps.MajorPaths(r.ctx, d, dir)

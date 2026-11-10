@@ -12,6 +12,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 )
 
 // fakeModules is a go datasource with heads (HeadSource), successor major paths
@@ -53,8 +54,13 @@ func (f *fakeModules) MajorPaths(_ context.Context, d dep.Dep, _ string) ([]data
 
 func resolveModules(t *testing.T, cfgYAML string, files map[string]string, ds *fakeModules) (string, *Result) {
 	t.Helper()
+	return resolveModulesEnv(t, env, cfgYAML, files, ds)
+}
+
+func resolveModulesEnv(t *testing.T, e manager.Env, cfgYAML string, files map[string]string, ds *fakeModules) (string, *Result) {
+	t.Helper()
 	root, cfg := setup(t, cfgYAML, files)
-	res, err := Resolve(t.Context(), root, cfg, env, Options{Managers: managers, Datasources: map[string]Datasource{"go": ds}, Now: ageNow})
+	res, err := Resolve(t.Context(), root, cfg, e, Options{Managers: managers, Datasources: map[string]Datasource{"go": ds}, Now: ageNow})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,6 +176,7 @@ func TestMajorPathUpdates(t *testing.T) {
 	v4 := wantUpdate{typ: dep.Major, name: "example.com/m/v4", version: "v4.0.0"}
 	tests := []struct {
 		name, cfg  string
+		skipPaths  bool
 		times      map[string]time.Time
 		want       []wantUpdate
 		wantProbes int32
@@ -177,7 +184,7 @@ func TestMajorPathUpdates(t *testing.T) {
 		{name: "newest major path", want: []wantUpdate{minor, withBucket(v4, "major")}, wantProbes: 1},
 		{name: "one per major", cfg: "separateMultipleMajor: true\n", want: []wantUpdate{minor, withBucket(v3, "v3"), withBucket(v4, "v4")}, wantProbes: 1},
 		{name: "single bucket", cfg: "separateMajorMinor: false\n", want: []wantUpdate{v4}, wantProbes: 1},
-		{name: "switched off", cfg: "gomodUpdateImportPaths: false\n", want: []wantUpdate{minor}},
+		{name: "switched off", skipPaths: true, want: []wantUpdate{minor}},
 		{name: "majors not allowed", cfg: "rules: [{allowedUpdateTypes: [minor, patch]}]\n", want: []wantUpdate{minor}},
 		{name: "majors ignored", cfg: "rules: [{updateTypes: [major], ignore: true}]\n", want: []wantUpdate{minor}},
 		{name: "allow", cfg: "rules: [{allow: '< 4'}]\n", want: []wantUpdate{minor, withBucket(v3, "major")}, wantProbes: 1},
@@ -195,7 +202,9 @@ func TestMajorPathUpdates(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ds := &fakeModules{rels: map[string][]string{name: {"v2.1.0", "v2.2.0"}}, majors: map[string][]datasource.ModulePath{name: majors}, times: tt.times}
-			_, res := resolveModules(t, tt.cfg, map[string]string{"go.mod": "module example.com/x\n\nrequire " + name + " v2.1.0\n"}, ds)
+			e := env
+			e.SkipGomodImportPaths = tt.skipPaths
+			_, res := resolveModulesEnv(t, e, tt.cfg, map[string]string{"go.mod": "module example.com/x\n\nrequire " + name + " v2.1.0\n"}, ds)
 			if len(res.Errors) > 0 {
 				t.Fatal(res.Errors)
 			}
