@@ -283,13 +283,27 @@ func (d *decoder) mismatch(at, n *yaml.Node, field, want string) {
 // renamedKeys are rules[] keys of earlier deps versions or common slips, by the key they mean.
 var renamedKeys = map[string]string{"updates": "allowedUpdateTypes", "manager": "managers"}
 
+// movedKeys are top-level keys of earlier deps versions, by the field path they moved to.
+var movedKeys = map[string]string{
+	"dependencyDashboard":        "dashboard.enabled",
+	"dependencyDashboardTitle":   "dashboard.title",
+	"dependencyDashboardLabels":  "dashboard.labels",
+	"gitAuthor":                  "git.author",
+	"gitIgnoredAuthors":          "git.ignoredAuthors",
+	"platformCommit":             "git.platformCommit",
+	"gomodUpdateImportPaths":     "gomod.updateImportPaths",
+	"composerIgnorePlatformReqs": "composer.ignorePlatformReqs",
+}
+
 func (d *decoder) unknownKey(k *yaml.Node, t reflect.Type, parent string, fields []structField) {
 	scope, ok := scopes[t]
 	if !ok {
 		scope = "?"
 	}
 	msg := "unknown key"
-	if h := renovateHint(k.Value, scope); h != "" {
+	if to := movedKeys[k.Value]; t == reflect.TypeFor[Config]() && to != "" {
+		msg += " (moved to " + to + ")"
+	} else if h := renovateHint(k.Value, scope); h != "" {
 		msg += " (" + h + ")"
 	} else if t == reflect.TypeFor[Config]() && slices.ContainsFunc(d.structFields(reflect.TypeFor[Rule]()), func(f structField) bool { return f.name == k.Value }) {
 		msg += " (" + k.Value + " is a key of rules[] entries)"

@@ -13,7 +13,7 @@
 #   docker:pinDigests, helpers:pinGitHubActionDigests -> pin: digest
 #   group:kubernetesMonorepo, group:goOpenapi    -> monorepos: true (built-in groups, the default)
 #   security:openssf-scorecard                   -> not supported (no scorecard badge in PR bodies)
-#   :dependencyDashboard                         -> dependencyDashboard: true
+#   :dependencyDashboard                         -> dashboard.enabled: true
 #   :rebaseStalePrs                              -> rebaseWhen: behind-base-branch
 # git-submodules: {enabled: true}                -> not supported; OCM has no .gitmodules
 # lockFileMaintenance: {enabled: false}          -> the deps behavior (no lockfile maintenance)
@@ -25,11 +25,12 @@
 # when Renovate is turned off; deps then closes Renovate's leftover PRs after an error-free run.
 branchPrefix: deps/
 rebaseWhen: behind-base-branch # :rebaseStalePrs
-gitAuthor: 'ocmbot[bot] <125909804+ocmbot[bot]@users.noreply.github.com>' # gitAuthor
-gitIgnoredAuthors: ['125909804+ocmbot[bot]@users.noreply.github.com'] # gitIgnoredAuthors
-# RENOVATE_PLATFORM_COMMIT=enabled (renovate.yml): commits through the GitHub API, which GitHub
-# signs as ocmbot[bot]; gitAuthor then only applies if this is switched off.
-platformCommit: enabled
+git:
+  author: 'ocmbot[bot] <125909804+ocmbot[bot]@users.noreply.github.com>' # gitAuthor
+  ignoredAuthors: ['125909804+ocmbot[bot]@users.noreply.github.com'] # gitIgnoredAuthors
+  # RENOVATE_PLATFORM_COMMIT=enabled (renovate.yml): commits through the GitHub API, which GitHub
+  # signs as ocmbot[bot]; git.author then only applies if this is switched off.
+  platformCommit: enabled
 prConcurrentLimit: 0 # prConcurrentLimit: 0 (unlimited, also the deps default)
 prHourlyLimit: 0 # prHourlyLimit: 0 (unlimited, also the deps default)
 pin: digest # docker:pinDigests + helpers:pinGitHubActionDigests
@@ -45,11 +46,12 @@ separateMultipleMajor: true # separateMultipleMajor: true
 updateNotScheduled: true # updateNotScheduled: true: open PRs are kept current outside their schedule
 automerge: false # automerge: false (rule 2 automerges minor and patch updates)
 automergeType: pr # automergeType: 'pr'
-dependencyDashboard: true # :dependencyDashboard
-# Renovate's issue #331 is titled "Dependency Dashboard". deps finds its own issue by title plus a
-# marker, so it would not edit #331, but a second issue with the same title is confusing while both
-# bots run. Drop this line at cutover (and close #331).
-dependencyDashboardTitle: Dependency Dashboard (deps trial)
+dashboard:
+  enabled: true # :dependencyDashboard
+  # Renovate's issue #331 is titled "Dependency Dashboard". deps finds its own issue by title plus
+  # a marker, so it would not edit #331, but a second issue with the same title is confusing while
+  # both bots run. Drop this line at cutover (and close #331).
+  title: Dependency Dashboard (deps trial)
 
 # Schedules: Renovate's '* * * * 0' (any minute on Sunday) is a time window; in deps a schedule is
 # the cron of the workflow trigger that may create the PRs. The workflow therefore has two crons:
@@ -91,7 +93,7 @@ custom:
 # controller chart's values.yaml (tag: latest@sha256:…) is a docker dep (DepType helm) and gets
 # digest refreshes.
 # gomod: `go mod tidy` runs after every go.mod update (Renovate's postUpdateOptions: [gomodTidy]).
-# gomodUpdateImportPaths stays on (the default), although renovate.json5 doesn't list it: Renovate
+# gomod.updateImportPaths stays on (the default), although renovate.json5 doesn't list it: Renovate
 # then moves github.com/google/go-github/v92 to /v93 in go.mod only, deps also rewrites the imports.
 rules:
   - paths: ['bindings/go/kubernetes/controller/chart/**']       # 0 matchFileNames chart/**, groupName

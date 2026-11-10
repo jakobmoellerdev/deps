@@ -60,10 +60,11 @@ func TestSchema(t *testing.T) {
 		t.Errorf("$schema %q $id %q type %q", s.Schema, s.ID, s.Type)
 	}
 	rule, custom, actions, customDS, lfm := s.Defs["Rule"], s.Defs["Custom"], s.Defs["Actions"], s.Defs["CustomDatasource"], s.Defs["LockFileMaintenance"]
-	if rule == nil || custom == nil || actions == nil || customDS == nil || lfm == nil {
+	git, dashboard, gomod, composer := s.Defs["Git"], s.Defs["Dashboard"], s.Defs["Gomod"], s.Defs["Composer"]
+	if rule == nil || custom == nil || actions == nil || customDS == nil || lfm == nil || git == nil || dashboard == nil || gomod == nil || composer == nil {
 		t.Fatalf("$defs = %v", s.Defs)
 	}
-	for name, n := range map[string]*schemaNode{"root": &s, "Rule": rule, "Custom": custom, "Actions": actions, "CustomDatasource": customDS, "LockFileMaintenance": lfm} {
+	for name, n := range map[string]*schemaNode{"root": &s, "Rule": rule, "Custom": custom, "Actions": actions, "CustomDatasource": customDS, "LockFileMaintenance": lfm, "Git": git, "Dashboard": dashboard, "Gomod": gomod, "Composer": composer} {
 		if n.AdditionalProperties != false {
 			t.Errorf("%s: additionalProperties must be false", name)
 		}
@@ -86,8 +87,8 @@ func TestSchema(t *testing.T) {
 	if got, ok := s.Properties["ignorePaths"].Default.([]any); !ok || !slices.Equal(strs(got), config.DefaultIgnorePaths) {
 		t.Errorf("ignorePaths default = %v", s.Properties["ignorePaths"].Default)
 	}
-	if got := s.Properties["gitAuthor"].Default; got != defaultAuthorName+" <"+defaultAuthorEmail+">" {
-		t.Errorf("gitAuthor default = %v", got)
+	if got := git.Properties["author"].Default; got != defaultAuthorName+" <"+defaultAuthorEmail+">" {
+		t.Errorf("git.author default = %v", got)
 	}
 	var updates []string
 	for _, u := range dep.UpdateTypes {
@@ -110,6 +111,7 @@ func TestSchema(t *testing.T) {
 		{"custom.datasource", datasourceEnum(t, "custom.datasource", custom.Properties["datasource"]), config.DatasourceNames},
 		{"customDatasources.format", customDS.Properties["format"], customds.Formats},
 		{"rebaseWhen", s.Properties["rebaseWhen"], config.RebaseWhens},
+		{"git.platformCommit", git.Properties["platformCommit"], config.PlatformCommits},
 		{"rangeStrategy", s.Properties["rangeStrategy"], config.RangeStrategies},
 		{"rules.rangeStrategy", rule.Properties["rangeStrategy"], config.RangeStrategies},
 		{"automergeStrategy", s.Properties["automergeStrategy"], config.AutomergeStrategies},
@@ -155,9 +157,9 @@ func TestSchema(t *testing.T) {
 			t.Errorf("%s pattern %q is too loose", name, n.Pattern)
 		}
 	}
-	if want := []string{"version", "pin", "rangeStrategy", "schedule", "timezone", "security", "branchPrefix", "baseBranches", "additionalBranchPrefix", "useBaseBranchConfig", "rebaseWhen", "gitAuthor", "platformCommit", "gitIgnoredAuthors", "prConcurrentLimit", "prHourlyLimit", "monorepos", "replacements", "actions", "gitlabci", "terraform", "gomodUpdateImportPaths", "minimumReleaseAge", "minimumReleaseAgeBehaviour", "abandonmentThreshold", "ignorePaths",
+	if want := []string{"version", "pin", "rangeStrategy", "schedule", "timezone", "security", "branchPrefix", "baseBranches", "additionalBranchPrefix", "useBaseBranchConfig", "rebaseWhen", "monorepos", "replacements", "git", "prConcurrentLimit", "prHourlyLimit", "actions", "terraform", "gomod", "gitlabci", "composer", "minimumReleaseAge", "minimumReleaseAgeBehaviour", "abandonmentThreshold", "ignorePaths",
 		"separateMajorMinor", "separateMultipleMajor", "separateMinorPatch", "updateNotScheduled", "automerge", "automergeStrategy", "automergeType", "draftPR", "prCreation", "prNotPendingHours", "labels", "reviewers", "assignees", "prTitle", "prHeader", "prFooter", "rebaseLabel", "stopUpdatingLabel",
-		"dependencyDashboard", "dependencyDashboardTitle", "dependencyDashboardLabels", "dashboardApproval", "extends", "rules", "custom", "customDatasources", "registryAliases", "lockFileMaintenance", "composerIgnorePlatformReqs"}; len(s.Properties) != len(want) {
+		"dashboard", "dashboardApproval", "extends", "rules", "custom", "customDatasources", "registryAliases", "lockFileMaintenance"}; len(s.Properties) != len(want) {
 		t.Errorf("root properties = %d, want %v", len(s.Properties), want)
 	} else {
 		for _, k := range want {
@@ -174,8 +176,9 @@ func TestSchema(t *testing.T) {
 		t.Errorf("CustomDatasource required %v, defaults %v %v", customDS.Required, customDS.Properties["format"].Default, customDS.Properties["versions"].Default)
 	}
 	if s.Properties["rules"].Items.Ref != "#/$defs/Rule" || s.Properties["custom"].Items.Ref != "#/$defs/Custom" || s.Properties["actions"].Ref != "#/$defs/Actions" ||
-		s.Properties["lockFileMaintenance"].Ref != "#/$defs/LockFileMaintenance" {
-		t.Error("rules/custom/actions/lockFileMaintenance do not reference their $defs")
+		s.Properties["lockFileMaintenance"].Ref != "#/$defs/LockFileMaintenance" || s.Properties["git"].Ref != "#/$defs/Git" || s.Properties["dashboard"].Ref != "#/$defs/Dashboard" ||
+		s.Properties["gomod"].Ref != "#/$defs/Gomod" || s.Properties["composer"].Ref != "#/$defs/Composer" {
+		t.Error("rules/custom/actions/lockFileMaintenance/git/dashboard/gomod/composer do not reference their $defs")
 	}
 	if !slices.Equal(custom.Required, []string{"files"}) || rule.Required != nil || s.Required != nil {
 		t.Errorf("required: root %v rule %v custom %v", s.Required, rule.Required, custom.Required)
@@ -185,8 +188,8 @@ func TestSchema(t *testing.T) {
 		s.Properties["separateMinorPatch"].Default != false || s.Properties["updateNotScheduled"].Default != true ||
 		s.Properties["automerge"].Default != false || s.Properties["automergeStrategy"].Default != "auto" ||
 		s.Properties["draftPR"].Default != false || s.Properties["prCreation"].Default != config.PRCreationImmediate ||
-		s.Properties["dependencyDashboard"].Default != false || s.Properties["dependencyDashboardTitle"].Default != config.DefaultDashboardTitle || s.Properties["dashboardApproval"].Default != false ||
-		s.Properties["gomodUpdateImportPaths"].Default != true || lfm.Properties["enabled"].Default != false ||
+		dashboard.Properties["enabled"].Default != false || dashboard.Properties["title"].Default != config.DefaultDashboardTitle || s.Properties["dashboardApproval"].Default != false ||
+		gomod.Properties["updateImportPaths"].Default != true || lfm.Properties["enabled"].Default != false ||
 		s.Properties["minimumReleaseAgeBehaviour"].Default != config.TimestampOptional {
 		t.Error("defaults missing")
 	}

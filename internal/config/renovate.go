@@ -49,12 +49,19 @@ var RenovateOptions = map[string]RenovateOption{
 	"fileFilters":                 {Scope: "rules[].postUpgradeTasks", To: "files", Note: "doublestar globs, not minimatch"},
 	"defaultRegistryUrlTemplate":  {Scope: "customDatasources.<name>", To: "url"},
 	"transformTemplates":          {Scope: "customDatasources.<name>", To: "versions", Note: "a selector plus versionRegex instead of JSONata"},
-	"postUpdateOptions":           {Note: "gomodTidy is always on; gomodUpdateImportPaths is the top-level key gomodUpdateImportPaths"},
+	"postUpdateOptions":           {Note: "gomodTidy is always on; gomodUpdateImportPaths is gomod.updateImportPaths"},
 	"semanticCommits":             {Note: "semantic commits are always on; see rules[].commitType and rules[].commitScope"},
 	"hostRules":                   {Note: "not supported: credentials come from the environment, see deps help environment"},
 	"platformAutomerge":           {Note: "platform automerge is always on"},
 	"ignoreTests":                 {Note: "not supported: deps never merges without green checks"},
 	"dependencyDashboardApproval": {To: "dashboardApproval"},
+	"dependencyDashboard":         {To: "dashboard.enabled"},
+	"dependencyDashboardTitle":    {To: "dashboard.title"},
+	"dependencyDashboardLabels":   {To: "dashboard.labels"},
+	"gitAuthor":                   {To: "git.author"},
+	"gitIgnoredAuthors":           {To: "git.ignoredAuthors"},
+	"platformCommit":              {To: "git.platformCommit"},
+	"composerIgnorePlatformReqs":  {To: "composer.ignorePlatformReqs"},
 }
 
 // ValidCustomDatasourceName reports whether name is an accepted customDatasources key

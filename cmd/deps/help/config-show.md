@@ -2,19 +2,20 @@ Prints the effective configuration as YAML: every top-level key in schema order,
 
 Four values are shown as the commands resolve them:
 
-- `gitAuthor` is the commit author of `run`: `--author-name`/`--author-email` (accepted here too), then `$DEPS_GIT_AUTHOR`, then the file, then `deps[bot] <deps-bot@noreply.invalid>`.
+- `git.author` is the commit author of `run`: `--author-name`/`--author-email` (accepted here too), then `$DEPS_GIT_AUTHOR`, then the file, then `deps[bot] <deps-bot@noreply.invalid>`.
 - `actions.defaultHost` is the host of `owner/repo@ref` actions: the file, then the host of `$DEPS_DEFAULT_ACTIONS_URL`, then the platform default (`data.forgejo.org` on Forgejo Actions, else `github.com`).
-- `platformCommit` is `$DEPS_PLATFORM_COMMIT` when set, else the file, else `auto`.
+- `git.platformCommit` is `$DEPS_PLATFORM_COMMIT` when set, else the file, else `auto`.
 - `gitlabci.url` is the GitLab instance of the `gitlabci` manager: the file, then `$CI_SERVER_URL`, then `https://gitlab.com`.
 
-`--sources` appends where each value comes from as a comment: `default`, `file`, `env` or `flag`. Nested objects (`actions`, `gitlabci`, `terraform`, `lockFileMaintenance`) are annotated per key:
+`--sources` appends where each value comes from as a comment: `default`, `file`, `env` or `flag`. Nested objects (`git`, `actions`, `gitlabci`, `terraform`, `gomod`, `composer`, `dashboard`, `lockFileMaintenance`) are annotated per key:
 
 ```yaml
 # effective configuration of /repo/.deps.yaml
 version: 1 # default
 pin: digest # file
 ...
-gitAuthor: bot <bot@example.com> # env
+git:
+  author: bot <bot@example.com> # env
 ...
 actions:
   defaultHost: github.com # default

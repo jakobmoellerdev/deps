@@ -26,7 +26,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/schedule"
 )
 
-// Git is the git plumbing the bot needs; implemented by gitx.Repo, and for platformCommit by
+// Git is the git plumbing the bot needs; implemented by gitx.Repo, and for git.platformCommit by
 // gitx.Repo with Commit, Push and BranchTip going through the GitHub API (platform.GitHubCommits).
 type Git interface {
 	RevParse(ctx context.Context, rev string) (string, error)
@@ -1084,7 +1084,7 @@ func branchFresh(ctx context.Context, o Options, s *runState, grp engine.Group, 
 
 // sameChanges reports whether the files changes touch are the same in commit sha (the
 // branch tip) as in tree (base head with changes applied). A tip whose objects are not local
-// (platformCommit) never matches, so the branch is rebuilt.
+// (git.platformCommit) never matches, so the branch is rebuilt.
 func sameChanges(ctx context.Context, g Git, sha, tree string, changes []engine.FileChange) (bool, error) {
 	paths := make([]string, 1, len(changes)+1)
 	paths[0] = "."

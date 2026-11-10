@@ -151,7 +151,7 @@ func TestDashboardApprovalPolicy(t *testing.T) {
 		{name: "security update does not", vulns: []Vuln{vuln("A", "v1.1.0")}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			root, cfg := setup(t, "dependencyDashboard: true\nrules: [{managers: [gomod], dashboardApproval: true}]\n", map[string]string{"go.mod": modA})
+			root, cfg := setup(t, "dashboard: {enabled: true}\nrules: [{managers: [gomod], dashboardApproval: true}]\n", map[string]string{"go.mod": modA})
 			o := sources(nil, goVersions)
 			o.Security = &fakeSec{vulns: map[string][]Vuln{"example.com/a": tt.vulns}}
 			res, err := Resolve(t.Context(), root, cfg, env, o)

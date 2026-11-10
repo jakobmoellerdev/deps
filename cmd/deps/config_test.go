@@ -48,10 +48,10 @@ func TestConfigShow(t *testing.T) {
 		"# effective configuration of " + filepath.Join(dir, ".deps.yaml") + "\n",
 		"\nversion: 1\npin: digest\nrangeStrategy: auto\n",
 		"\nsecurity: true\nbranchPrefix: deps/\n",
-		"\ngitAuthor: deps[bot] <deps-bot@noreply.invalid>\n",
+		"\ngit:\n  author: deps[bot] <deps-bot@noreply.invalid>\n",
 		"\nactions:\n  defaultHost: github.com\n",
 		"\ngitlabci:\n  url: https://gitlab.com\n",
-		"\nplatformCommit: auto\n",
+		"\n  platformCommit: auto\n",
 		"\nignorePaths: []\n",
 		"\nrules:\n  - names: ['k8s.io/**']\n    commitScope: ''\n",
 		"\ncustom:\n  - files: [Makefile]\n    versioning: semver\n",
@@ -77,10 +77,10 @@ func TestConfigShow(t *testing.T) {
 	for _, want := range []string{
 		"\nversion: 1 # default\npin: digest # file\n",
 		"\nschedule: [] # default\n",
-		"\ngitAuthor: bot <bot@example.com> # env\n",
+		"\ngit:\n  author: bot <bot@example.com> # env\n",
 		"\nactions:\n  defaultHost: gitea.com # env\n",
 		"\ngitlabci:\n  url: https://gitlab.example.com # env\n",
-		"\nplatformCommit: disabled # env\n",
+		"\n  platformCommit: disabled # env\n",
 		"\nterraform:\n  defaultRegistry: \"\" # default\n",
 		"\nignorePaths: [] # file\n",
 		"\nrules: # file\n",
@@ -91,7 +91,7 @@ func TestConfigShow(t *testing.T) {
 		}
 	}
 	stdout, _, _ = execute(t, "config", "show", "--dir", dir, "--sources", "--author-email", "me@example.com")
-	if want := "\ngitAuthor: bot <me@example.com> # flag\n"; !strings.Contains(stdout, want) {
+	if want := "\ngit:\n  author: bot <me@example.com> # flag\n"; !strings.Contains(stdout, want) {
 		t.Errorf("flag: missing %q in\n%s", want, stdout)
 	}
 

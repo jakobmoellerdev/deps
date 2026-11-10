@@ -15,7 +15,7 @@ Replace `vX.Y.Z` with your deps version (`deps version`, or the action's `versio
 **Loading and validation.**
 
 - Decoding is strict. Every problem is reported as `<path>:<line>:<col>: <field>: <message>`, one per line, sorted by position, all in one run: syntax errors, unknown keys, values of the wrong type and failed validations.
-- An unknown key names a close match or, for a Renovate option, its deps equivalent: `.deps.yaml:1:1: automerg: unknown key (did you mean automerge?)`, `.deps.yaml:3:5: rules[0].matchPackageNames: unknown key (Renovate's matchPackageNames is names here)`.
+- An unknown key names a close match, for a Renovate option its deps equivalent, or for a key of an earlier deps version where it moved: `.deps.yaml:1:1: automerg: unknown key (did you mean automerge?)`, `.deps.yaml:3:5: rules[0].matchPackageNames: unknown key (Renovate's matchPackageNames is names here)`, `.deps.yaml:2:1: dependencyDashboard: unknown key (moved to dashboard.enabled)`.
 - A value of the wrong type names what the key takes: `.deps.yaml:1:8: rules: want a list, got a mapping`.
 - An unknown value of a fixed set (`depTypes`, `datasources`, `updateTypes`, `pin`, `rangeStrategy`, `commitType`, ...) suggests a close match (`unknown value "devDependency" (did you mean devDependencies?)`); without one, sets of up to 10 values are listed, longer ones point at `deps config describe <key>`.
 - Under GitHub Actions, each problem is also printed as an `::error file=<path>,line=<line>,col=<col>,title=deps::<field>: <message>` workflow command, so it shows as an annotation on the config file (Gitea and Forgejo do not render annotations, so deps prints none there).
@@ -33,12 +33,14 @@ minimumReleaseAge: 3 days
 security: true
 branchPrefix: deps/
 rebaseWhen: behind-base-branch
-gitAuthor: 'deps[bot] <deps-bot@noreply.invalid>'
+git:
+  author: 'deps[bot] <deps-bot@noreply.invalid>'
 prConcurrentLimit: 10
 prHourlyLimit: 2
 separateMinorPatch: false
-dependencyDashboard: true
-dependencyDashboardLabels: [dependencies]
+dashboard:
+  enabled: true
+  labels: [dependencies]
 separateMultipleMajor: true
 ignorePaths: ['**/node_modules/**', '**/testdata/**', 'third_party/**']
 rules:
@@ -117,27 +119,32 @@ customDatasources:
 - [`rebaseWhen`](#rebasewhen)
 - [`monorepos`](#monorepos)
 - [`replacements`](#replacements)
-- [`gitAuthor`](#gitauthor)
-- [`platformCommit`](#platformcommit)
-- [`gitIgnoredAuthors`](#gitignoredauthors)
+- [`git`](#git)
+  - [`git.author`](#gitauthor)
+  - [`git.ignoredAuthors`](#gitignoredauthors)
+  - [`git.platformCommit`](#gitplatformcommit)
 - [`prConcurrentLimit`](#prconcurrentlimit)
 - [`prHourlyLimit`](#prhourlylimit)
 - [`actions`](#actions)
   - [`actions.defaultHost`](#actionsdefaulthost)
 - [`terraform`](#terraform)
   - [`terraform.defaultRegistry`](#terraformdefaultregistry)
-- [`gomodUpdateImportPaths`](#gomodupdateimportpaths)
+- [`gomod`](#gomod)
+  - [`gomod.updateImportPaths`](#gomodupdateimportpaths)
 - [`gitlabci`](#gitlabci)
   - [`gitlabci.url`](#gitlabciurl)
+- [`composer`](#composer)
+  - [`composer.ignorePlatformReqs`](#composerignoreplatformreqs)
 - [`registryAliases`](#registryaliases)
 - [`ignorePaths`](#ignorepaths)
 - [`updateNotScheduled`](#updatenotscheduled)
 - [`prNotPendingHours`](#prnotpendinghours)
 - [`rebaseLabel`](#rebaselabel)
 - [`stopUpdatingLabel`](#stopupdatinglabel)
-- [`dependencyDashboard`](#dependencydashboard)
-- [`dependencyDashboardTitle`](#dependencydashboardtitle)
-- [`dependencyDashboardLabels`](#dependencydashboardlabels)
+- [`dashboard`](#dashboard)
+  - [`dashboard.enabled`](#dashboardenabled)
+  - [`dashboard.title`](#dashboardtitle)
+  - [`dashboard.labels`](#dashboardlabels)
 - [`extends`](#extends)
 - [`rules`](#rules)
   - [`rules[].managers`](#rulesmanagers)
@@ -210,7 +217,6 @@ customDatasources:
 - [`lockFileMaintenance`](#lockfilemaintenance)
   - [`lockFileMaintenance.enabled`](#lockfilemaintenanceenabled)
   - [`lockFileMaintenance.schedule`](#lockfilemaintenanceschedule)
-- [`composerIgnorePlatformReqs`](#composerignoreplatformreqs)
 
 ## `version`
 
@@ -470,7 +476,7 @@ Age of a dependency's newest release after which the dependency dashboard and it
 
 - **Type:** string
 
-A dependency whose newest release is older than this is listed under **Abandoned dependencies** on the [dashboard](#dependencydashboard), and its update PRs say so under **Warnings** (Renovate's `abandonmentThreshold`).
+A dependency whose newest release is older than this is listed under **Abandoned dependencies** on the [dashboard](#dashboard), and its update PRs say so under **Warnings** (Renovate's `abandonmentThreshold`).
 
 - **Syntax:** as for [`minimumReleaseAge`](#minimumreleaseage), plus months (30 days) and years (365 days): `1 year`, `18 months`, `2y`. Empty or `0` turns the check off (the default).
 - **Newest release:** the highest stable release the datasource lists. With npm, the package's `modified` time bounds every release, so a package not modified within the threshold is abandoned without another request (`no release since <date>`); otherwise the newest release's time is looked up, once per dep (`newest release <v> published <date>`; for npm that is the full packument, shared with `minimumReleaseAge` and the PR's age column). Datasources without release times, and unknown times, never flag a dep.
@@ -572,7 +578,7 @@ How updates are automerged: pr (platform auto-merge of the PR) or branch (push t
 5. If the base branch declines the push (branch protection, a required PR, a pre-receive hook), deps opens the PR instead, as for failed checks.
 
 - CI must run on pushes to the update branches (`deps/**`), and the token must be allowed to push to the base branch. On GitHub a protected base branch needs the token's App or user on the bypass list; on Gitea and Forgejo it needs push access in the branch protection (*Enable push*, with the user allowlisted if restricted); on GitLab the token's role must be *Allowed to push* on a protected branch.
-- A repository without any checks never merges: the branch waits. Tick it under **Pending branch automerge** on the [dashboard](#dependencydashboard) to open its PR instead.
+- A repository without any checks never merges: the branch waits. Tick it under **Pending branch automerge** on the [dashboard](#dashboard) to open its PR instead.
 - Once a PR exists for the branch, it stays a PR and is automerged as such; the strategy then applies again.
 - New branches count toward the PR limits (`--max-new-prs`, `prConcurrentLimit`, `prHourlyLimit`) of the run that pushes them, as does raising a PR for a failed branch.
 - Branches no update wants anymore and without a PR are deleted after an error-free run (`deleted`), unless someone else committed to them.
@@ -600,7 +606,7 @@ rules:
 
 ## `prCreation`
 
-When the PR of a new update branch is opened: immediate (right after the push), not-pending (on a later run, once the branch's checks finished, passed or failed, or prNotPendingHours after its last commit), status-success (once they all passed) or approval (once its checkbox under Pending approval on the dependency dashboard is ticked; requires dependencyDashboard). Until then the branch waits without a PR, listed on the dependency dashboard. Rules override it.
+When the PR of a new update branch is opened: immediate (right after the push), not-pending (on a later run, once the branch's checks finished, passed or failed, or prNotPendingHours after its last commit), status-success (once they all passed) or approval (once its checkbox under Pending approval on the dependency dashboard is ticked; requires dashboard.enabled). Until then the branch waits without a PR, listed on the dependency dashboard. Rules override it.
 
 - **Type:** string
 - **Default:** `immediate`
@@ -616,8 +622,8 @@ Renovate's `prCreation`. With `immediate` (the default) the PR is opened right a
 
 1. The first run pushes the branch (one commit on top of the base) without a PR: `created, PR waiting for checks`.
 2. Later runs read the checks of the branch tip and open the PR when the mode allows (`created`); until then the branch is `up-to-date` with the outcome above. deps does not wait for the checks within a run.
-3. A branch with other content than this run builds is rebuilt and pushed again (`updated`), and its checks start over. A branch that is only behind the base is kept, unless `rebaseWhen: behind-base-branch` (then it is rebuilt on the base, like a PR branch) or its commit was made through the API (`platformCommit`): deps cannot read such a branch's files locally, so it rebuilds it whenever the base moved.
-4. Waiting branches are listed under **Pending status checks** on the [dashboard](#dependencydashboard); ticking one opens its PR on the next run without waiting.
+3. A branch with other content than this run builds is rebuilt and pushed again (`updated`), and its checks start over. A branch that is only behind the base is kept, unless `rebaseWhen: behind-base-branch` (then it is rebuilt on the base, like a PR branch) or its commit was made through the API (`git.platformCommit`): deps cannot read such a branch's files locally, so it rebuilds it whenever the base moved.
+4. Waiting branches are listed under **Pending status checks** on the [dashboard](#dashboard); ticking one opens its PR on the next run without waiting.
 
 - CI must run on pushes to the update branches (`deps/**`); with workflows that only run on `pull_request` the branch never gets checks and never gets its PR. A repository without any checks waits forever too (Renovate's `prNotPendingHours` fallback is not offered); tick the branch on the dashboard to open its PR.
 - New branches count toward the PR limits of the run that pushes them, as does opening the PR of a waiting branch.
@@ -698,15 +704,16 @@ Rendered below the release notes, above the workflow run link (in Actions, see `
 
 ## `dashboardApproval`
 
-Create no new PR (or automerge branch) for an update until it is approved on the dependency dashboard: it is listed under Pending approval, and ticking its checkbox makes the next run create it. Security updates need no approval. Rules override it; requires dependencyDashboard.
+Create no new PR (or automerge branch) for an update until it is approved on the dependency dashboard: it is listed under Pending approval, and ticking its checkbox makes the next run create it. Security updates need no approval. Rules override it; requires dashboard.enabled.
 
 - **Type:** boolean
 - **Default:** `false`
 
-Renovate's `dependencyDashboardApproval`: an update that needs approval gets no PR (and, with [`automergeType: branch`](#automergetype), no branch) until someone approves it on the [dashboard](#dependencydashboard). Usually it is set per rule, e.g. for majors:
+Renovate's `dependencyDashboardApproval`: an update that needs approval gets no PR (and, with [`automergeType: branch`](#automergetype), no branch) until someone approves it on the [dashboard](#dashboard). Usually it is set per rule, e.g. for majors:
 
 ```yaml
-dependencyDashboard: true
+dashboard:
+  enabled: true
 rules:
   - updateTypes: [major]
     dashboardApproval: true
@@ -715,7 +722,7 @@ rules:
 - The run reports `skipped: awaiting dashboard approval` and does not build the update; the dashboard lists it under **Pending approval** with a checkbox. Ticking it makes the next run create the PR, regardless of `schedule` and the PR limits, like the other `create` checkboxes.
 - Approval is needed once: an update with an open PR or an existing branch is handled as usual, also when its version moves on. A PR closed without merging is ignored as usual (**Ignored or blocked**); its `recreate` checkbox approves it too.
 - A group needs approval when any of its updates does. Security updates never need approval (Renovate's `vulnerabilityAlerts` default). Lock file maintenance follows the top-level value.
-- It requires [`dependencyDashboard: true`](#dependencydashboard). Without issues (`dashboard skipped: issues disabled`) nothing can be approved, so these updates wait.
+- It requires [`dashboard.enabled: true`](#dashboardenabled). Without issues (`dashboard skipped: issues disabled`) nothing can be approved, so these updates wait.
 
 ## `timezone`
 
@@ -771,7 +778,7 @@ Base branches deps run proposes updates against, each resolved from its own tip:
 - **Branch names.** With more than one entry, or a regex entry (it can match more branches later), every update branch carries its base: `<branchPrefix><base>/<additionalBranchPrefix><slug(name)>`, `<branchPrefix><base>/<additionalBranchPrefix>group/<slug(group)>`, e.g. `deps/release/1.x/golang.org-x-net`. A single named entry keeps the plain names. Switching from one base to several renames the branches: the open PRs of the old names are closed as obsolete in that run.
 - **Checkouts.** The checkout of `--dir` serves the base whose tip it is; every other base is fetched (shallow in a shallow clone) and checked out into a temporary linked work tree, removed when `run` ends. Every base is resolved with the config of the checkout (Renovate's default `useBaseBranchConfig: none`), its rules matching that base with [`rules[].baseBranches`](#rulesbasebranches); with [`useBaseBranchConfig`](#usebasebranchconfig) each base's own config file is merged over it.
 - **Per base:** the PRs of a base are those targeting it, so its obsolete PRs are closed only when its own resolution had no error; branches without a PR are deleted only when no base had one. PRs to branches the run does not handle are left alone.
-- **For the run:** the PR limits ([`prConcurrentLimit`](#prconcurrentlimit), `prHourlyLimit`, `--max-new-prs`) count all bases together, and the [dashboard](#dependencydashboard) is one issue with a section per base.
+- **For the run:** the PR limits ([`prConcurrentLimit`](#prconcurrentlimit), `prHourlyLimit`, `--max-new-prs`) count all bases together, and the [dashboard](#dashboard) is one issue with a section per base.
 - `run --base <branch>` overrides the key: one base, the checkout's, with the plain branch names. `plan` and `apply` work on the checkout as before; `explain --base <branch>` and `preview --base <branch>` resolve a base as `run` does.
 
 ```yaml
@@ -784,7 +791,7 @@ rules:
 
 ## `useBaseBranchConfig`
 
-Config of the base branches run resolves from their own tip (baseBranches, explain --base, preview --base): none (the checkout's config), merge (the config file of the same name on the base branch is merged over the checkout's config as extends merges, the base's keys winning; a base without the file is a config error), merge-if-present (as merge, a base without the file uses the checkout's config). The keys that span the run (baseBranches, useBaseBranchConfig, branchPrefix, the PR limits, git and rebase settings, the dashboard) stay the checkout's.
+Config of the base branches run resolves from their own tip (baseBranches, explain --base, preview --base): none (the checkout's config), merge (the config file of the same name on the base branch is merged over the checkout's config as extends merges, the base's keys winning; a base without the file is a config error), merge-if-present (as merge, a base without the file uses the checkout's config). The keys that span the run (baseBranches, useBaseBranchConfig, branchPrefix, the PR limits, prNotPendingHours, git, the rebase settings, the dashboard) stay the checkout's.
 
 - **Type:** string
 - **Default:** `none`
@@ -799,7 +806,7 @@ Renovate's `useBaseBranchConfig`: which config `deps run` applies to a base bran
 | `merge-if-present` | as `merge`; a base without the file gets the checkout's config |
 
 - **Merge.** As an [`extends`](#extends) chain merges, with the base's file (and the files it extends) last: its top-level keys replace the checkout's, its `rules` and `custom` entries follow the checkout's, `customDatasources` and `registryAliases` are merged by name. The merged config is validated as a whole; a problem in the base's file names it `<base>:<file>`.
-- **Run-wide keys** stay the checkout's, as one run handles every base: `baseBranches`, `useBaseBranchConfig` (as in Renovate), `branchPrefix`, `gitAuthor`, `platformCommit`, `gitIgnoredAuthors`, `prConcurrentLimit`, `prHourlyLimit`, `rebaseWhen`, `rebaseLabel`, `stopUpdatingLabel`, `updateNotScheduled` and the dependency dashboard keys. A base that sets another value logs a warning (`the base branch's config sets a key that spans the run`).
+- **Run-wide keys** stay the checkout's, as one run handles every base: `baseBranches`, `useBaseBranchConfig` (as in Renovate), `branchPrefix`, `git`, `prConcurrentLimit`, `prHourlyLimit`, `prNotPendingHours`, `rebaseWhen`, `rebaseLabel`, `stopUpdatingLabel`, `updateNotScheduled` and `dashboard`. A base that sets another value logs a warning (`the base branch's config sets a key that spans the run`).
 - **Which config applied.** `run` prints `base    <base>  config .deps.yaml + <base>:.deps.yaml` before the updates of a merged base; `explain --base <base>` prints the same line and names the base's rules `from <base>:.deps.yaml:<line>`; `preview --base <base>` (default `$GITHUB_BASE_REF`, `$CI_MERGE_REQUEST_TARGET_BRANCH_NAME`) merges both checkouts' files over the default branch's config when the pull request targets another branch and the default branch's config sets `useBaseBranchConfig`, and names the files in its output and step summary.
 
 ```yaml
@@ -821,7 +828,7 @@ When to rebuild an open update PR whose content is unchanged: conflicted (only w
 | `behind-base-branch` | also when the branch is not a single commit on the current base head (status `rebased`) |
 | `never` | never; only content changes update the PR |
 
-A PR whose content changed is always updated. Branches with commits by other authors are never rebuilt (see [`gitIgnoredAuthors`](#gitignoredauthors)).
+A PR whose content changed is always updated. Branches with commits by other authors are never rebuilt (see [`git.ignoredAuthors`](#gitignoredauthors)).
 
 ## `monorepos`
 
@@ -849,37 +856,46 @@ Replace packages that moved or were renamed upstream with a replacement update: 
 - **Type:** boolean
 - **Default:** `true`
 
-## `gitAuthor`
+## `git`
 
-Author and committer of deps commits as `Name <email>` (git identity). Overridden by $DEPS_GIT_AUTHOR and the --author-name/--author-email flags. With a signing key (run --signing-key), use a verified email of the key's owner on the forge, or the signature does not count as verified. Ignored for platform commits (platformCommit), whose author is the token's account; branches whose tip it authored still count as deps' own.
+Commit identity and how deps commits.
+
+- **Type:** object
+
+The commit identity ([`git.author`](#gitauthor), [`git.ignoredAuthors`](#gitignoredauthors)) and whether commits go through the GitHub API ([`git.platformCommit`](#gitplatformcommit)).
+
+```yaml
+git:
+  author: 'ocmbot[bot] <125909804+ocmbot[bot]@users.noreply.github.com>'
+  ignoredAuthors: ['125909804+ocmbot[bot]@users.noreply.github.com']
+```
+
+### `git.author`
+
+Author and committer of deps commits as `Name <email>` (git identity). Overridden by $DEPS_GIT_AUTHOR and the --author-name/--author-email flags. With a signing key (run --signing-key), use a verified email of the key's owner on the forge, or the signature does not count as verified. Ignored for platform commits (git.platformCommit), whose author is the token's account; branches whose tip it authored still count as deps' own.
 
 - **Type:** string
 - **Default:** `deps[bot] <deps-bot@noreply.invalid>`
 
-- Precedence, per field: `--author-name`/`--author-email` > `$DEPS_GIT_AUTHOR` > `gitAuthor` > `deps[bot] <deps-bot@noreply.invalid>`.
+- Precedence, per field: `--author-name`/`--author-email` > `$DEPS_GIT_AUTHOR` > `git.author` > `deps[bot] <deps-bot@noreply.invalid>`.
 - GitHub bot noreply addresses such as `ocmbot[bot] <1+ocmbot[bot]@users.noreply.github.com>` are accepted.
-- An invalid value fails with `gitAuthor: must be 'Name <email>', got "<v>"`.
+- An invalid value fails with `git.author: must be 'Name <email>', got "<v>"`.
 
-```yaml
-gitAuthor: 'ocmbot[bot] <125909804+ocmbot[bot]@users.noreply.github.com>'
-gitIgnoredAuthors: ['125909804+ocmbot[bot]@users.noreply.github.com']
-```
+### `git.ignoredAuthors`
 
-## `platformCommit`
+Commit author emails (case-insensitive) besides the bot's own whose commits on an update branch do not count as modifications: such branches are still updated and rebased.
+
+- **Type:** list of strings
+
+Each entry must be an email address. A branch whose tip was committed by one of them still counts as the bot's own, so it is updated and rebased instead of `skipped: branch modified by someone else`. Useful when the bot identity ([`git.author`](#gitauthor)) changes.
+
+### `git.platformCommit`
 
 Create commits and move update branches through the GitHub API instead of git, so that GitHub signs them and shows them as verified, authored by the GitHub App (e.g. ocmbot[bot]). auto enables it on GitHub when the token is a GitHub App installation token (ghs_..., also GITHUB_TOKEN in Actions) and no signing key is set; enabled requires GitHub and no signing key; disabled always uses git. GitHub signs API commits only for App tokens; with a personal access token they stay unsigned. Overridden by $DEPS_PLATFORM_COMMIT.
 
 - **Type:** string
 - **Default:** `auto`
 - **Values:** `auto`, `enabled`, `disabled`
-
-## `gitIgnoredAuthors`
-
-Commit author emails (case-insensitive) besides the bot's own whose commits on an update branch do not count as modifications: such branches are still updated and rebased.
-
-- **Type:** list of strings
-
-Each entry must be an email address. A branch whose tip was committed by one of them still counts as the bot's own, so it is updated and rebased instead of `skipped: branch modified by someone else`. Useful when the bot identity ([`gitAuthor`](#gitauthor)) changes.
 
 ## `prConcurrentLimit`
 
@@ -957,7 +973,15 @@ terraform:
   defaultRegistry: registry.opentofu.org
 ```
 
-## `gomodUpdateImportPaths`
+## `gomod`
+
+gomod manager settings.
+
+- **Type:** object
+
+See [`gomod.updateImportPaths`](#gomodupdateimportpaths).
+
+### `gomod.updateImportPaths`
 
 Propose major updates of Go modules to their next major module path (github.com/x/y/v2 → /v3, also /v2 for v0/v1 modules), rewriting the require and the import paths in the module's .go files before go mod tidy. The new major's API may differ, so the build can break. false proposes no module path changes (go mod tidy would undo a path change without rewritten imports).
 
@@ -972,7 +996,8 @@ Go majors from v2 on live under their own module path (`github.com/google/go-git
 - Renovate's equivalent is `postUpdateOptions: [gomodUpdateImportPaths]`, which is off there by default.
 
 ```yaml
-gomodUpdateImportPaths: false
+gomod:
+  updateImportPaths: false
 ```
 
 ## `gitlabci`
@@ -986,6 +1011,32 @@ gitlabci manager settings.
 Base URL of the GitLab instance project includes and $CI_SERVER_FQDN components resolve against, e.g. https://gitlab.example.com or https://example.com/gitlab; empty means auto-detected (CI_SERVER_URL, else the GitLab platform run detected from the remote, else https://gitlab.com).
 
 - **Type:** string
+
+## `composer`
+
+composer manager settings.
+
+- **Type:** object
+
+See [`composer.ignorePlatformReqs`](#composerignoreplatformreqs).
+
+### `composer.ignorePlatformReqs`
+
+Platform requirements composer update ignores when it updates composer.lock, each passed as --ignore-platform-req=\<req> (php, ext-intl, ext-\*, lib-\*); [] or null ignores none, so the runner's PHP and extensions must satisfy them. Unset, deps ignores every platform requirement, or only ext-\* and lib-\* when composer.json sets config.platform.php.
+
+- **Type:** list of strings
+
+Renovate's `composerIgnorePlatformReqs`: the platform requirements (`php`, `ext-*`, `lib-*`, `composer-plugin-api`) `composer update` ignores when deps updates a `composer.lock` (`apply`, `run`, lock file maintenance; see the [composer manager](managers.md#composer)).
+
+- **Unset** (deps' default): every platform requirement is ignored (`--ignore-platform-reqs`), since the runner's PHP and extensions are not the project's. When composer.json sets `config.platform.php`, which stands in for the PHP version, only `ext-*` and `lib-*` are (`--ignore-platform-req=ext-* --ignore-platform-req=lib-*`).
+- **A list:** exactly these are ignored, each passed as `--ignore-platform-req=<req>`; patterns such as `ext-*` work as in Composer. The others are checked against the runner's PHP and extensions (or `config.platform`), and a package version they exclude fails the update.
+- **`[]` or `null`:** none is ignored.
+- Renovate's default `[]` means `ext-*` and `lib-*` there (with a PHP matching the project's installed by Renovate), and `null` none; `deps migrate` writes `[ext-*, lib-*]` for an explicit `[]` and `[]` for `null`.
+
+```yaml
+composer:
+  ignorePlatformReqs: [ext-*, lib-*]
+```
 
 ## `registryAliases`
 
@@ -1050,7 +1101,7 @@ Label that makes the next run rebuild an update PR's branch on the current base,
 - **Type:** string
 - **Default:** `rebase`
 
-Every update PR body ends with a checkbox, `- [ ] <!-- deps:rebase --> If you want to rebase/retry this PR, check this box`. Ticking it, or adding this label to the PR, makes the next `deps run` rebuild the branch on the current base like the **Open** checkbox of the [dashboard](#dependencydashboard):
+Every update PR body ends with a checkbox, `- [ ] <!-- deps:rebase --> If you want to rebase/retry this PR, check this box`. Ticking it, or adding this label to the PR, makes the next `deps run` rebuild the branch on the current base like the **Open** checkbox of the [dashboard](#dashboard):
 
 - The request bypasses `schedule` (also with `updateNotScheduled: false`) and rebuilds a branch someone else committed to, discarding those commits.
 - Unchanged content is `rebased`, changed content `updated`. The rewritten body has the checkbox unticked again, and deps removes the label once the branch is pushed; a failed removal is reported as an error, and the next run rebases again. A dry run reports `would-rebase` (or `would-update`) and changes nothing.
@@ -1064,16 +1115,15 @@ Label that makes deps leave an update PR alone: its branch is no longer pushed o
 - **Type:** string
 - **Default:** `stop-updating`
 
-An open update PR with this label is left alone: deps does not build, push or rebase its branch, ignores its rebase checkbox, the [`rebaseLabel`](#rebaselabel) and the dashboard, and does not close it when its update is gone (it stays open until someone closes or merges it). The run reports it as `skipped: stop-updating label`, and the [dashboard](#dependencydashboard) lists it under **Ignored or blocked**. Remove the label to hand the PR back to deps. It must differ from `rebaseLabel`.
+An open update PR with this label is left alone: deps does not build, push or rebase its branch, ignores its rebase checkbox, the [`rebaseLabel`](#rebaselabel) and the dashboard, and does not close it when its update is gone (it stays open until someone closes or merges it). The run reports it as `skipped: stop-updating label`, and the [dashboard](#dashboard) lists it under **Ignored or blocked**. Remove the label to hand the PR back to deps. It must differ from `rebaseLabel`.
 
-## `dependencyDashboard`
+## `dashboard`
 
-Maintain a dependency dashboard issue listing pending, blocked and open updates, errors and detected dependencies; its checkboxes make the next run create, recreate or rebase PRs. false leaves an existing dashboard untouched.
+The dependency dashboard issue.
 
-- **Type:** boolean
-- **Default:** `false`
+- **Type:** object
 
-`deps run` maintains one open issue titled [`dependencyDashboardTitle`](#dependencydashboardtitle). It lists, in this order:
+With [`dashboard.enabled: true`](#dashboardenabled), `deps run` maintains one open issue titled [`dashboard.title`](#dashboardtitle). It lists, in this order:
 
 1. **Pending approval**: updates of [`dashboardApproval`](#dashboardapproval) without a PR or branch. Ticking one makes the next run create its PR.
 2. **Awaiting schedule** and **Rate-limited**: updates without a PR because of `schedule` or the PR limits (`--max-new-prs`, `prConcurrentLimit`, `prHourlyLimit`). Awaiting-schedule items name the schedule entries they wait for, e.g. ``(waits for `0 0 * * 0`)`` or ``(waits for `before 6am on monday`)``. Each has a checkbox; ticking it makes the next run create the PR regardless of schedule and limits.
@@ -1090,11 +1140,24 @@ Maintain a dependency dashboard issue listing pending, blocked and open updates,
 - The body is capped at 60 000 bytes (GitHub allows 65 536 characters). Lists that do not fit end with a `… not listed` note.
 - The body is deterministic: the issue is only edited when its content changes. Every run regenerates it, so ticked checkboxes are unticked again once handled.
 - The issue is found by its exact title and the `<!-- deps:dashboard -->` marker in its body, among the first 1 000 (GitHub, GitLab) or 500 (Gitea/Forgejo) open issues.
-- deps never closes the dashboard. `dependencyDashboard: false` leaves an existing dashboard untouched.
+- deps never closes the dashboard. `dashboard.enabled: false` leaves an existing dashboard untouched.
 - A repository without issues (disabled, or an external tracker on Gitea/Forgejo) reports `dashboard skipped: issues disabled` and is not an error.
 - The token needs issues:write.
 
-## `dependencyDashboardTitle`
+```yaml
+dashboard:
+  enabled: true
+  labels: [dependencies]
+```
+
+### `dashboard.enabled`
+
+Maintain a dependency dashboard issue listing pending, blocked and open updates, errors and detected dependencies; its checkboxes make the next run create, recreate or rebase PRs. false leaves an existing dashboard untouched.
+
+- **Type:** boolean
+- **Default:** `false`
+
+### `dashboard.title`
 
 Title of the dependency dashboard issue; the issue is found by this exact title.
 
@@ -1103,7 +1166,7 @@ Title of the dependency dashboard issue; the issue is found by this exact title.
 
 It must be non-blank and one line.
 
-## `dependencyDashboardLabels`
+### `dashboard.labels`
 
 Labels set when the dashboard issue is created (by name; on Gitea and Forgejo they must exist in the repository or its organization).
 
@@ -1940,7 +2003,7 @@ Renovate's `lockFileMaintenance`. With `enabled: true`, `run` keeps one PR on th
   - gradle: the lockfiles of every Gradle build that uses dependency locking: `dependencies --write-locks` for every locked project, re-resolving dynamic versions; `gradle/verification-metadata.xml` is regenerated with them.
   - terraform: every `.terraform.lock.hcl` next to a scanned Terraform/OpenTofu configuration: `terraform init -upgrade -backend=false` (`tofu` for OpenTofu), with fresh hashes.
   - bundler: every `Gemfile.lock` next to a scanned `Gemfile`: `bundle lock --update`.
-  - composer: every `composer.lock` next to a scanned `composer.json`: `composer update --no-install` (no scripts or plugins, platform requirements ignored as [`composerIgnorePlatformReqs`](#composerignoreplatformreqs) says).
+  - composer: every `composer.lock` next to a scanned `composer.json`: `composer update --no-install` (no scripts or plugins, platform requirements ignored as [`composer.ignorePlatformReqs`](#composerignoreplatformreqs) says).
   - julia: every manifest of a scanned `Project.toml` (a workspace's once, through its root): `Pkg.update()`.
   - mix: every mix.lock of a scanned `mix.exs` (an umbrella's once): `mix deps.update --all`.
   - gleam: every `manifest.toml` next to a scanned `gleam.toml`: `gleam deps update`.
@@ -1977,20 +2040,3 @@ Schedule (cron triggers and time windows) of the lock file maintenance PR, overr
 - **Type:** list of strings
 
 Validated like the top-level `schedule` (`lockFileMaintenance.schedule[0]: "60 5 * * *": minute: value 60 out of range 0-59`); its time windows use [`timezone`](#timezone).
-
-## `composerIgnorePlatformReqs`
-
-Platform requirements composer update ignores when it updates composer.lock, each passed as --ignore-platform-req=\<req> (php, ext-intl, ext-\*, lib-\*); [] or null ignores none, so the runner's PHP and extensions must satisfy them. Unset, deps ignores every platform requirement, or only ext-\* and lib-\* when composer.json sets config.platform.php.
-
-- **Type:** list of strings
-
-Renovate's `composerIgnorePlatformReqs`: the platform requirements (`php`, `ext-*`, `lib-*`, `composer-plugin-api`) `composer update` ignores when deps updates a `composer.lock` (`apply`, `run`, lock file maintenance; see the [composer manager](managers.md#composer)).
-
-- **Unset** (deps' default): every platform requirement is ignored (`--ignore-platform-reqs`), since the runner's PHP and extensions are not the project's. When composer.json sets `config.platform.php`, which stands in for the PHP version, only `ext-*` and `lib-*` are (`--ignore-platform-req=ext-* --ignore-platform-req=lib-*`).
-- **A list:** exactly these are ignored, each passed as `--ignore-platform-req=<req>`; patterns such as `ext-*` work as in Composer. The others are checked against the runner's PHP and extensions (or `config.platform`), and a package version they exclude fails the update.
-- **`[]` or `null`:** none is ignored.
-- Renovate's default `[]` means `ext-*` and `lib-*` there (with a PHP matching the project's installed by Renovate), and `null` none; `deps migrate` writes `[ext-*, lib-*]` for an explicit `[]` and `[]` for `null`.
-
-```yaml
-composerIgnorePlatformReqs: [ext-*, lib-*]
-```

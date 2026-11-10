@@ -338,7 +338,7 @@ func TestResolveSharedSecurityLowered(t *testing.T) {
 		"<artifactId>jackson-core</artifactId><version>${jackson.version}</version>" +
 		"<artifactId>jackson-databind</artifactId><version>${jackson.version}</version>" +
 		"</dependencies></project>"
-	root, cfg := setup(t, "dependencyDashboard: true\ndashboardApproval: true\nschedule: ['0 1 * * *']\n"+
+	root, cfg := setup(t, "dashboard: {enabled: true}\ndashboardApproval: true\nschedule: ['0 1 * * *']\n"+
 		"rules: [{updateTypes: [patch], commitType: build}]\n", map[string]string{"pom.xml": pom})
 	o := Options{
 		Managers: []manager.Manager{propManager{}},

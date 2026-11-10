@@ -139,7 +139,7 @@ func flagOpts(t *testing.T, cmd *cli.Command) *runOpts {
 	return &runOpts{authorName: cmd.String("author-name"), authorEmail: cmd.String("author-email")}
 }
 
-// gitAuthor in .deps.yaml sets the commit author and committer of pushed branches.
+// git.author in .deps.yaml sets the commit author and committer of pushed branches.
 func TestRunGitAuthorFromConfig(t *testing.T) {
 	cleanEnv(t)
 	newFakeNet(t)
@@ -147,7 +147,7 @@ func TestRunGitAuthorFromConfig(t *testing.T) {
 	t.Setenv("DEPS_TOKEN", "tok")
 	origin, work := gitRepo(t, map[string]string{
 		".github/workflows/ci.yml": workflow,
-		".deps.yaml":               "gitAuthor: 'OCM Bot <ocm-bot@example.com>'\n",
+		".deps.yaml":               "git:\n  author: 'OCM Bot <ocm-bot@example.com>'\n",
 	})
 	if _, stderr, code := execute(t, "run", "--dir", work); code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
@@ -202,7 +202,7 @@ func TestRunSignsCommits(t *testing.T) {
 	}
 }
 
-// automerge and dependencyDashboard end to end on Gitea: the created PR is scheduled for
+// automerge and the dependency dashboard end to end on Gitea: the created PR is scheduled for
 // auto-merge and the dashboard issue is created with resolved label ids; a dry run only reports.
 func TestRunAutomergeAndDashboard(t *testing.T) {
 	cleanEnv(t)
@@ -211,7 +211,7 @@ func TestRunAutomergeAndDashboard(t *testing.T) {
 	t.Setenv("DEPS_TOKEN", "tok")
 	origin, work := gitRepo(t, map[string]string{
 		".github/workflows/ci.yml": workflow,
-		".deps.yaml":               "automerge: true\nautomergeStrategy: squash\ndependencyDashboard: true\ndependencyDashboardLabels: [dependencies]\n",
+		".deps.yaml":               "automerge: true\nautomergeStrategy: squash\ndashboard:\n  enabled: true\n  labels: [dependencies]\n",
 	})
 	const branch = "deps/actions-checkout-major"
 
@@ -438,7 +438,7 @@ func TestPlatformCommits(t *testing.T) {
 		{name: "enabled with a PAT", cfg: "enabled", kind: platform.GitHub, token: pat, want: true},
 		{name: "env over config", env: "disabled", cfg: "enabled", kind: platform.GitHub, token: app},
 		{name: "enabled without token (dry run)", env: "enabled", kind: platform.GitHub},
-		{name: "enabled on Forgejo", cfg: "enabled", kind: platform.Forgejo, token: "t", wantErr: "platformCommit: enabled is only supported on GitHub, not forgejo"},
+		{name: "enabled on Forgejo", cfg: "enabled", kind: platform.Forgejo, token: "t", wantErr: "git.platformCommit: enabled is only supported on GitHub, not forgejo"},
 		{name: "enabled with a signing key", env: "enabled", kind: platform.GitHub, token: app, signed: true, wantErr: "DEPS_PLATFORM_COMMIT: enabled conflicts with the signing key: GitHub signs platform commits itself"},
 		{name: "invalid env", env: "true", kind: platform.GitHub, token: app, wantErr: `DEPS_PLATFORM_COMMIT: must be one of auto, enabled, disabled, got "true"`},
 	}

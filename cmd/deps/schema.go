@@ -168,7 +168,7 @@ func addEnums(s *jsonschema.Schema) {
 		scalar(n, "prCreation", enumOf(config.PRCreations))
 	}
 	scalar(s, "rebaseWhen", enumOf(config.RebaseWhens))
-	scalar(s, "platformCommit", enumOf(config.PlatformCommits))
+	scalar(s.Definitions["Git"], "platformCommit", enumOf(config.PlatformCommits))
 	scalar(s, "useBaseBranchConfig", enumOf(config.BaseConfigs))
 	items(rule, "managers", enumOf(config.Managers))
 	items(rule, "depTypes", enumOf(config.DepTypes))

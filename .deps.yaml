@@ -1,7 +1,8 @@
 # yaml-language-server: $schema=https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/deps.schema.json?ref=main
 # deps' own config. Everything else is the default; .gitea/workflows/deps.yml has issues: write for the dashboard.
 version: 1
-dependencyDashboard: true
+dashboard:
+  enabled: true
 # The deps release pinned in the examples of the README and the docs. They share the name of the
 # action pin in .gitea/workflows/deps.yml, Formula/deps.rb and flake.nix, so a deps release is
 # one PR across all of them.

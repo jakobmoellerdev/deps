@@ -377,6 +377,14 @@ func (l *loader) located(via int, p *Problem) *Problem {
 
 type mapEntry struct{ key, val *yaml.Node }
 
+// value returns the value node of e, or nil when e is nil.
+func (e *mapEntry) value() *yaml.Node {
+	if e == nil {
+		return nil
+	}
+	return e.val
+}
+
 // mapValue returns the entry of key in the mapping n, or nil (also when n is no mapping).
 func mapValue(n *yaml.Node, key string) *mapEntry {
 	if n == nil || n.Kind != yaml.MappingNode {

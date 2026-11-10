@@ -543,7 +543,7 @@ func configEnv(ctx context.Context, cfg *config.Config, info platform.Info, root
 	return manager.Env{
 		DefaultHost: host, GitLabURL: gitlabURL, ForgeURL: strings.TrimSuffix(forge, "/"), TerraformRegistry: cfg.Terraform.DefaultRegistry,
 		TerragruntRegistry: os.Getenv("TG_TF_DEFAULT_REGISTRY_HOST"), RegistryAliases: cfg.RegistryAliases,
-		SkipGomodImportPaths: !cfg.GomodUpdateImportPathsEnabled(), ComposerIgnorePlatformReqs: cfg.ComposerIgnorePlatformReqs,
+		SkipGomodImportPaths: !cfg.GomodUpdateImportPathsEnabled(), ComposerIgnorePlatformReqs: cfg.Composer.IgnorePlatformReqs,
 	}
 }
 

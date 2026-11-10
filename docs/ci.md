@@ -145,7 +145,7 @@ Workflow permissions: `contents: write`, `pull-requests: write` (and `issues: wr
    - *Contents*: read and write;
    - *Pull requests*: read and write;
    - *Workflows*: read and write;
-   - *Issues*: read and write, for the [dashboard](reference/configuration.md#dependencydashboard);
+   - *Issues*: read and write, for the [dashboard](reference/configuration.md#dashboard);
    - *Checks* and *Commit statuses*: read, for the automerge fallback.
 3. Install the App on the repositories deps should manage.
 4. Store the App's client ID as the variable `DEPS_APP_CLIENT_ID` and a private key as the secret `DEPS_APP_PRIVATE_KEY`.
@@ -158,16 +158,16 @@ Workflow permissions: `contents: write`, `pull-requests: write` (and `issues: wr
 permissions:
   contents: write
   pull-requests: write
-  issues: write # only for dependencyDashboard
+  issues: write # only for dashboard.enabled
 ```
 
 **Where the action comes from.** `uses: jakobmoellerdev/deps@…` resolves to [github.com/jakobmoellerdev/deps](https://github.com/jakobmoellerdev/deps), the public push mirror of the Gitea repository, so any workflow can use it. The defaults download the binary from the mirror's releases.
 
 ### Commit identity of the App
 
-With an App token, deps creates its commits through the GitHub API ([`platformCommit: auto`](reference/configuration.md#platformcommit)): GitHub sets the author to the App's bot account, `<slug>[bot] <<id>+<slug>[bot]@users.noreply.github.com>`, and signs the commit. Nothing to configure; `gitAuthor` and `DEPS_GIT_AUTHOR` are ignored for these commits.
+With an App token, deps creates its commits through the GitHub API ([`git.platformCommit: auto`](reference/configuration.md#gitplatformcommit)): GitHub sets the author to the App's bot account, `<slug>[bot] <<id>+<slug>[bot]@users.noreply.github.com>`, and signs the commit. Nothing to configure; `git.author` and `DEPS_GIT_AUTHOR` are ignored for these commits.
 
-With `platformCommit: disabled` (or a signing key), deps commits with git as `deps[bot] <deps-bot@noreply.invalid>`. To have those commits appear as the App, set [`gitAuthor`](reference/configuration.md#gitauthor) in `.deps.yaml`, or set `DEPS_GIT_AUTHOR` in the job, to the App's noreply identity. Add this step after the token step; job-level environment variables reach the action's steps:
+With `git.platformCommit: disabled` (or a signing key), deps commits with git as `deps[bot] <deps-bot@noreply.invalid>`. To have those commits appear as the App, set [`git.author`](reference/configuration.md#gitauthor) in `.deps.yaml`, or set `DEPS_GIT_AUTHOR` in the job, to the App's noreply identity. Add this step after the token step; job-level environment variables reach the action's steps:
 
 ```yaml
       - name: deps commit identity
@@ -179,7 +179,7 @@ With `platformCommit: disabled` (or a signing key), deps commits with git as `de
           echo "DEPS_GIT_AUTHOR=${SLUG}[bot] <${id}+${SLUG}[bot]@users.noreply.github.com>" >> "$GITHUB_ENV"
 ```
 
-deps updates only branches whose last commit has its own author email. If the identity changes, list the old email in [`gitIgnoredAuthors`](reference/configuration.md#gitignoredauthors). Otherwise existing branches are reported as `skipped: branch modified by someone else`. Switching to platform commits needs nothing: the configured git author still counts as deps' own. Switching back to git needs the App's noreply email in `gitIgnoredAuthors`.
+deps updates only branches whose last commit has its own author email. If the identity changes, list the old email in [`git.ignoredAuthors`](reference/configuration.md#gitignoredauthors). Otherwise existing branches are reported as `skipped: branch modified by someone else`. Switching to platform commits needs nothing: the configured git author still counts as deps' own. Switching back to git needs the App's noreply email in `git.ignoredAuthors`.
 
 ### Without the action
 
@@ -221,7 +221,7 @@ concurrency:
 permissions:
   contents: write
   pull-requests: write
-  issues: write # only for dependencyDashboard
+  issues: write # only for dashboard.enabled
 jobs:
   deps:
     runs-on: ubuntu-latest
@@ -257,7 +257,7 @@ When CI must run on deps PRs (for [automerge](#automerge)), or a private reposit
           token: ${{ secrets.DEPS_TOKEN }}
 ```
 
-For a separate bot account, create the token on that account and give it write access to the repository. Set [`gitAuthor`](reference/configuration.md#gitauthor) to its name and email.
+For a separate bot account, create the token on that account and give it write access to the repository. Set [`git.author`](reference/configuration.md#gitauthor) to its name and email.
 
 **Lookups on github.com.** Actions, GitHub releases and release notes on github.com are fetched anonymously from a Gitea job. Anonymous GitHub API requests share a low rate limit per IP. Set `DEPS_GITHUB_COM_TOKEN` to a github.com token, read-only and without scopes, to raise it and to read private github.com repositories:
 
@@ -342,7 +342,7 @@ Add a pipeline schedule (*Build → Pipeline schedules*) on the default branch, 
 | request auto-merge (`automerge`) | merge rights on the base branch; *Allow auto-merge* in the settings; `statuses: read` and `checks: read` for the direct-merge fallback | merge rights on the base branch | merge rights on the base branch |
 | branch automerge (`automergeType: branch`) | `contents: write` and push rights on the base branch (bypass of its protection or rulesets); `statuses: read` and `checks: read` | push rights on the base branch (branch protection *Enable push*) | as on Gitea |
 | open PRs after their checks (`prCreation`) | `statuses: read` and `checks: read` | read access (commit statuses) | as on Gitea |
-| find, create and edit the dashboard issue (`dependencyDashboard`) | `issues: write` | `issues: write` | automatic token |
+| find, create and edit the dashboard issue (`dashboard.enabled`) | `issues: write` | `issues: write` | automatic token |
 | read private actions, modules and release notes | read access to those repositories | Cross-Repository Access or a PAT | a PAT |
 | CI runs on deps PRs | App token or PAT (with `GITHUB_TOKEN`: after approval) | PAT | PAT |
 
@@ -374,12 +374,12 @@ Add a pipeline schedule (*Build → Pipeline schedules*) on the default branch, 
 
 ### Platform commits (GitHub)
 
-On GitHub, deps can create its commits through the API instead of git ([`platformCommit`](reference/configuration.md#platformcommit), as Renovate's option of that name). GitHub signs commits it creates for a **GitHub App installation token**, so they show as verified, authored by the App's bot account and committed by GitHub. No key is involved.
+On GitHub, deps can create its commits through the API instead of git ([`git.platformCommit`](reference/configuration.md#gitplatformcommit), as Renovate's option of that name). GitHub signs commits it creates for a **GitHub App installation token**, so they show as verified, authored by the App's bot account and committed by GitHub. No key is involved.
 
 - **When.** `auto` (the default) uses platform commits on GitHub when the token is an App installation token (it starts with `ghs_`: tokens from `actions/create-github-app-token`, and `GITHUB_TOKEN`) and no signing key is set. `enabled` uses them with any GitHub token; `disabled` never. `DEPS_PLATFORM_COMMIT` overrides the config.
 - **PATs.** The API accepts commits made with a PAT, but GitHub leaves them unsigned (verified on 2026-11-04 with a classic PAT: `verification.reason: unsigned`), so `enabled` with a PAT only changes the author to the PAT's user. deps warns about it.
 - **Signing key.** A key means local signing: `auto` then commits with git and signs; `enabled` together with a key is a usage error.
-- **Author.** GitHub sets the author to the token's account; `gitAuthor` is ignored. deps treats a branch tip as its own when GitHub links its author to that account, and also when the tip has the configured git author (branches deps pushed with git before).
+- **Author.** GitHub sets the author to the token's account; `git.author` is ignored. deps treats a branch tip as its own when GitHub links its author to that account, and also when the tip has the configured git author (branches deps pushed with git before).
 - **How.** deps uploads each changed file as a blob, creates a tree on the parent's tree and a commit, then moves the branch with the GraphQL `updateRefs` mutation, which compares the tip with the one listed at the start of the run and sets it in one step (`--force-with-lease`). If the branch moved meanwhile, the update is refused with `stale info` and the branch stays. Blob uploads are base64, so binary files and executable modes are kept. A failed step leaves the branch as it was; the objects created before it are unreferenced.
 - **Gitea and Forgejo** are not supported. Their file API (`POST /repos/{owner}/{repo}/contents`, Gitea 28.3) commits on top of the tip of `branch` and can force-push the result to `new_branch` (`force_push`), but it has no expected old tip, so a push by someone else in between would be overwritten, and its file operations carry no file mode. Whether those commits are signed depends on the instance's `[repository.signing]` settings. `enabled` there is a usage error; `auto` uses git.
 
@@ -407,7 +407,7 @@ deps builds its git commits with `git commit-tree`, which signs only when asked 
   - `-----BEGIN PGP PRIVATE KEY BLOCK-----` signs with OpenPGP (`gpg` on the runner). deps imports the key into a temporary `GNUPGHOME`.
 
   The key must have no passphrase. Generate a dedicated one, e.g. `gpg --batch --passphrase '' --quick-gen-key 'deps-bot <deps-bot@example.com>' ed25519 sign never` or `ssh-keygen -t ed25519 -N '' -f deps-bot`. deps removes its temporary copies when it exits and logs only the fingerprint: `commit signing format=openpgp key=<fingerprint>`.
-- **The identity.** A forge marks a signature as verified only if the commit's committer belongs to the key's owner. deps uses the same identity for author and committer: set [`gitAuthor`](reference/configuration.md#gitauthor) or `DEPS_GIT_AUTHOR` to the bot account's name and verified email. If you change the identity, list the old email in [`gitIgnoredAuthors`](reference/configuration.md#gitignoredauthors) so that deps keeps updating its existing branches.
+- **The identity.** A forge marks a signature as verified only if the commit's committer belongs to the key's owner. deps uses the same identity for author and committer: set [`git.author`](reference/configuration.md#gitauthor) or `DEPS_GIT_AUTHOR` to the bot account's name and verified email. If you change the identity, list the old email in [`git.ignoredAuthors`](reference/configuration.md#gitignoredauthors) so that deps keeps updating its existing branches.
 - **Without a key**, deps behaves as before: commits are unsigned unless the checkout's git configuration sets `commit.gpgSign` (and `user.signingKey`), which `git commit-tree` honors.
 
 **Gitea and Forgejo.**
@@ -460,7 +460,7 @@ Actions with a full URL (`uses: https://host/owner/repo@ref`) are looked up on t
 | `go` | only for `go mod tidy` after go.mod updates, and `go list` for `GOPRIVATE`/direct modules. `go env` falls back to the environment without it. `GOTOOLCHAIN=auto` fetches a newer toolchain when go.mod requires one. |
 | `npm`, `pnpm`, `yarn` | regenerating lockfiles; see the note below the table |
 | `cargo` | updating `Cargo.lock` (requirement changes and lockfile-only updates), e.g. from `dtolnay/rust-toolchain`; without it those manifests fail with `cargo not found (needed to update Cargo.lock)` |
-| `composer` 2.7+ (PHP with Composer, e.g. `shivammathur/setup-php`) | updating `composer.lock` (constraint changes and lockfile-only updates) with `composer update --no-install`; without it those composer.json files fail with `composer not found (needed to update composer.lock)`. Platform requirements are ignored (except a `config.platform.php`), so any PHP version works, unless [`composerIgnorePlatformReqs`](reference/configuration.md#composerignoreplatformreqs) lists which to ignore |
+| `composer` 2.7+ (PHP with Composer, e.g. `shivammathur/setup-php`) | updating `composer.lock` (constraint changes and lockfile-only updates) with `composer update --no-install`; without it those composer.json files fail with `composer not found (needed to update composer.lock)`. Platform requirements are ignored (except a `config.platform.php`), so any PHP version works, unless [`composer.ignorePlatformReqs`](reference/configuration.md#composerignoreplatformreqs) lists which to ignore |
 | `bundle` (Ruby with Bundler, e.g. `ruby/setup-ruby`) | updating `Gemfile.lock` (requirement changes and lockfile-only updates) with `bundle lock`; without it those Gemfiles fail with `bundle not found (needed to update Gemfile.lock)`. Bundler records its own version under `BUNDLED WITH`, so use the version the lock names |
 | `julia` (e.g. `julia-actions/setup-julia`) | updating `Manifest.toml` (compat changes and manifest-only updates) with Pkg; without it those projects fail with `julia not found (needed to update Manifest.toml)`. Pkg writes the running `julia_version` into the manifest, so use the release the manifest names. Projects without a manifest (registered packages) need no Julia |
 | `dart` (e.g. `dart-lang/setup-dart`), or `flutter` for Flutter packages (e.g. `subosito/flutter-action`) | updating `pubspec.lock` (constraint changes, git tags and lockfile-only updates) with `dart pub upgrade <name>`, `dart pub get` after SDK constraint changes; Flutter packages use the Dart SDK bundled with `flutter` (`FLUTTER_ROOT` set). The SDK must satisfy the pubspecs' SDK constraints. Without it those pubspecs fail with `dart not found (needed to update pubspec.lock)` or `flutter not found (…)` |
@@ -694,7 +694,7 @@ jobs:
       (github.event.issue.title == 'Dependency Dashboard' && github.event.sender.type != 'Bot')
 ```
 
-Use your [`dependencyDashboardTitle`](reference/configuration.md#dependencydashboardtitle) if you set one. The `sender.type` check skips deps' own edits of the dashboard with an App token (edits made with `GITHUB_TOKEN` start no workflows anyway). With a PAT, deps edits the issue as that user: the edit starts one more run, which finds nothing to do and leaves the dashboard unedited, so it ends there. Checkboxes act in any run, so the ticked PR is created, recreated or rebased; other scheduled groups still wait for their cron. Gitea and Forgejo have the same `issues` event.
+Use your [`dashboard.title`](reference/configuration.md#dashboardtitle) if you set one. The `sender.type` check skips deps' own edits of the dashboard with an App token (edits made with `GITHUB_TOKEN` start no workflows anyway). With a PAT, deps edits the issue as that user: the edit starts one more run, which finds nothing to do and leaves the dashboard unedited, so it ends there. Checkboxes act in any run, so the ticked PR is created, recreated or rebased; other scheduled groups still wait for their cron. Gitea and Forgejo have the same `issues` event.
 
 ### Merge right after CI
 
@@ -782,16 +782,17 @@ rules:
 3. **Waiting branches** are listed on the [dependency dashboard](#dependency-dashboard) under *Pending status checks* (with `checks failed` for a failed branch under `status-success`); tick one to get its PR right away.
 4. **No checks.** Under `not-pending`, a branch whose checks are still running or absent gets its PR [`prNotPendingHours`](reference/configuration.md#prnotpendinghours) (default 25, as in Renovate) after its last commit; under `status-success` it waits until ticked.
 
-`prCreation: approval` pushes the branch too, so CI runs on it, but opens the PR only once it is approved on the [dependency dashboard](#dependency-dashboard) (needs `dependencyDashboard: true`): the branch is listed under *Pending approval*, whatever its checks, and ticking it opens the PR on the pushed commit. Unlike [`dashboardApproval`](reference/configuration.md#dashboardapproval), which holds back the branch as well, the checks have already run when you approve.
+`prCreation: approval` pushes the branch too, so CI runs on it, but opens the PR only once it is approved on the [dependency dashboard](#dependency-dashboard) (needs `dashboard.enabled: true`): the branch is listed under *Pending approval*, whatever its checks, and ticking it opens the PR on the pushed commit. Unlike [`dashboardApproval`](reference/configuration.md#dashboardapproval), which holds back the branch as well, the checks have already run when you approve.
 
 ## Dependency dashboard
 
-With [`dependencyDashboard: true`](reference/configuration.md#dependencydashboard), `deps run` maintains one issue. It lists the updates waiting for approval or their schedule, rate-limited and blocked updates, open PRs, deprecated dependencies (npm `deprecated`, yanked crates and PyPI releases, inactive PyPI projects, archived source repositories of GitHub releases, actions and other git tags, and GitLab/Gitea/Forgejo deps, deprecated GitHub-hosted runner images) and, with [`abandonmentThreshold`](reference/configuration.md#abandonmentthreshold), abandoned ones, errors, and the detected dependencies. Ticking a checkbox makes the next run create, recreate or rebase that PR. The token needs `issues: write`, and the repository must have issues enabled. The title, labels and the exact list are in the [configuration reference](reference/configuration.md#dependencydashboard).
+With [`dashboard.enabled: true`](reference/configuration.md#dashboardenabled), `deps run` maintains one issue. It lists the updates waiting for approval or their schedule, rate-limited and blocked updates, open PRs, deprecated dependencies (npm `deprecated`, yanked crates and PyPI releases, inactive PyPI projects, archived source repositories of GitHub releases, actions and other git tags, and GitLab/Gitea/Forgejo deps, deprecated GitHub-hosted runner images) and, with [`abandonmentThreshold`](reference/configuration.md#abandonmentthreshold), abandoned ones, errors, and the detected dependencies. Ticking a checkbox makes the next run create, recreate or rebase that PR. The token needs `issues: write`, and the repository must have issues enabled. The title, labels and the exact list are in the [configuration reference](reference/configuration.md#dashboard).
 
 To review some updates before deps opens their PRs, for example majors, set [`dashboardApproval`](reference/configuration.md#dashboardapproval) on a rule. Those updates get no PR; they are listed under *Pending approval*, and ticking one makes the next run create its PR:
 
 ```yaml
-dependencyDashboard: true
+dashboard:
+  enabled: true
 rules:
   - updateTypes: [major]
     dashboardApproval: true
@@ -1094,7 +1095,7 @@ Run with `show-skipped: true` and `log-level: debug` to see every HTTP request, 
 
 | Symptom | Cause and fix |
 |---|---|
-| `skipped: branch modified by someone else` | The branch's last commit has another author email. Rebase it via the dashboard checkbox, or close the PR. If the bot identity changed, add the old email to `gitIgnoredAuthors`. |
+| `skipped: branch modified by someone else` | The branch's last commit has another author email. Rebase it via the dashboard checkbox, or close the PR. If the bot identity changed, add the old email to `git.ignoredAuthors`. |
 | `skipped: closed PR for this version` | A PR for the same version (same title) was closed without merging, so deps won't reopen it. Tick *recreate* on the dashboard, or wait for the next version. |
 | `skipped: closed PR for this major` | A major update's PR was closed without merging: like Renovate, deps ignores that major (any later version of it) until the next major. Tick *recreate* on the dashboard to get the PR back, or add an `ignore` rule to drop the update for good. |
 | `skipped: outside schedule` on every run | The `schedule` entries don't match the workflow's crons: they are compared as text. Check the `trigger` line in the `--log-level info` output for the cron deps saw. |
@@ -1157,7 +1158,7 @@ Run with `show-skipped: true` and `log-level: debug` to see every HTTP request, 
 
 - a never-running workflow with `actions/setup-node@v7.0.0` and `actions/setup-python@v7.0.0`;
 - a `go.mod` requiring `github.com/spf13/cobra v1.10.1`;
-- a `.deps.yaml` with `dependencyDashboard: true`, `pin: digest` for setup-python, `automerge: true` for patch updates, and `allow` bounds so new upstream releases don't change the update types.
+- a `.deps.yaml` with `dashboard.enabled: true`, `pin: digest` for setup-python, `automerge: true` for patch updates, and `allow` bounds so new upstream releases don't change the update types.
 
 The reset also cleans up:
 

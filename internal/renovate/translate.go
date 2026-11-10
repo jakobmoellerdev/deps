@@ -165,6 +165,18 @@ type field struct {
 
 func (m *omap) set(k string, v any) { *m = append(*m, field{k, v}) }
 
+// setIn sets key k of the mapping under top-level key parent, adding the mapping on first use.
+func (m *omap) setIn(parent, k string, v any) {
+	for i, f := range *m {
+		if sub, ok := f.v.(omap); ok && f.k == parent {
+			sub.set(k, v)
+			(*m)[i].v = sub
+			return
+		}
+	}
+	m.set(parent, omap{{k, v}})
+}
+
 // item is a rules or custom element with its provenance (the YAML head comment).
 type item struct {
 	origin string
@@ -448,14 +460,23 @@ func (t *translator) translate(cfg map[string]any) omap {
 		return v, ok
 	}
 	var doc omap
-	// emit validates the top-level key alone and adds it, or drops it with a note.
+	// emit validates the top-level key alone and adds it, or drops it with a note. A key
+	// <parent>.<key> is added to the mapping under parent (dashboard.enabled).
 	emit := func(k string, v any) {
+		parent, sub, nested := strings.Cut(k, ".")
 		frag := omap{{k, v}}
+		if nested {
+			frag = omap{{parent, omap{{sub, v}}}}
+		}
 		if k == "dashboardApproval" || k == "prCreation" {
 			frag = t.ruleContext(frag)
 		}
 		if msg := check(frag); msg != "" {
 			t.n.warn(k, "dropped: %s", msg)
+			return
+		}
+		if nested {
+			doc.setIn(parent, sub, v)
 			return
 		}
 		doc.set(k, v)
@@ -498,7 +519,7 @@ func (t *translator) translate(cfg map[string]any) omap {
 		}
 	}
 	if v, ok := get("gitAuthor"); ok {
-		emit("gitAuthor", v)
+		emit("git.author", v)
 	}
 	if v, ok := get("platformCommit"); ok {
 		switch v {
@@ -507,11 +528,11 @@ func (t *translator) translate(cfg map[string]any) omap {
 		case false:
 			v = "disabled"
 		}
-		emit("platformCommit", v)
+		emit("git.platformCommit", v)
 	}
 	if v, ok := get("gitIgnoredAuthors"); ok {
 		if l, ok := strs(v); ok {
-			emit("gitIgnoredAuthors", l)
+			emit("git.ignoredAuthors", l)
 		}
 	}
 	for _, lim := range []struct {
@@ -681,13 +702,15 @@ func (t *translator) translate(cfg map[string]any) omap {
 			doc.set("stopUpdatingLabel", v)
 		}
 	}
-	for _, k := range []string{"dependencyDashboard", "dependencyDashboardTitle", "dependencyDashboardLabels"} {
-		if v, ok := get(k); ok {
-			if l, isList := strs(v); isList && k == "dependencyDashboardLabels" {
+	for _, k := range []struct{ renovate, deps string }{
+		{"dependencyDashboard", "dashboard.enabled"}, {"dependencyDashboardTitle", "dashboard.title"}, {"dependencyDashboardLabels", "dashboard.labels"},
+	} {
+		if v, ok := get(k.renovate); ok {
+			if l, isList := strs(v); isList && k.renovate == "dependencyDashboardLabels" {
 				v = l
 			}
-			emit(k, v)
-			if k == "dependencyDashboard" {
+			emit(k.deps, v)
+			if k.renovate == "dependencyDashboard" {
 				t.dashboard = v == true
 			}
 		}
@@ -717,13 +740,13 @@ func (t *translator) translate(cfg map[string]any) omap {
 		// Renovate: [] (its default) ignores ext-* and lib-*, null none, a list those.
 		switch l, isList := strs(v); {
 		case v == nil:
-			emit("composerIgnorePlatformReqs", []string{})
+			emit("composer.ignorePlatformReqs", []string{})
 		case !isList:
 			t.n.warn("composerIgnorePlatformReqs", "must be a list of strings or null; ignored")
 		case len(l) == 0:
-			emit("composerIgnorePlatformReqs", []string{"ext-*", "lib-*"})
+			emit("composer.ignorePlatformReqs", []string{"ext-*", "lib-*"})
 		default:
-			emit("composerIgnorePlatformReqs", l)
+			emit("composer.ignorePlatformReqs", l)
 		}
 	}
 	if v, ok := get("lockFileMaintenance"); ok {
@@ -738,7 +761,7 @@ func (t *translator) translate(cfg map[string]any) omap {
 		l, _ := strs(v)
 		for _, o := range l {
 			if o == "gomodUpdateImportPaths" {
-				t.n.info("postUpdateOptions", "deps default (gomodUpdateImportPaths: true)")
+				t.n.info("postUpdateOptions", "deps default (gomod.updateImportPaths: true)")
 			} else {
 				t.n.info("postUpdateOptions", "%s: no deps equivalent; ignored", o)
 			}
@@ -1194,7 +1217,7 @@ func groupTemplate(key, s string) bool {
 // ruleContext adds the top-level settings rule validation depends on to a check fragment.
 func (t *translator) ruleContext(frag omap) omap {
 	if t.dashboard {
-		return append(omap{{"dependencyDashboard", true}}, frag...)
+		return append(omap{{"dashboard", omap{{"enabled", true}}}}, frag...)
 	}
 	return frag
 }

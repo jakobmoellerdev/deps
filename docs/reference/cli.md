@@ -302,19 +302,20 @@ Prints the effective configuration as YAML: every top-level key in schema order,
 
 Four values are shown as the commands resolve them:
 
-- `gitAuthor` is the commit author of `run`: `--author-name`/`--author-email` (accepted here too), then `$DEPS_GIT_AUTHOR`, then the file, then `deps[bot] <deps-bot@noreply.invalid>`.
+- `git.author` is the commit author of `run`: `--author-name`/`--author-email` (accepted here too), then `$DEPS_GIT_AUTHOR`, then the file, then `deps[bot] <deps-bot@noreply.invalid>`.
 - `actions.defaultHost` is the host of `owner/repo@ref` actions: the file, then the host of `$DEPS_DEFAULT_ACTIONS_URL`, then the platform default (`data.forgejo.org` on Forgejo Actions, else `github.com`).
-- `platformCommit` is `$DEPS_PLATFORM_COMMIT` when set, else the file, else `auto`.
+- `git.platformCommit` is `$DEPS_PLATFORM_COMMIT` when set, else the file, else `auto`.
 - `gitlabci.url` is the GitLab instance of the `gitlabci` manager: the file, then `$CI_SERVER_URL`, then `https://gitlab.com`.
 
-`--sources` appends where each value comes from as a comment: `default`, `file`, `env` or `flag`. Nested objects (`actions`, `gitlabci`, `terraform`, `lockFileMaintenance`) are annotated per key:
+`--sources` appends where each value comes from as a comment: `default`, `file`, `env` or `flag`. Nested objects (`git`, `actions`, `gitlabci`, `terraform`, `gomod`, `composer`, `dashboard`, `lockFileMaintenance`) are annotated per key:
 
 ```yaml
 # effective configuration of /repo/.deps.yaml
 version: 1 # default
 pin: digest # file
 ...
-gitAuthor: bot <bot@example.com> # env
+git:
+  author: bot <bot@example.com> # env
 ...
 actions:
   defaultHost: github.com # default
@@ -331,8 +332,8 @@ DEPS_GIT_AUTHOR='bot <bot@example.com>' deps config show --sources
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--author-email` | string | `""` | commit author email, as for run (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then deps-bot@noreply.invalid) |
-| `--author-name` | string | `""` | commit author name, as for run (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then deps[bot]) |
+| `--author-email` | string | `""` | commit author email, as for run (when not set: $DEPS_GIT_AUTHOR, then git.author of the config, then deps-bot@noreply.invalid) |
+| `--author-name` | string | `""` | commit author name, as for run (when not set: $DEPS_GIT_AUTHOR, then git.author of the config, then deps[bot]) |
 | `--config` | string | `""` | config file, which must exist (when not set: \<dir>/.deps.yaml, then .deps.yml, else built-in defaults) |
 | `--dir` | string | `"."` | repository directory to scan |
 | `--sources` | bool | `false` | annotate each value with where it comes from: default, file, env or flag |
@@ -556,7 +557,7 @@ Detects the platform (GitHub, Gitea or Forgejo, from the CI environment, else fr
 
 - PRs whose updates all automerge (config key `automerge`) get platform auto-merge requested. With `automergeType: branch` there is no PR: the branch is pushed, and once its checks pass the base branch is fast-forwarded to it (one branch per run); failed checks open the PR.
 - With `prCreation: not-pending` or `status-success` the branch is pushed without a PR, and a later run opens the PR once its checks finished or all passed (`not-pending` also `prNotPendingHours`, default 25, after the branch's last commit while its checks are still running or absent). With `prCreation: approval` the PR is opened once the branch is approved on the dependency dashboard. With `draftPR` new PRs are drafts (GitHub's draft flag; a `WIP: ` title prefix on Gitea and Forgejo, `Draft: ` on GitLab), unless they automerge.
-- With `dependencyDashboard`, the dashboard issue is read first (its ticked checkboxes apply to this run) and written last.
+- With `dashboard.enabled`, the dashboard issue is read first (its ticked checkboxes apply to this run) and written last.
 - With `lockFileMaintenance`, one more PR on `<branchPrefix>lock-file-maintenance` refreshes every lockfile deps maintains (`Cargo.lock`, npm, pnpm, yarn and bun locks, `uv.lock`, `poetry.lock`, `pdm.lock`, `Pipfile.lock`, `Gemfile.lock`, `composer.lock`, Julia manifests, `pubspec.lock`, `MODULE.bazel.lock`, `mix.lock`, Gleam `manifest.toml`, `flake.lock`, `Podfile.lock`, `deno.lock`, `jsonnetfile.lock.json`, Gradle lockfiles, `.terraform.lock.hcl`, and the `// indirect` requirements of `go.mod` with `go.sum`) with the ecosystem's tool; it is closed when the lockfiles are current.
 - Obsolete PRs of the base under `branchPrefix` are closed and their branches deleted when the base's resolution had no errors, and obsolete branches without any PR (branch automerge, `prCreation`) are deleted when no base had any. PRs to other branches are left alone.
 - On an open PR, its ticked rebase checkbox or the `rebaseLabel` (default `rebase`) requests a rebuild like the dashboard's rebase checkbox; deps unticks the box and removes the label afterwards. The `stopUpdatingLabel` (default `stop-updating`) makes deps leave the PR alone.
@@ -569,9 +570,9 @@ Detects the platform (GitHub, Gitea or Forgejo, from the CI environment, else fr
 
 **Several repositories** (`--repositories`, or `$DEPS_REPOSITORIES`): instead of the checkout in `--dir`, `run` works on each listed repository of the forge in turn, so one job can serve a whole organization. An entry is `owner/name`, or `owner/<glob>` (`path.Match` syntax on the name, e.g. `my-org/*` or `my-org/svc-*`) for the repositories of an organization, else a user, that the token can list. On GitLab the owner is a group path or a username and names are project paths: `group/sub/name`, and a glob matches the paths below the group including its subgroups, `*` within one path segment and a `**` segment any number of them (`my-group/*` lists the group's own projects, `my-group/**` also those of every subgroup, `my-group/*/svc-*` those of its direct subgroups); archived repositories and mirrors are left out, and a repository is run once even if several entries name it. The forge comes from the CI environment, else from the `origin` remote of `--dir` with `--platform`/`--api-url` applying as usual; `--repo` cannot be combined with it. Each repository is cloned shallowly (its default branch, or `--base`) into a temporary directory with the token as git credentials (`AUTHORIZATION: basic` of `x-access-token:<token>`, masked in the CI log), which also push its branches, and is removed afterwards. Its own `.deps.yaml` applies, or the `--config` file for all of them; datasources are shared, so a release list is fetched once for all repositories. Each repository starts with a `repository <owner/name>` line and ends with its own summary and counts line; a repository that fails (clone, config or run errors) does not stop the others, and the run ends with `<n> repositories, <m> failed` (exit 1 when `m` is not 0). In a multi-repository run annotations name the repository instead of a file, and `--report`, the step outputs and the step summary cover all repositories (see `deps help output`). The token needs write access to every repository.
 
-**Author precedence:** an explicitly set `--author-name`/`--author-email`, then `$DEPS_GIT_AUTHOR`, then the config key `gitAuthor`, then the defaults. Each field is resolved separately. An invalid `DEPS_GIT_AUTHOR` exits 2. Platform commits ignore it: GitHub authors them as the token's account.
+**Author precedence:** an explicitly set `--author-name`/`--author-email`, then `$DEPS_GIT_AUTHOR`, then the config key `git.author`, then the defaults. Each field is resolved separately. An invalid `DEPS_GIT_AUTHOR` exits 2. Platform commits ignore it: GitHub authors them as the token's account.
 
-**Platform commits** (config key `platformCommit`, overridden by `$DEPS_PLATFORM_COMMIT`; `auto`, `enabled` or `disabled`): on GitHub, deps uploads the changed files as blobs, creates tree and commit through the REST API on top of the base, and moves the branch with the GraphQL `updateRefs` mutation, compare-and-swap against the tip listed at the start of the run (`stale info` if it moved). GitHub signs commits created with a GitHub App installation token (`ghs_…`, including `GITHUB_TOKEN`), so they show as verified, authored by the App's bot; with other tokens they stay unsigned (warned). `auto` enables them for an App token without a signing key. `enabled` on Gitea/Forgejo, or together with a signing key, exits 2; without a token (`--dry-run`) it falls back to git. Logged at info as `platform commits author=<name> <email>`. A branch tip GitHub links to the token's account, or with the configured git author, counts as deps' own.
+**Platform commits** (config key `git.platformCommit`, overridden by `$DEPS_PLATFORM_COMMIT`; `auto`, `enabled` or `disabled`): on GitHub, deps uploads the changed files as blobs, creates tree and commit through the REST API on top of the base, and moves the branch with the GraphQL `updateRefs` mutation, compare-and-swap against the tip listed at the start of the run (`stale info` if it moved). GitHub signs commits created with a GitHub App installation token (`ghs_…`, including `GITHUB_TOKEN`), so they show as verified, authored by the App's bot; with other tokens they stay unsigned (warned). `auto` enables them for an App token without a signing key. `enabled` on Gitea/Forgejo, or together with a signing key, exits 2; without a token (`--dry-run`) it falls back to git. Logged at info as `platform commits author=<name> <email>`. A branch tip GitHub links to the token's account, or with the configured git author, counts as deps' own.
 
 **Post-upgrade tasks** (config key `rules[].postUpgradeTasks`) run only when a pattern of `--allow-tasks` (repeatable; `$DEPS_ALLOW_TASKS`, one per line) matches each command whole: `--allow-tasks 'go generate ./...'`, `--allow-tasks 'make *'`, `--allow-tasks '*'`. `*` matches any text except command chaining and substitution (`;`, `&`, `|`, backticks, `$(`, line breaks), so `make *` allows `make docs` but not `make docs; curl …` or `make $(id)`; operators written in the pattern match literally (`echo * >> deps.txt`), and the pattern `*` alone allows every command. Otherwise the group fails before anything runs, naming the command. After the post-processors, each group's commands (once per update with `executionMode: update`, then the branch-mode ones) run in a temporary copy of the work tree holding its changes, which is a throwaway git repository of the base (git works in it; nothing it writes reaches the checkout's repository), and every file below `--dir` they add, change or delete that `.gitignore` does not ignore (and the task's `files` globs match, if set) joins the commit. Submodule content never does, and moving a submodule's HEAD fails the group, as does a failing command. They run repository code; see `docs/ci.md`.
 
@@ -580,7 +581,7 @@ Detects the platform (GitHub, Gitea or Forgejo, from the CI environment, else fr
 - `-----BEGIN OPENSSH PRIVATE KEY-----`: SSH signature (`gpg.format=ssh`) with a `0600` temporary copy of the key; needs `ssh-keygen`.
 - `-----BEGIN PGP PRIVATE KEY BLOCK-----`: OpenPGP signature; the key is imported once into a temporary `GNUPGHOME`; needs `gpg`.
 
-Only keys without a passphrase are supported; a protected key fails before any work is done. The temporary key material is removed when `run` exits, also on errors and on SIGINT/SIGTERM. The key is logged at info by fingerprint only, as `commit signing format=ssh|openpgp key=<fingerprint>`. A value that is neither format nor a readable file exits 2; a missing `ssh-keygen`/`gpg` exits 1. The forge shows the signature as verified only when the committer (`gitAuthor`) is the key owner's verified email. Without a key, git's own configuration applies (`commit.gpgSign` and `user.signingKey` of the checkout).
+Only keys without a passphrase are supported; a protected key fails before any work is done. The temporary key material is removed when `run` exits, also on errors and on SIGINT/SIGTERM. The key is logged at info by fingerprint only, as `commit signing format=ssh|openpgp key=<fingerprint>`. A value that is neither format nor a readable file exits 2; a missing `ssh-keygen`/`gpg` exits 1. The forge shows the signature as verified only when the committer (`git.author`) is the key owner's verified email. Without a key, git's own configuration applies (`commit.gpgSign` and `user.signingKey` of the checkout).
 
 **Trigger:** cron triggers in `schedule` (crons with a fixed minute) are matched against what started the run, not against the clock: `--trigger-schedule`, then `$DEPS_TRIGGER_SCHEDULE`, then `$GITHUB_EVENT_NAME` with the `schedule` field of the payload at `$GITHUB_EVENT_PATH`. `workflow_dispatch`, `repository_dispatch` and local runs without CI variables match every trigger. Every other event (`push`, `issues`, `workflow_run`, …) is a maintenance run outside every trigger: only groups without a schedule (and security updates) get new PRs; open PRs are refreshed per `updateNotScheduled`; dashboard checkboxes still act. The value of `--trigger-schedule` is validated as a 5-field cron; an invalid one exits 2.
 
@@ -604,7 +605,7 @@ Only keys without a passphrase are supported; a protected key fails before any w
 | `skipped: awaiting dashboard approval` | the group needs `dashboardApproval` and has no PR or branch yet: listed under *Pending approval* on the dashboard, whose create checkbox approves it |
 | `skipped: outside schedule` | the run was triggered by a cron that is not in the group's `schedule`, or by another event, and no time window of it contains the run time (the dashboard's create checkbox overrides it) |
 | `skipped: new PR limit reached` | a PR limit is exhausted (dashboard checkboxes override it) |
-| `skipped: branch modified by someone else` | the branch tip's author is neither the bot nor in `gitIgnoredAuthors` (a rebase request discards those commits) |
+| `skipped: branch modified by someone else` | the branch tip's author is neither the bot nor in `git.ignoredAuthors` (a rebase request discards those commits) |
 | `skipped: stop-updating label` | the open PR has the `stopUpdatingLabel`: not pushed, rebased or closed as obsolete |
 
 **Automerge outcomes** (appended to the PR status, e.g. `created, automerge`):
@@ -649,8 +650,8 @@ DEPS_TOKEN=$TOKEN deps run --show-skipped --log-level info
 |---|---|---|---|
 | `--allow-tasks` | strings | `[]` | postUpgradeTasks command allowed to run, `*` matching any text but ; & \| ` $( and line breaks, e.g. `go generate ./...`, `make *` or `*` (repeatable); they run repository code on this machine |
 | `--api-url` | string | `""` | API base URL (default: detected) |
-| `--author-email` | string | `""` | commit author email (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then deps-bot@noreply.invalid) |
-| `--author-name` | string | `""` | commit author name (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then deps[bot]) |
+| `--author-email` | string | `""` | commit author email (when not set: $DEPS_GIT_AUTHOR, then git.author of the config, then deps-bot@noreply.invalid) |
+| `--author-name` | string | `""` | commit author name (when not set: $DEPS_GIT_AUTHOR, then git.author of the config, then deps[bot]) |
 | `--base` | string | `""` | base branch, overriding baseBranches of the config (default: baseBranches, else the repository's default branch) |
 | `--concurrency` | int | `32` | maximum concurrent network requests and lookups per upstream; npm and OSV get twice as many, container registries half; at least 1 |
 | `--config` | string | `""` | config file, which must exist (when not set: \<dir>/.deps.yaml, then .deps.yml, else built-in defaults); a Renovate file name (renovate.json, .renovaterc, …) turns on --renovate |
@@ -755,9 +756,9 @@ Every flag reads its value from `DEPS_<FLAG>` (the flag name in upper case, `-` 
 | `TF_CLI_CONFIG_FILE`, `TERRAFORM_CONFIG` | `terraform-provider`, `terraform-module` datasources | Terraform CLI config read for registry `credentials` blocks and the `credentials_helper`, replacing `~/.terraformrc` (`%APPDATA%/terraform.rc`); when set, the `*.tfrc`/`*.tfrc.json` files of `~/.terraform.d` (`credentials.tfrc.json`) are not read. `TERRAFORM_CONFIG` is the legacy name |
 | `HOME`, `APPDATA` (Windows) | `terraform-provider`, `terraform-module` datasources | where the Terraform CLI config, `credentials.tfrc.json` and credentials helpers (`.terraform.d/plugins`) are found |
 | `TG_TF_DEFAULT_REGISTRY_HOST` | `terragrunt` manager | registry host of `tfr:///…` sources without one, as Terragrunt reads it; takes precedence over the config key `terraform.defaultRegistry` (default `registry.terraform.io`) |
-| `DEPS_GIT_AUTHOR` | `run` | commit author `Name <email>`; between the `--author-*` flags and the config key `gitAuthor`; ignored for platform commits |
+| `DEPS_GIT_AUTHOR` | `run` | commit author `Name <email>`; between the `--author-*` flags and the config key `git.author`; ignored for platform commits |
 | `DEPS_ALLOW_TASKS` | `apply`, `run` | default of `--allow-tasks`: the `postUpgradeTasks` commands that may run (repository code), one pattern per line, `*` matching any text without `;`, `&`, `|`, backticks, `$(` or line breaks (`go generate ./...`, `make *`; `*` alone allows everything). Commands get the environment without `DEPS_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN`, `GITLAB_TOKEN`, `DEPS_GITHUB_COM_TOKEN`, `DEPS_GITLAB_TOKEN`, `CI_JOB_TOKEN`, `DEPS_SIGNING_KEY`, and without `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES` and `GIT_CEILING_DIRECTORIES`, so their git uses the repository they run in |
-| `DEPS_PLATFORM_COMMIT` | `run` | `auto`, `enabled` or `disabled`; overrides the config key `platformCommit` (commits through the GitHub API, see `deps help run`). Renovate's `RENOVATE_PLATFORM_COMMIT` |
+| `DEPS_PLATFORM_COMMIT` | `run` | `auto`, `enabled` or `disabled`; overrides the config key `git.platformCommit` (commits through the GitHub API, see `deps help run`). Renovate's `RENOVATE_PLATFORM_COMMIT` |
 | `DEPS_REPOSITORIES` | `run` | the `--repositories` variable: `owner/name` and `owner/<glob>` entries separated by whitespace or commas |
 | `GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH` | `run` | run trigger and its payload (cron of `schedule` events); set by GitHub, Gitea and Forgejo runners |
 | `RUNNER_DEBUG` | all | `1` (an Actions re-run with debug logging) makes `debug` the default `--log-level`; the flag and its variable (listed below) still win |
@@ -809,8 +810,8 @@ Every flag reads its value from `DEPS_<FLAG>` (the flag name in upper case, `-` 
 | `GITHUB_RUN_ID`, `GITHUB_RUN_NUMBER`, `GITHUB_RUN_ATTEMPT`, `GITHUB_WORKFLOW` | `run` | on GitHub, Gitea and Forgejo Actions, PR bodies deps writes link the workflow run `<server>/<repository>/actions/runs/<GITHUB_RUN_ID>` (server and repository as for platform detection; `/attempts/<n>` appended on GitHub when `GITHUB_RUN_ATTEMPT` is above 1), labeled `<GITHUB_WORKFLOW> #<GITHUB_RUN_NUMBER>`; without `GITHUB_RUN_ID` there is no link (see `deps help run`) |
 | `DEPS_ALL_MANAGERS` | `submit` | default of `--all-managers`: also submit the manifests GitHub reads by itself (go.mod, package.json, Python, Cargo, pom.xml, workflows); a submitted manifest replaces GitHub's own view of that file |
 | `DEPS_API_URL` | `run` | default of `--api-url`: API base URL (default: detected) |
-| `DEPS_AUTHOR_EMAIL` | `config show`, `run` | default of `--author-email`: commit author email, as for run (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then deps-bot@noreply.invalid) |
-| `DEPS_AUTHOR_NAME` | `config show`, `run` | default of `--author-name`: commit author name, as for run (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then deps[bot]) |
+| `DEPS_AUTHOR_EMAIL` | `config show`, `run` | default of `--author-email`: commit author email, as for run (when not set: $DEPS_GIT_AUTHOR, then git.author of the config, then deps-bot@noreply.invalid) |
+| `DEPS_AUTHOR_NAME` | `config show`, `run` | default of `--author-name`: commit author name, as for run (when not set: $DEPS_GIT_AUTHOR, then git.author of the config, then deps[bot]) |
 | `DEPS_BASE` | `explain`, `preview`, `run` | default of `--base`: explain base branch <base> as run resolves it: from the tip of origin's branch (a temporary work tree unless the checkout is at it), its rules[].baseBranches matching it, with useBaseBranchConfig its config merged over the checkout's |
 | `DEPS_BASE_DIR` | `preview` | default of `--base-dir`: checkout of the base branch to compare with (required) |
 | `DEPS_COLOR` | all | default of `--color`: color stderr and the plan diff on stdout: auto (on a terminal, unless $NO_COLOR is set or $TERM is dumb; $CLICOLOR_FORCE or $FORCE_COLOR force it on stderr only), always, never |
@@ -847,7 +848,7 @@ Exit codes of every command. Also shown by `deps help exit-codes`.
 |---|---|
 | `0` | success, no errors |
 | `1` | any error, including per-dependency lookup errors and per-PR errors (already printed as `error` lines), or a fatal error printed as `deps: <err>` |
-| `2` | usage error: bad flag or argument, invalid `--log-level`/`--log-format`/`--platform`/`--concurrency`, invalid `DEPS_GIT_AUTHOR`, invalid `--trigger-schedule`/`DEPS_TRIGGER_SCHEDULE` or `--schedule-time`/`DEPS_SCHEDULE_TIME`, a `--signing-key`/`DEPS_SIGNING_KEY` that is no OpenSSH or armored OpenPGP private key, an invalid `DEPS_PLATFORM_COMMIT`, `platformCommit: enabled` on Gitea/Forgejo or with a signing key, an unknown key of `deps config describe`, an unreadable or unparsable `--from-renovate` file, or any config error (parse error, unknown key, failed validation, unreadable `--config` file; also a file `deps init` wrote that does not validate) |
+| `2` | usage error: bad flag or argument, invalid `--log-level`/`--log-format`/`--platform`/`--concurrency`, invalid `DEPS_GIT_AUTHOR`, invalid `--trigger-schedule`/`DEPS_TRIGGER_SCHEDULE` or `--schedule-time`/`DEPS_SCHEDULE_TIME`, a `--signing-key`/`DEPS_SIGNING_KEY` that is no OpenSSH or armored OpenPGP private key, an invalid `DEPS_PLATFORM_COMMIT`, `git.platformCommit: enabled` on Gitea/Forgejo or with a signing key, an unknown key of `deps config describe`, an unreadable or unparsable `--from-renovate` file, or any config error (parse error, unknown key, failed validation, unreadable `--config` file; also a file `deps init` wrote that does not validate) |
 
 ## Output
 
@@ -880,7 +881,7 @@ note    deno.lock changes are computed by apply/run           (plan, when a deno
 note    jsonnetfile.lock.json changes are computed by apply/run (plan, when a jsonnet-bundler update exists)
 note    copier template changes are computed by apply/run (plan, when a copier update exists)
 pr      <status>[, <automerge>]  <branch>  <title>  <url>     (run)
-dashboard <status>  <title>  <url>                            (run, with dependencyDashboard)
+dashboard <status>  <title>  <url>                            (run, with dashboard.enabled)
 ```
 
 - For digest and pin updates, `<from>`/`<to>` read `<version>@<sha7>`. A lockfile-only update (`, lockfile`) starts at the locked version and changes only the lockfile.

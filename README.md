@@ -192,7 +192,7 @@ concurrency:
 permissions:
   contents: write
   pull-requests: write
-  issues: write # only for dependencyDashboard
+  issues: write # only for dashboard.enabled
 jobs:
   deps:
     runs-on: ubuntu-latest
@@ -226,7 +226,8 @@ Without a `.deps.yaml`, every direct dependency is updated. A small config (repl
 ```yaml
 # yaml-language-server: $schema=https://git.jakob-moeller.cloud/jakobmoellerdev/deps/releases/download/vX.Y.Z/deps.schema.json
 version: 1
-dependencyDashboard: true
+dashboard:
+  enabled: true
 rules:
   - managers: [github-actions] # minor and patch bumps in one PR
     updateTypes: [minor, patch]

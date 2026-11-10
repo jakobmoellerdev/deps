@@ -31,10 +31,10 @@ type Env struct {
 	// ($TG_TF_DEFAULT_REGISTRY_HOST); "" = TerraformRegistry, else registry.terraform.io.
 	TerragruntRegistry string
 	// SkipGomodImportPaths turns off major module path updates of go.mod requirements
-	// (config gomodUpdateImportPaths: false); false = on.
+	// (config gomod.updateImportPaths: false); false = on.
 	SkipGomodImportPaths bool
 	// ComposerIgnorePlatformReqs are the platform requirements composer update ignores
-	// (config composerIgnorePlatformReqs); nil = the composer.Locker default, empty = none.
+	// (config composer.ignorePlatformReqs); nil = the composer.Locker default, empty = none.
 	ComposerIgnorePlatformReqs []string
 	// Exists reports whether the slash path (relative to the scanned root) exists, for
 	// file-based conditions such as Maven profile `<activation><file>`. engine.Resolve

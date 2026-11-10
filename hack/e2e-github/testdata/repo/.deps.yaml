@@ -1,5 +1,6 @@
 # deps end-to-end test fixture (hack/e2e-github in the deps repository).
-dependencyDashboard: true
+dashboard:
+  enabled: true
 rules:
   - names: [actions/setup-node]
     allow: "< 8"

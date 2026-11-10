@@ -153,7 +153,7 @@ func (composerManager) LockRoots(root string, files []string) []manager.LockRoot
 // update` in a temporary copy of the directory. The working tree is never touched.
 type Locker struct {
 	// IgnorePlatformReqs are the platform requirements every composer update ignores
-	// (composerIgnorePlatformReqs: `--ignore-platform-req=<req>` each; empty = none); nil is
+	// (composer.ignorePlatformReqs: `--ignore-platform-req=<req>` each; empty = none); nil is
 	// deps' default (flags).
 	IgnorePlatformReqs []string
 }

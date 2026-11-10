@@ -155,11 +155,7 @@ func openBase(ctx context.Context, repo gitx.Repo, name string) (runBase, error)
 // runWideKeys are the top-level config keys that span all bases of a run (what bot.Options
 // and the branch names take from the config, and the base branches themselves): the config of
 // a base branch (useBaseBranchConfig) does not change them.
-var runWideKeys = []string{
-	"baseBranches", "useBaseBranchConfig", "branchPrefix", "gitAuthor", "platformCommit", "gitIgnoredAuthors",
-	"prConcurrentLimit", "prHourlyLimit", "rebaseWhen", "rebaseLabel", "stopUpdatingLabel", "updateNotScheduled",
-	"dependencyDashboard", "dependencyDashboardTitle", "dependencyDashboardLabels",
-}
+var runWideKeys = config.RunWideKeys()
 
 // baseSession is the session resolving base b, its rules with baseBranches matching b. The base
 // the checkout serves uses s's config; a base checked out into its own work tree gets the config

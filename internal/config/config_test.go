@@ -78,17 +78,23 @@ func TestLoadErrors(t *testing.T) {
 		{"names: [x]\n", ".deps.yaml:1:1: names: unknown key (names is a key of rules[] entries)"},
 		{"pinn: digest\n", ".deps.yaml:1:1: pinn: unknown key (did you mean pin?)"},
 		{"version: 2\n", "version: must be 1"},
-		{"gitAuthor: bot@example.com\n", "gitAuthor: must be 'Name <email>'"},
-		{"gitAuthor: 'Bot <nope>'\n", "gitAuthor: must be 'Name <email>'"},
-		{"gitIgnoredAuthors: ['125909804+ocmbot[bot]@users.noreply.github.com', 'a b@c']\n", "gitIgnoredAuthors[1]: must be an email address"},
-		{"gitIgnoredAuthors: ['Bot <b@example.com>']\n", "gitIgnoredAuthors[0]: must be an email address"},
-		{"gitIgnoredAuthors: [nope]\n", "gitIgnoredAuthors[0]: must be an email address"},
-		{"composerIgnorePlatformReqs: [php, '']\n", "composerIgnorePlatformReqs[1]: must be a platform package name or pattern"},
-		{"composerIgnorePlatformReqs: ['ext-* lib-*']\n", "composerIgnorePlatformReqs[0]: must be a platform package name or pattern"},
+		{"git: {author: bot@example.com}\n", "git.author: must be 'Name <email>'"},
+		{"git: {author: 'Bot <nope>'}\n", "git.author: must be 'Name <email>'"},
+		{"git: {ignoredAuthors: ['125909804+ocmbot[bot]@users.noreply.github.com', 'a b@c']}\n", "git.ignoredAuthors[1]: must be an email address"},
+		{"git: {ignoredAuthors: ['Bot <b@example.com>']}\n", "git.ignoredAuthors[0]: must be an email address"},
+		{"git: {ignoredAuthors: [nope]}\n", "git.ignoredAuthors[0]: must be an email address"},
+		{"composer: {ignorePlatformReqs: [php, '']}\n", "composer.ignorePlatformReqs[1]: must be a platform package name or pattern"},
+		{"composer: {ignorePlatformReqs: ['ext-* lib-*']}\n", "composer.ignorePlatformReqs[0]: must be a platform package name or pattern"},
 		{"prConcurrentLimit: -1\n", "prConcurrentLimit: must be >= 0"},
 		{"prHourlyLimit: -2\n", "prHourlyLimit: must be >= 0"},
-		{"dashboardApproval: true\n", "dashboardApproval: requires dependencyDashboard: true"},
-		{"rules: [{managers: [gomod], dashboardApproval: false}, {updateTypes: [major], dashboardApproval: true}]\n", "rules[1].dashboardApproval: requires dependencyDashboard: true"},
+		{"dashboardApproval: true\n", "dashboardApproval: requires dashboard.enabled: true"},
+		{"rules: [{managers: [gomod], dashboardApproval: false}, {updateTypes: [major], dashboardApproval: true}]\n", "rules[1].dashboardApproval: requires dashboard.enabled: true"},
+		{"dependencyDashboard: true\n", ".deps.yaml:1:1: dependencyDashboard: unknown key (moved to dashboard.enabled)"},
+		{"gitAuthor: 'Bot <b@example.com>'\n", ".deps.yaml:1:1: gitAuthor: unknown key (moved to git.author)"},
+		{"platformCommit: auto\n", ".deps.yaml:1:1: platformCommit: unknown key (moved to git.platformCommit)"},
+		{"gomodUpdateImportPaths: false\n", ".deps.yaml:1:1: gomodUpdateImportPaths: unknown key (moved to gomod.updateImportPaths)"},
+		{"composerIgnorePlatformReqs: []\n", ".deps.yaml:1:1: composerIgnorePlatformReqs: unknown key (moved to composer.ignorePlatformReqs)"},
+		{"rules: [{gitAuthor: x}]\n", "rules[0].gitAuthor: unknown key (Renovate's gitAuthor is the top-level git.author here)"},
 		{"pin: always\n", "pin: must be one of keep, digest, got \"always\""},
 		{"rules: [{managers: [gomod, pip]}]\n", `.deps.yaml:1:28: rules[0].managers[1]: unknown value "pip" (see deps config describe rules[].managers)`},
 		{"rules: [{manager: gomod}]\n", "rules[0].manager: unknown key (did you mean managers?)"},
@@ -174,7 +180,7 @@ func TestLoadErrors(t *testing.T) {
 		{"custom: [{files: [x], jsonata: a, fileFormat: json, checksum: {url: u}}]\n", "custom[0].checksum: requires match (regex mode)"},
 		{"custom: [{files: [x], fileFormat: json}]\n", "custom[0].fileFormat: requires jsonata"},
 		{"rebaseWhen: always\n", `rebaseWhen: must be one of conflicted, behind-base-branch, never, got "always"`},
-		{"platformCommit: always\n", `platformCommit: must be one of auto, enabled, disabled, got "always"`},
+		{"git: {platformCommit: always}\n", `git.platformCommit: must be one of auto, enabled, disabled, got "always"`},
 		{"minimumReleaseAge: soon\n", `minimumReleaseAge: invalid age "soon"`},
 		{"minimumReleaseAge: -1h\n", `minimumReleaseAge: invalid age "-1h"`},
 		{"minimumReleaseAge: 99999999999999999 weeks\n", "minimumReleaseAge: age \"99999999999999999 weeks\" out of range"},
@@ -228,16 +234,16 @@ func TestLoadErrors(t *testing.T) {
 		{"rules: [{automergeType: fast-forward}]\n", `rules[0].automergeType: must be one of pr, branch, got "fast-forward"`},
 		{"prCreation: later\n", `prCreation: must be one of immediate, not-pending, status-success, approval, got "later"`},
 		{"rules: [{prCreation: later}]\n", `rules[0].prCreation: must be one of immediate, not-pending, status-success, approval, got "later"`},
-		{"prCreation: approval\n", "prCreation: approval requires dependencyDashboard: true"},
-		{"rules: [{prCreation: approval}]\n", "rules[0].prCreation: approval requires dependencyDashboard: true"},
+		{"prCreation: approval\n", "prCreation: approval requires dashboard.enabled: true"},
+		{"rules: [{prCreation: approval}]\n", "rules[0].prCreation: approval requires dashboard.enabled: true"},
 		{"prNotPendingHours: -1\n", "prNotPendingHours: must be >= 0, got -1"},
 		{"draftPR: maybe\n", `draftPR: want a boolean, got "maybe"`},
 		{"automerge: sometimes\n", `automerge: want a boolean, got "sometimes"`},
-		{"dependencyDashboard: maybe\n", "dependencyDashboard: want a boolean"},
-		{"dependencyDashboardTitle: '  '\n", "dependencyDashboardTitle: must be a non-blank single line"},
-		{"dependencyDashboardTitle: \"a\\nb\"\n", "dependencyDashboardTitle: must be a non-blank single line"},
-		{"dependencyDashboardLabels: [deps, '']\n", "dependencyDashboardLabels[1]: must be a non-blank label name"},
-		{"dependencyDashboardLabels: ['a,b']\n", "dependencyDashboardLabels[0]: must be a non-blank label name without ','"},
+		{"dashboard: {enabled: maybe}\n", "dashboard.enabled: want a boolean"},
+		{"dashboard: {title: '  '}\n", "dashboard.title: must be a non-blank single line"},
+		{"dashboard: {title: \"a\\nb\"}\n", "dashboard.title: must be a non-blank single line"},
+		{"dashboard: {labels: [deps, '']}\n", "dashboard.labels[1]: must be a non-blank label name"},
+		{"dashboard: {labels: ['a,b']}\n", "dashboard.labels[0]: must be a non-blank label name without ','"},
 		{"gitlabci: {url: 'gitlab.example.com'}\n", `gitlabci.url: must be an absolute http(s) URL without query or fragment, got "gitlab.example.com"`},
 		{"gitlabci: {url: 'ssh://gitlab.example.com'}\n", "gitlabci.url: must be an absolute http(s) URL"},
 		{"gitlabci: {url: 'https://'}\n", "gitlabci.url: must be an absolute http(s) URL"},
@@ -372,10 +378,27 @@ func TestRenovateHintTargets(t *testing.T) {
 			continue
 		}
 		to, _, _ := strings.Cut(h.To, ":")
-		if !slices.ContainsFunc(d.structFields(typ), func(f structField) bool { return f.name == to }) {
+		if !hasFieldPath(&d, typ, to) {
 			t.Errorf("%s: %s %s is no key", key, h.Scope, h.To)
 		}
 	}
+	for key, to := range movedKeys {
+		if !hasFieldPath(&d, reflect.TypeFor[Config](), to) {
+			t.Errorf("moved %s: %s is no key", key, to)
+		}
+	}
+}
+
+// hasFieldPath reports whether the dotted yaml key path exists in struct typ.
+func hasFieldPath(d *decoder, typ reflect.Type, path string) bool {
+	for key := range strings.SplitSeq(path, ".") {
+		i := slices.IndexFunc(d.structFields(typ), func(f structField) bool { return f.name == key })
+		if i < 0 {
+			return false
+		}
+		typ = d.structFields(typ)[i].typ
+	}
+	return true
 }
 
 func TestPolicy(t *testing.T) {
@@ -733,11 +756,11 @@ func TestCustomJSONata(t *testing.T) {
 }
 
 func TestGitAuthorAndLimits(t *testing.T) {
-	c, err := load(t, ".deps.yaml", "gitAuthor: 'OCM Bot <bot@ocm.example>'\ngitIgnoredAuthors: [a@example.com]\nprConcurrentLimit: 3\nprHourlyLimit: 1\n")
+	c, err := load(t, ".deps.yaml", "git:\n  author: 'OCM Bot <bot@ocm.example>'\n  ignoredAuthors: [a@example.com]\nprConcurrentLimit: 3\nprHourlyLimit: 1\n")
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, err := ParseAuthor(c.GitAuthor)
+	a, err := ParseAuthor(c.Git.Author)
 	if err != nil || a.Name != "OCM Bot" || a.Email != "bot@ocm.example" {
 		t.Errorf("ParseAuthor = %v, %v", a, err)
 	}
@@ -750,8 +773,16 @@ func TestGitAuthorAndLimits(t *testing.T) {
 			t.Errorf("ParseAuthor(%q) accepted", bad)
 		}
 	}
-	if len(c.GitIgnoredAuthors) != 1 || c.PRConcurrentLimit != 3 || c.PRHourlyLimit != 1 {
+	if len(c.Git.IgnoredAuthors) != 1 || c.PRConcurrentLimit != 3 || c.PRHourlyLimit != 1 {
 		t.Errorf("config = %+v", c)
+	}
+}
+
+func TestRunWideKeys(t *testing.T) {
+	want := []string{"branchPrefix", "baseBranches", "useBaseBranchConfig", "rebaseWhen", "git", "prConcurrentLimit", "prHourlyLimit",
+		"updateNotScheduled", "prNotPendingHours", "rebaseLabel", "stopUpdatingLabel", "dashboard"}
+	if got := RunWideKeys(); !slices.Equal(got, want) {
+		t.Errorf("RunWideKeys() = %v, want %v", got, want)
 	}
 }
 
@@ -1050,16 +1081,16 @@ func TestComposerIgnorePlatformReqs(t *testing.T) {
 		want []string
 	}{
 		{"", nil},
-		{"composerIgnorePlatformReqs: []\n", []string{}},
-		{"composerIgnorePlatformReqs:\n", []string{}},
-		{"composerIgnorePlatformReqs: [ext-*, lib-*]\n", []string{"ext-*", "lib-*"}},
+		{"composer: {ignorePlatformReqs: []}\n", []string{}},
+		{"composer:\n  ignorePlatformReqs:\n", []string{}},
+		{"composer: {ignorePlatformReqs: [ext-*, lib-*]}\n", []string{"ext-*", "lib-*"}},
 	} {
 		c, err := load(t, ".deps.yaml", tc.body)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !slices.Equal(c.ComposerIgnorePlatformReqs, tc.want) || (c.ComposerIgnorePlatformReqs == nil) != (tc.want == nil) {
-			t.Errorf("%q: composerIgnorePlatformReqs = %#v, want %#v", tc.body, c.ComposerIgnorePlatformReqs, tc.want)
+		if !slices.Equal(c.Composer.IgnorePlatformReqs, tc.want) || (c.Composer.IgnorePlatformReqs == nil) != (tc.want == nil) {
+			t.Errorf("%q: composer.ignorePlatformReqs = %#v, want %#v", tc.body, c.Composer.IgnorePlatformReqs, tc.want)
 		}
 	}
 }
@@ -1313,7 +1344,7 @@ func TestDraftPRAndPRCreationPolicy(t *testing.T) {
 	if p := def.PolicyFor(checkout, dep.Major); p.DraftPR || p.PRCreation != PRCreationImmediate || def.NotPendingHours() != DefaultPRNotPendingHours {
 		t.Errorf("defaults: %v %q %d", p.DraftPR, p.PRCreation, def.NotPendingHours())
 	}
-	c, err := load(t, ".deps.yaml", "draftPR: true\nprCreation: not-pending\nprNotPendingHours: 0\ndependencyDashboard: true\nrules:\n  - updateTypes: [major]\n    prCreation: status-success\n  - updateTypes: [patch]\n    prCreation: approval\n  - managers: [gomod]\n    draftPR: false\n    prCreation: immediate\n")
+	c, err := load(t, ".deps.yaml", "draftPR: true\nprCreation: not-pending\nprNotPendingHours: 0\ndashboard: {enabled: true}\nrules:\n  - updateTypes: [major]\n    prCreation: status-success\n  - updateTypes: [patch]\n    prCreation: approval\n  - managers: [gomod]\n    draftPR: false\n    prCreation: immediate\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1342,19 +1373,19 @@ func TestDashboardConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.DependencyDashboard || c.DashboardTitle() != "Dependency Dashboard" || c.DependencyDashboardLabels != nil {
-		t.Errorf("defaults: %v %q %v", c.DependencyDashboard, c.DashboardTitle(), c.DependencyDashboardLabels)
+	if c.Dashboard.Enabled || c.DashboardTitle() != "Dependency Dashboard" || c.Dashboard.Labels != nil {
+		t.Errorf("defaults: %+v %q", c.Dashboard, c.DashboardTitle())
 	}
-	c, err = load(t, ".deps.yaml", "dependencyDashboard: true\ndependencyDashboardTitle: Deps\ndependencyDashboardLabels: [deps, bot]\n")
+	c, err = load(t, ".deps.yaml", "dashboard:\n  enabled: true\n  title: Deps\n  labels: [deps, bot]\n")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !c.DependencyDashboard || c.DashboardTitle() != "Deps" || !slices.Equal(c.DependencyDashboardLabels, []string{"deps", "bot"}) {
-		t.Errorf("set: %v %q %v", c.DependencyDashboard, c.DashboardTitle(), c.DependencyDashboardLabels)
+	if !c.Dashboard.Enabled || c.DashboardTitle() != "Deps" || !slices.Equal(c.Dashboard.Labels, []string{"deps", "bot"}) {
+		t.Errorf("set: %+v %q", c.Dashboard, c.DashboardTitle())
 	}
 
 	// dashboardApproval: the top-level default, overridden by rules (per update type too).
-	c, err = load(t, ".deps.yaml", "dependencyDashboard: true\ndashboardApproval: true\nrules: [{managers: [gomod], dashboardApproval: false}, {managers: [gomod], updateTypes: [major], dashboardApproval: true}]\n")
+	c, err = load(t, ".deps.yaml", "dashboard: {enabled: true}\ndashboardApproval: true\nrules: [{managers: [gomod], dashboardApproval: false}, {managers: [gomod], updateTypes: [major], dashboardApproval: true}]\n")
 	if err != nil {
 		t.Fatal(err)
 	}

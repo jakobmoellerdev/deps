@@ -113,8 +113,8 @@ func newConfigShow(o *rootOpts) *cli.Command {
 		},
 		Flags: append(scanFlags(o, scanOffline),
 			&cli.BoolFlag{Name: "sources", Destination: &so.sources, Usage: "annotate each value with where it comes from: default, file, env or flag"},
-			&cli.StringFlag{Name: "author-name", Destination: &so.author.authorName, Usage: "commit author name, as for run (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then " + defaultAuthorName + ")"},
-			&cli.StringFlag{Name: "author-email", Destination: &so.author.authorEmail, Usage: "commit author email, as for run (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then " + defaultAuthorEmail + ")"},
+			&cli.StringFlag{Name: "author-name", Destination: &so.author.authorName, Usage: "commit author name, as for run (when not set: $DEPS_GIT_AUTHOR, then git.author of the config, then " + defaultAuthorName + ")"},
+			&cli.StringFlag{Name: "author-email", Destination: &so.author.authorEmail, Usage: "commit author email, as for run (when not set: $DEPS_GIT_AUTHOR, then git.author of the config, then " + defaultAuthorEmail + ")"},
 		),
 	}
 }
@@ -147,25 +147,26 @@ func configShow(ctx context.Context, cmd *cli.Command, o *rootOpts, so *showOpts
 			sources[key] = sourceExtends + " " + from
 		}
 	}
-	name, email, err := commitAuthor(cmd, &so.author, os.Getenv("DEPS_GIT_AUTHOR"), cfg.GitAuthor)
+	name, email, err := commitAuthor(cmd, &so.author, os.Getenv("DEPS_GIT_AUTHOR"), cfg.Git.Author)
 	if err != nil {
 		return err
 	}
-	setString(lookup(eff, "gitAuthor"), name+" <"+email+">")
+	git := lookup(eff, "git")
+	setString(lookup(git, "author"), name+" <"+email+">")
 	// A flag set by applyEnv (DEPS_AUTHOR_NAME, DEPS_AUTHOR_EMAIL) is set too; flagSource
 	// tells it from one given on the command line.
 	if os.Getenv("DEPS_GIT_AUTHOR") != "" {
-		sources["gitAuthor"] = sourceEnv
+		sources["git.author"] = sourceEnv
 	}
 	for _, fl := range []string{"author-name", "author-email"} {
 		if !cmd.IsSet(fl) {
 			continue
 		}
 		if strings.HasPrefix(flagSource(cmd, fl), "--") {
-			sources["gitAuthor"] = sourceFlag
+			sources["git.author"] = sourceFlag
 			break
 		}
-		sources["gitAuthor"] = sourceEnv
+		sources["git.author"] = sourceEnv
 	}
 	info, _ := platform.FromEnv(os.Getenv)
 	host, src := actionsHost(cfg, info)
@@ -178,13 +179,13 @@ func configShow(ctx context.Context, cmd *cli.Command, o *rootOpts, so *showOpts
 	if src == "env" {
 		sources["gitlabci.url"] = sourceEnv
 	}
-	pc, src, err := platformCommitSetting(os.Getenv(platformCommitEnv), cfg.PlatformCommit)
+	pc, src, err := platformCommitSetting(os.Getenv(platformCommitEnv), cfg.Git.PlatformCommit)
 	if err != nil {
 		return err
 	}
-	setString(lookup(eff, "platformCommit"), pc)
+	setString(lookup(git, "platformCommit"), pc)
 	if src == platformCommitEnv {
-		sources["platformCommit"] = sourceEnv
+		sources["git.platformCommit"] = sourceEnv
 	}
 	if so.sources {
 		annotate(s, eff, sources)

@@ -383,7 +383,7 @@ func TestLoadRules(t *testing.T) {
   - # nix is disabled by default in Renovate
     managers: [nix]
     ignore: true`,
-			notes: []string{"warn packageRules[2].prCreation: dropped: prCreation: approval requires dependencyDashboard: true"},
+			notes: []string{"warn packageRules[2].prCreation: dropped: prCreation: approval requires dashboard.enabled: true"},
 		},
 		{
 			name:  "ansible category; galaxy datasources",
@@ -1198,7 +1198,7 @@ func TestLoadDashboardApproval(t *testing.T) {
 		t.Fatal(err)
 	}
 	y := string(res.YAML)
-	if !strings.Contains(y, "\ndependencyDashboard: true\n") || !strings.Contains(y, "\ndashboardApproval: true\n") {
+	if !strings.Contains(y, "\ndashboard:\n  enabled: true\n") || !strings.Contains(y, "\ndashboardApproval: true\n") {
 		t.Errorf("YAML:\n%s", y)
 	}
 	for _, n := range noteLines(res) {
@@ -1287,11 +1287,11 @@ func TestLoadPRCreation(t *testing.T) {
 		{
 			src:   `{prCreation: 'approval', abandonmentThreshold: null, prNotPendingHours: 4}`,
 			want:  "prNotPendingHours: 4\n",
-			notes: []string{"warn prCreation: dropped: prCreation: approval requires dependencyDashboard: true"},
+			notes: []string{"warn prCreation: dropped: prCreation: approval requires dashboard.enabled: true"},
 		},
 		{
 			src:  `{dependencyDashboard: true, prCreation: 'approval'}`,
-			want: "dependencyDashboard: true\nprCreation: approval\n",
+			want: "dashboard:\n  enabled: true\nprCreation: approval\n",
 		},
 		{
 			src:   `{prNotPendingHours: -1}`,
@@ -1313,16 +1313,16 @@ func TestLoadPRCreation(t *testing.T) {
 	}
 }
 
-// composerIgnorePlatformReqs: Renovate's [] (ext-* and lib-*) and null (none) are written out,
-// since unset means deps' own default.
+// composerIgnorePlatformReqs: Renovate's [] (ext-* and lib-*) and null (none) are written out
+// as composer.ignorePlatformReqs, since unset means deps' own default.
 func TestLoadComposerIgnorePlatformReqs(t *testing.T) {
 	for _, tt := range []struct {
 		src, want string
 		notes     []string
 	}{
-		{src: `{composerIgnorePlatformReqs: []}`, want: "composerIgnorePlatformReqs: [ext-*, lib-*]\n"},
-		{src: `{composerIgnorePlatformReqs: null}`, want: "composerIgnorePlatformReqs: []\n"},
-		{src: `{composerIgnorePlatformReqs: ['ext-intl', 'php']}`, want: "composerIgnorePlatformReqs: [ext-intl, php]\n"},
+		{src: `{composerIgnorePlatformReqs: []}`, want: "composer:\n  ignorePlatformReqs: [ext-*, lib-*]\n"},
+		{src: `{composerIgnorePlatformReqs: null}`, want: "composer:\n  ignorePlatformReqs: []\n"},
+		{src: `{composerIgnorePlatformReqs: ['ext-intl', 'php']}`, want: "composer:\n  ignorePlatformReqs: [ext-intl, php]\n"},
 		{src: `{composerIgnorePlatformReqs: 3}`, notes: []string{"warn composerIgnorePlatformReqs: must be a list of strings or null; ignored"}},
 	} {
 		res, err := load(t, tt.src)

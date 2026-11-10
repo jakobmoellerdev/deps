@@ -91,7 +91,7 @@ func (r *resolver) headUpdate(dir string, reject func(v, reason string)) ([]dep.
 	return []dep.Update{{Dep: d, Type: dep.Digest, NewVersion: v, NewDigest: rev.Digest}}, nil
 }
 
-// majorPathUpdates adds the major module path updates of a go.mod requirement (gomodUpdateImportPaths):
+// majorPathUpdates adds the major module path updates of a go.mod requirement (gomod.updateImportPaths):
 // per successor path (datasource.MajorPathSource, `/v<N+1>` …) its newest release accepted
 // under the major policy and old enough, in the PR bucket of a major candidate. A later
 // (higher) path replaces an update of the same bucket, except a security update. Updates

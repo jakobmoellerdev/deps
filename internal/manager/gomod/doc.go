@@ -32,12 +32,12 @@ var Doc = refdoc.Manager{
 			"Rules apply as for other digest updates (`allowedUpdateTypes: [digest]`, `ignore`, `updateTypes: [digest]`); `minimumReleaseAge` of the digest type is checked against the commit time.",
 			"Modules with releases whose pseudo-version is ahead of the latest release get no digest update (`@latest` is that release, not the branch tip).",
 		}},
-		{Title: "Major module paths (`gomodUpdateImportPaths`)", Items: []string{
+		{Title: "Major module paths (`gomod.updateImportPaths`)", Items: []string{
 			"Major versions ≥ 2 live under their own module path. For a requirement on `<path>/v<N>` (or an unsuffixed v0/v1 module, `/v<M+1>` for `vM.x.y+incompatible`, `gopkg.in/x.v<N>`), deps lists `/v<N+1>`, `/v<N+2>`, … from the GOPROXY URLs until one has no releases (at most 5).",
 			"The newest stable release of each path that the major policy accepts (`allowedUpdateTypes`, `allow`, `minimumReleaseAge`, `ignore` per update type) is a `major` update in the major PR bucket (`v<N>` buckets with `separateMultipleMajor`); a newer path replaces an older one in the same bucket.",
 			"The update rewrites the require (path and version) and every import of the old path and its packages in the module's `.go` files (below the go.mod, skipping `vendor`, `testdata`, `.`/`_` directories and nested modules; only the import path literals change). `go mod tidy` then sees the rewritten files through `-overlay`.",
 			"The new major's API may have changed: the PR body says so, and the build is not guaranteed to pass.",
-			"`gomodUpdateImportPaths: false` turns module path updates off. Only GOPROXY URLs are probed: GONOPROXY/GOPRIVATE modules, and paths no proxy before `direct` has, get no module path updates.",
+			"`gomod: {updateImportPaths: false}` turns module path updates off. Only GOPROXY URLs are probed: GONOPROXY/GOPRIVATE modules, and paths no proxy before `direct` has, get no module path updates.",
 			"A probe only decides whether a module path update is offered, so each probe request to a proxy gets 10 s, retries included, and is not retried once that runs out. A path no proxy answers in time counts as having no releases and is logged as a warning (`major module path probe timed out; assuming no newer major`); the requirement keeps its other updates.",
 		}},
 		{Title: "Module path changes", Items: []string{

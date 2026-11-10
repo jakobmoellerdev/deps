@@ -63,8 +63,8 @@ func newRun(o *rootOpts) *cli.Command {
 			&cli.StringSliceFlag{Name: "repositories", Destination: &r.repositories, Usage: "run on these repositories one after another instead of the checkout in --dir, each cloned into a temporary directory with the token: owner/name, or owner/<glob> (e.g. 'my-org/*', 'my-org/svc-*') for the repositories of an organization or user the token can list (GitLab: group/sub/name, a glob covers subgroups, ** any number of path segments), without archived ones and mirrors (repeatable, comma-separated)"},
 			&cli.StringFlag{Name: "token", Destination: &r.token, Usage: "platform API token; git pushes use the checkout's credentials (when not set: $GITHUB_TOKEN, $GITEA_TOKEN, $FORGEJO_TOKEN, $GITLAB_TOKEN, then the git credential helper)"},
 			&cli.StringFlag{Name: "base", Destination: &r.base, Usage: "base branch, overriding baseBranches of the config (default: baseBranches, else the repository's default branch)"},
-			&cli.StringFlag{Name: "author-name", Destination: &r.authorName, Usage: "commit author name (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then " + defaultAuthorName + ")"},
-			&cli.StringFlag{Name: "author-email", Destination: &r.authorEmail, Usage: "commit author email (when not set: $DEPS_GIT_AUTHOR, then gitAuthor of the config, then " + defaultAuthorEmail + ")"},
+			&cli.StringFlag{Name: "author-name", Destination: &r.authorName, Usage: "commit author name (when not set: $DEPS_GIT_AUTHOR, then git.author of the config, then " + defaultAuthorName + ")"},
+			&cli.StringFlag{Name: "author-email", Destination: &r.authorEmail, Usage: "commit author email (when not set: $DEPS_GIT_AUTHOR, then git.author of the config, then " + defaultAuthorEmail + ")"},
 			&cli.IntFlag{Name: "max-new-prs", Value: 10, Destination: &r.maxNewPRs, Usage: "maximum number of pull requests to create per run (0 = unlimited)"},
 			&cli.BoolFlag{Name: "dry-run", Destination: &r.dryRun, Usage: "report what would change without pushing or calling write APIs (no PR, merge or issue writes); works without a token"},
 			&cli.StringFlag{Name: "trigger-schedule", Destination: &r.triggerSchedule, Usage: "act as if the run was triggered by this workflow cron, overriding $GITHUB_EVENT_NAME/$GITHUB_EVENT_PATH"},
@@ -81,14 +81,14 @@ const (
 )
 
 // commitAuthor resolves the commit author field by field: an explicitly set flag, then
-// env ($DEPS_GIT_AUTHOR), then cfg (gitAuthor), then the defaults. env and cfg are
+// env ($DEPS_GIT_AUTHOR), then cfg (git.author), then the defaults. env and cfg are
 // 'Name <email>'.
 func commitAuthor(cmd *cli.Command, r *runOpts, env, cfg string) (name, email string, err error) {
 	name, email = defaultAuthorName, defaultAuthorEmail
 	if cfg != "" {
 		a, err := config.ParseAuthor(cfg) // validated by config.Load
 		if err != nil {
-			return "", "", &usageError{fmt.Errorf("gitAuthor: %w", err)}
+			return "", "", &usageError{fmt.Errorf("git.author: %w", err)}
 		}
 		name, email = a.Name, a.Email
 	}
@@ -153,16 +153,16 @@ func newSigner(ctx context.Context, key, src string) (*gitx.Signer, error) {
 	return s, nil
 }
 
-// platformCommitEnv overrides the config key platformCommit.
+// platformCommitEnv overrides the config key git.platformCommit.
 const platformCommitEnv = "DEPS_PLATFORM_COMMIT"
 
-// platformCommitSetting resolves platformCommit: env ($DEPS_PLATFORM_COMMIT), then cfg, then
-// auto. It returns the value and where it came from (the variable, the config key, or "" for
-// the default); a value that is none of config.PlatformCommits is a usage error.
+// platformCommitSetting resolves git.platformCommit: env ($DEPS_PLATFORM_COMMIT), then cfg,
+// then auto. It returns the value and where it came from (the variable, the config key, or ""
+// for the default); a value that is none of config.PlatformCommits is a usage error.
 func platformCommitSetting(env, cfg string) (v, src string, err error) {
 	v, src = env, platformCommitEnv
 	if v == "" {
-		v, src = cfg, "platformCommit"
+		v, src = cfg, "git.platformCommit"
 	}
 	if v == "" {
 		return config.PlatformCommitAuto, "", nil
@@ -173,7 +173,7 @@ func platformCommitSetting(env, cfg string) (v, src string, err error) {
 	return v, src, nil
 }
 
-// platformCommits resolves platformCommit (platformCommitSetting) to whether commits go
+// platformCommits resolves git.platformCommit (platformCommitSetting) to whether commits go
 // through the GitHub API. auto enables them on GitHub for a GitHub App installation token
 // when no signing key is set. enabled on another forge or together with a signing key is a
 // usage error; without a token (a dry run) it falls back to git with a warning.
@@ -201,7 +201,7 @@ func platformCommits(ctx context.Context, env, cfg string, kind platform.Kind, t
 }
 
 // apiGit is a gitx.Repo whose commits, branch updates and branch tips go through the GitHub
-// API (platformCommit); remote listing, branch deletion and WriteTree stay with git. Git
+// API (git.platformCommit); remote listing, branch deletion and WriteTree stay with git. Git
 // object ids are content hashes, so the tree WriteTree computes locally is the tree of the
 // API commit made from the same changes.
 type apiGit struct {
@@ -333,16 +333,16 @@ func runRepo(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts, sh 
 	stderr := cmd.Root().ErrWriter
 	info, token, client := s.info, sh.token, sh.client
 	repo := gitx.Repo{Dir: s.root, Signer: sh.signer}
-	name, email, err := commitAuthor(cmd, r, os.Getenv("DEPS_GIT_AUTHOR"), s.cfg.GitAuthor)
+	name, email, err := commitAuthor(cmd, r, os.Getenv("DEPS_GIT_AUTHOR"), s.cfg.Git.Author)
 	if err != nil {
 		return err
 	}
-	usePlatform, err := platformCommits(ctx, os.Getenv(platformCommitEnv), s.cfg.PlatformCommit, info.Kind, token, sh.signer != nil)
+	usePlatform, err := platformCommits(ctx, os.Getenv(platformCommitEnv), s.cfg.Git.PlatformCommit, info.Kind, token, sh.signer != nil)
 	if err != nil {
 		return err
 	}
 	gitOf := func(repo gitx.Repo) bot.Git { return repo }
-	ignored := s.cfg.GitIgnoredAuthors
+	ignored := s.cfg.Git.IgnoredAuthors
 	if usePlatform {
 		prefix, err := repo.Prefix(ctx)
 		if err != nil {
@@ -425,8 +425,8 @@ func runRepo(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts, sh 
 		Progress:           s.progress,
 		PRLog:              prLog(stderr),
 	}
-	if s.cfg.DependencyDashboard {
-		bo.Dashboard = &bot.DashboardOptions{Title: s.cfg.DashboardTitle(), Labels: s.cfg.DependencyDashboardLabels}
+	if s.cfg.Dashboard.Enabled {
+		bo.Dashboard = &bot.DashboardOptions{Title: s.cfg.DashboardTitle(), Labels: s.cfg.Dashboard.Labels}
 	}
 	actions, botErrs := bot.Run(ctx, bo, botBases, postProcessors(s), pc)
 

@@ -221,40 +221,33 @@ type Config struct {
 	Settings     `yaml:",inline"`
 	Timezone     string   `yaml:"timezone" jsonschema_description:"IANA time zone (e.g. Europe/Berlin) of the schedule time windows; default UTC. Cron triggers are unaffected."`
 	Security     *bool    `yaml:"security" jsonschema:"default=true" jsonschema_description:"Look up OSV advisories and propose security updates that bypass allow, allowedUpdateTypes and schedule."`
-	BranchPrefix string   `yaml:"branchPrefix" jsonschema:"default=deps/" jsonschema_description:"Prefix of update branches (<prefix><additionalBranchPrefix><name>, <prefix><additionalBranchPrefix>group/<group>); must end with '/'. Only branches and PRs under it are managed."`
-	BaseBranches []string `yaml:"baseBranches" jsonschema_description:"Base branches deps run proposes updates against, each resolved from its own tip: branch names, $default (the repository's default branch) and RE2 regexes '/<RE2>/' (flag i allowed) matching branches on origin. With more than one entry, or a regex, update branches carry their base (<prefix><base>/<name>) and PRs, cleanup and the dashboard are kept per base. Empty means the default branch; run --base overrides it."`
+	BranchPrefix string   `yaml:"branchPrefix" scope:"run" jsonschema:"default=deps/" jsonschema_description:"Prefix of update branches (<prefix><additionalBranchPrefix><name>, <prefix><additionalBranchPrefix>group/<group>); must end with '/'. Only branches and PRs under it are managed."`
+	BaseBranches []string `yaml:"baseBranches" scope:"run" jsonschema_description:"Base branches deps run proposes updates against, each resolved from its own tip: branch names, $default (the repository's default branch) and RE2 regexes '/<RE2>/' (flag i allowed) matching branches on origin. With more than one entry, or a regex, update branches carry their base (<prefix><base>/<name>) and PRs, cleanup and the dashboard are kept per base. Empty means the default branch; run --base overrides it."`
 	// UseBaseBranchConfig is Renovate's useBaseBranchConfig.
-	UseBaseBranchConfig string `yaml:"useBaseBranchConfig" jsonschema:"default=none" jsonschema_description:"Config of the base branches run resolves from their own tip (baseBranches, explain --base, preview --base): none (the checkout's config), merge (the config file of the same name on the base branch is merged over the checkout's config as extends merges, the base's keys winning; a base without the file is a config error), merge-if-present (as merge, a base without the file uses the checkout's config). The keys that span the run (baseBranches, useBaseBranchConfig, branchPrefix, the PR limits, git and rebase settings, the dashboard) stay the checkout's."`
-	RebaseWhen          string `yaml:"rebaseWhen" jsonschema:"default=conflicted" jsonschema_description:"When to rebuild an open update PR whose content is unchanged: conflicted (only when not mergeable), behind-base-branch (also when the base branch moved), never (only when its content changes)."`
-	Monorepos           *bool  `yaml:"monorepos" jsonschema:"default=true" jsonschema_description:"Group deps released from one source repository (built-in list, e.g. kubernetes, opentelemetry-go, babel) into one PR, and the Ruby version (the Gemfile ruby directive, .ruby-version, asdf and mise ruby) into the group ruby; rules can override the group."`
-	Replacements        *bool  `yaml:"replacements" jsonschema:"default=true" jsonschema_description:"Replace packages that moved or were renamed upstream with a replacement update: the built-in list generated from Renovate's replacements presets (lib/data/replacements.json, the moves deps can write: e.g. k8s.gcr.io/* images to registry.k8s.io/*, npm jade to pug 2.0.0, google-github-actions/release-please-action to googleapis/release-please-action). Rules' replacementName overrides an entry; updateTypes: [replacement] with ignore: true switches replacements off per dep."`
-	GitAuthor           string `yaml:"gitAuthor" jsonschema:"default=deps[bot] <deps-bot@noreply.invalid>" jsonschema_description:"Author and committer of deps commits as 'Name <email>' (git identity). Overridden by $DEPS_GIT_AUTHOR and the --author-name/--author-email flags. With a signing key (run --signing-key), use a verified email of the key's owner on the forge, or the signature does not count as verified. Ignored for platform commits (platformCommit), whose author is the token's account; branches whose tip it authored still count as deps' own."`
-	// PlatformCommit creates commits through the GitHub API (Renovate's platformCommit).
-	PlatformCommit string `yaml:"platformCommit" jsonschema:"default=auto" jsonschema_description:"Create commits and move update branches through the GitHub API instead of git, so that GitHub signs them and shows them as verified, authored by the GitHub App (e.g. ocmbot[bot]). auto enables it on GitHub when the token is a GitHub App installation token (ghs_..., also GITHUB_TOKEN in Actions) and no signing key is set; enabled requires GitHub and no signing key; disabled always uses git. GitHub signs API commits only for App tokens; with a personal access token they stay unsigned. Overridden by $DEPS_PLATFORM_COMMIT."`
-	// GitIgnoredAuthors are emails whose commits on an update branch count as the bot's own.
-	GitIgnoredAuthors []string  `yaml:"gitIgnoredAuthors" jsonschema_description:"Commit author emails (case-insensitive) besides the bot's own whose commits on an update branch do not count as modifications: such branches are still updated and rebased."`
-	PRConcurrentLimit int       `yaml:"prConcurrentLimit" jsonschema:"minimum=0,default=0" jsonschema_description:"Maximum number of open managed PRs; new PRs are only created below it. 0 means unlimited."`
-	PRHourlyLimit     int       `yaml:"prHourlyLimit" jsonschema:"minimum=0,default=0" jsonschema_description:"Maximum number of managed PRs created per hour, counting existing PRs by creation time. 0 means unlimited."`
-	Actions           Actions   `yaml:"actions" jsonschema_description:"github-actions manager settings."`
-	Terraform         Terraform `yaml:"terraform" jsonschema_description:"terraform manager settings."`
-	// GomodUpdateImportPaths enables major module path updates (Renovate's
-	// postUpdateOptions: [gomodUpdateImportPaths]).
-	GomodUpdateImportPaths *bool    `yaml:"gomodUpdateImportPaths" jsonschema:"default=true" jsonschema_description:"Propose major updates of Go modules to their next major module path (github.com/x/y/v2 → /v3, also /v2 for v0/v1 modules), rewriting the require and the import paths in the module's .go files before go mod tidy. The new major's API may differ, so the build can break. false proposes no module path changes (go mod tidy would undo a path change without rewritten imports)."`
-	GitLabCI               GitLabCI `yaml:"gitlabci" jsonschema_description:"gitlabci manager settings."`
+	UseBaseBranchConfig string    `yaml:"useBaseBranchConfig" scope:"run" jsonschema:"default=none" jsonschema_description:"Config of the base branches run resolves from their own tip (baseBranches, explain --base, preview --base): none (the checkout's config), merge (the config file of the same name on the base branch is merged over the checkout's config as extends merges, the base's keys winning; a base without the file is a config error), merge-if-present (as merge, a base without the file uses the checkout's config). The keys that span the run (baseBranches, useBaseBranchConfig, branchPrefix, the PR limits, prNotPendingHours, git, the rebase settings, the dashboard) stay the checkout's."`
+	RebaseWhen          string    `yaml:"rebaseWhen" scope:"run" jsonschema:"default=conflicted" jsonschema_description:"When to rebuild an open update PR whose content is unchanged: conflicted (only when not mergeable), behind-base-branch (also when the base branch moved), never (only when its content changes)."`
+	Monorepos           *bool     `yaml:"monorepos" jsonschema:"default=true" jsonschema_description:"Group deps released from one source repository (built-in list, e.g. kubernetes, opentelemetry-go, babel) into one PR, and the Ruby version (the Gemfile ruby directive, .ruby-version, asdf and mise ruby) into the group ruby; rules can override the group."`
+	Replacements        *bool     `yaml:"replacements" jsonschema:"default=true" jsonschema_description:"Replace packages that moved or were renamed upstream with a replacement update: the built-in list generated from Renovate's replacements presets (lib/data/replacements.json, the moves deps can write: e.g. k8s.gcr.io/* images to registry.k8s.io/*, npm jade to pug 2.0.0, google-github-actions/release-please-action to googleapis/release-please-action). Rules' replacementName overrides an entry; updateTypes: [replacement] with ignore: true switches replacements off per dep."`
+	Git                 Git       `yaml:"git" scope:"run" jsonschema_description:"Commit identity and how deps commits."`
+	PRConcurrentLimit   int       `yaml:"prConcurrentLimit" scope:"run" jsonschema:"minimum=0,default=0" jsonschema_description:"Maximum number of open managed PRs; new PRs are only created below it. 0 means unlimited."`
+	PRHourlyLimit       int       `yaml:"prHourlyLimit" scope:"run" jsonschema:"minimum=0,default=0" jsonschema_description:"Maximum number of managed PRs created per hour, counting existing PRs by creation time. 0 means unlimited."`
+	Actions             Actions   `yaml:"actions" jsonschema_description:"github-actions manager settings."`
+	Terraform           Terraform `yaml:"terraform" jsonschema_description:"terraform manager settings."`
+	Gomod               Gomod     `yaml:"gomod" jsonschema_description:"gomod manager settings."`
+	GitLabCI            GitLabCI  `yaml:"gitlabci" jsonschema_description:"gitlabci manager settings."`
+	Composer            Composer  `yaml:"composer" jsonschema_description:"composer manager settings."`
 	// RegistryAliases maps a registry alias as written (a variable such as $CI_REGISTRY) to
 	// the registry it stands for (Renovate's registryAliases).
 	RegistryAliases    map[string]string `yaml:"registryAliases" jsonschema_description:"Registry aliases by the prefix written in files, e.g. $CI_REGISTRY or ${REGISTRY}: an image reference '<alias>/<path>[:tag][@digest]' is looked up as '<value>/<path>' while the file keeps the alias. Extended files merge it by key."`
 	IgnorePaths        []string          `yaml:"ignorePaths" jsonschema_description:"Case-sensitive doublestar globs (as in Renovate) on slash paths relative to --dir; matching files and directories are not scanned. When the key is absent, the default list (dependency trees, examples and tests) applies; any list (also []) replaces it. Entries may also be /RE2/ regexes."`
-	UpdateNotScheduled *bool             `yaml:"updateNotScheduled" jsonschema:"default=true" jsonschema_description:"Keep updating and rebasing open update PRs outside their schedule; only new PRs wait for the schedule window. false leaves out-of-schedule branches untouched."`
-	PRNotPendingHours  *int              `yaml:"prNotPendingHours" jsonschema:"minimum=0,default=25" jsonschema_description:"With prCreation not-pending: hours after the last commit of a branch whose checks are still running or absent after which its PR is opened anyway."`
+	UpdateNotScheduled *bool             `yaml:"updateNotScheduled" scope:"run" jsonschema:"default=true" jsonschema_description:"Keep updating and rebasing open update PRs outside their schedule; only new PRs wait for the schedule window. false leaves out-of-schedule branches untouched."`
+	PRNotPendingHours  *int              `yaml:"prNotPendingHours" scope:"run" jsonschema:"minimum=0,default=25" jsonschema_description:"With prCreation not-pending: hours after the last commit of a branch whose checks are still running or absent after which its PR is opened anyway."`
 	// RebaseLabel and StopUpdatingLabel are PR labels people set (Renovate's options of the
 	// same names).
-	RebaseLabel       string `yaml:"rebaseLabel" jsonschema:"default=rebase" jsonschema_description:"Label that makes the next run rebuild an update PR's branch on the current base, like ticking its rebase checkbox (bypassing the schedule and discarding commits by others); deps removes the label afterwards."`
-	StopUpdatingLabel string `yaml:"stopUpdatingLabel" jsonschema:"default=stop-updating" jsonschema_description:"Label that makes deps leave an update PR alone: its branch is no longer pushed or rebased, and the PR is not closed as obsolete. Remove the label to hand the PR back to deps."`
-	// DependencyDashboard* configure the dashboard issue (Renovate's :dependencyDashboard).
-	DependencyDashboard       bool     `yaml:"dependencyDashboard" jsonschema:"default=false" jsonschema_description:"Maintain a dependency dashboard issue listing pending, blocked and open updates, errors and detected dependencies; its checkboxes make the next run create, recreate or rebase PRs. false leaves an existing dashboard untouched."`
-	DependencyDashboardTitle  string   `yaml:"dependencyDashboardTitle" jsonschema:"default=Dependency Dashboard" jsonschema_description:"Title of the dependency dashboard issue; the issue is found by this exact title."`
-	DependencyDashboardLabels []string `yaml:"dependencyDashboardLabels" jsonschema_description:"Labels set when the dashboard issue is created (by name; on Gitea and Forgejo they must exist in the repository or its organization)."`
+	RebaseLabel       string `yaml:"rebaseLabel" scope:"run" jsonschema:"default=rebase" jsonschema_description:"Label that makes the next run rebuild an update PR's branch on the current base, like ticking its rebase checkbox (bypassing the schedule and discarding commits by others); deps removes the label afterwards."`
+	StopUpdatingLabel string `yaml:"stopUpdatingLabel" scope:"run" jsonschema:"default=stop-updating" jsonschema_description:"Label that makes deps leave an update PR alone: its branch is no longer pushed or rebased, and the PR is not closed as obsolete. Remove the label to hand the PR back to deps."`
+	// Dashboard configures the dashboard issue (Renovate's :dependencyDashboard).
+	Dashboard Dashboard `yaml:"dashboard" scope:"run" jsonschema_description:"The dependency dashboard issue."`
 	// Extends names configs of other repositories this file builds on.
 	Extends []string `yaml:"extends" jsonschema_description:"Configs this file builds on, each '<repo>[//<path>][#<ref>]': owner/name of a repository on the same forge (or a git URL: https://, ssh://, file://, user@host:path), the file in it (default .deps.yaml) and a branch, tag or commit (default: its default branch). Their rules come first, so this file's rules override them; this file's other keys replace theirs, custom managers are appended and customDatasources and registryAliases merged by name. Later entries override earlier ones; extended files may extend others, cycles are errors."`
 	Rules   []Rule   `yaml:"rules" jsonschema_description:"Policy rules, evaluated top to bottom; every set field of a matching rule overrides earlier ones."`
@@ -264,9 +257,6 @@ type Config struct {
 	// LockFileMaintenance configures Renovate's lockFileMaintenance: one PR refreshing every
 	// lockfile.
 	LockFileMaintenance LockFileMaintenance `yaml:"lockFileMaintenance" jsonschema_description:"Lock file maintenance: one PR (branch <branchPrefix>lock-file-maintenance) that refreshes every lockfile deps maintains (Cargo.lock, npm-shrinkwrap.json, package-lock.json, pnpm-lock.yaml, yarn.lock, bun.lock, uv.lock, poetry.lock, pdm.lock, Pipfile.lock, Gemfile.lock, composer.lock, Julia manifests, mix.lock, Gleam manifest.toml, pubspec.lock, MODULE.bazel.lock, flake.lock, NuGet packages.lock.json, conda-lock.yml, deno.lock, Gradle lockfiles, .terraform.lock.hcl, pip-compile and uv pip compile output, and the indirect requirements of go.mod with go.sum) to the newest versions the requirements admit, without changing manifests."`
-	// ComposerIgnorePlatformReqs are the platform requirements composer update ignores
-	// (Renovate's composerIgnorePlatformReqs); nil = deps' default (composer.Locker).
-	ComposerIgnorePlatformReqs []string `yaml:"composerIgnorePlatformReqs" jsonschema_description:"Platform requirements composer update ignores when it updates composer.lock, each passed as --ignore-platform-req=<req> (php, ext-intl, ext-*, lib-*); [] or null ignores none, so the runner's PHP and extensions must satisfy them. Unset, deps ignores every platform requirement, or only ext-* and lib-* when composer.json sets config.platform.php."`
 
 	path   string         // source path for error messages
 	layers []layer        // the files of the config (its extends chain, the local file last); nil when not loaded from a file
@@ -308,7 +298,7 @@ type Settings struct {
 	AutomergeStrategy     string `yaml:"automergeStrategy" jsonschema:"default=auto" jsonschema_description:"Merge method of automerged PRs: auto (the repository's default merge style), merge, squash or rebase." rule_description:"Overrides the top-level automergeStrategy for matching deps; a PR uses the strategy of its first update."`
 	AutomergeType         string `yaml:"automergeType" jsonschema:"default=pr" jsonschema_description:"How updates are automerged: pr (platform auto-merge of the PR) or branch (push the branch without a PR and fast-forward the base branch to it once its checks pass; a PR is raised only when they fail)." rule_description:"Overrides the top-level automergeType for matching deps; a group merges its branch only when all of its updates use branch."`
 	DraftPR               *bool  `yaml:"draftPR" jsonschema:"default=false" jsonschema_description:"Open new update PRs as drafts (GitHub draft PRs; on Gitea and Forgejo the title starts with WIP:, on GitLab with Draft:). PRs that automerge are never drafts. Rules override it." rule_description:"Overrides the top-level draftPR for matching deps (with updateTypes: for updates of those types). A group's PR is a draft when any of its updates asks for one."`
-	PRCreation            string `yaml:"prCreation" jsonschema:"default=immediate" jsonschema_description:"When the PR of a new update branch is opened: immediate (right after the push), not-pending (on a later run, once the branch's checks finished, passed or failed, or prNotPendingHours after its last commit), status-success (once they all passed) or approval (once its checkbox under Pending approval on the dependency dashboard is ticked; requires dependencyDashboard). Until then the branch waits without a PR, listed on the dependency dashboard. Rules override it." rule_description:"Overrides the top-level prCreation for matching deps; a group waits as long as the most waiting of its updates asks (approval over status-success over not-pending over immediate)."`
+	PRCreation            string `yaml:"prCreation" jsonschema:"default=immediate" jsonschema_description:"When the PR of a new update branch is opened: immediate (right after the push), not-pending (on a later run, once the branch's checks finished, passed or failed, or prNotPendingHours after its last commit), status-success (once they all passed) or approval (once its checkbox under Pending approval on the dependency dashboard is ticked; requires dashboard.enabled). Until then the branch waits without a PR, listed on the dependency dashboard. Rules override it." rule_description:"Overrides the top-level prCreation for matching deps; a group waits as long as the most waiting of its updates asks (approval over status-success over not-pending over immediate)."`
 	// Labels, Reviewers and Assignees are set on new update PRs; rules override them.
 	Labels    []string `yaml:"labels" jsonschema_description:"Labels added to new update PRs (by name; on Gitea and Forgejo they must exist in the repository or its organization). Rules replace them (labels) or add to them (addLabels)." rule_description:"Replaces the labels of new PRs of matching deps; [] removes them. A group's PR gets the labels of all its updates."`
 	Reviewers []string `yaml:"reviewers" jsonschema_description:"Reviewers requested on new update PRs: user names, or team:<slug> for a team of the repository's organization (not on GitLab). Rules replace them." rule_description:"Replaces the reviewers of new PRs of matching deps (user names or team:<slug>); [] removes them. A group's PR requests the reviewers of all its updates."`
@@ -317,7 +307,7 @@ type Settings struct {
 	PRTitle           *string `yaml:"prTitle" jsonschema_description:"Go text/template of PR titles and commit subjects over the fields .Type, .Scope, .Name, .Group, .From, .To, .UpdateType, .Count and .IsSecurity, e.g. '{{.Type}}({{.Scope}}): bump {{.Name}} to {{.To}}'; empty means the built-in titles. Security PRs keep the ' [security]' suffix. Rules override it." rule_description:"Overrides the top-level prTitle for matching deps (with updateTypes: for updates of those types); empty string means the built-in titles. A group's PR uses its first update's templates."`
 	PRHeader          *string `yaml:"prHeader" jsonschema_description:"Go text/template (the fields of prTitle) rendered at the top of update PR bodies; empty means none. Rules override it." rule_description:"Overrides the top-level prHeader for matching deps; empty string means none."`
 	PRFooter          *string `yaml:"prFooter" jsonschema_description:"Go text/template (the fields of prTitle) rendered at the end of update PR bodies, above the rebase checkbox; empty means none. Rules override it." rule_description:"Overrides the top-level prFooter for matching deps; empty string means none."`
-	DashboardApproval *bool   `yaml:"dashboardApproval" jsonschema:"default=false" jsonschema_description:"Create no new PR (or automerge branch) for an update until it is approved on the dependency dashboard: it is listed under Pending approval, and ticking its checkbox makes the next run create it. Security updates need no approval. Rules override it; requires dependencyDashboard." rule_description:"Overrides the top-level dashboardApproval for matching deps (with updateTypes: for updates of those types). A PR needs approval when any of its updates does."`
+	DashboardApproval *bool   `yaml:"dashboardApproval" jsonschema:"default=false" jsonschema_description:"Create no new PR (or automerge branch) for an update until it is approved on the dependency dashboard: it is listed under Pending approval, and ticking its checkbox makes the next run create it. Security updates need no approval. Rules override it; requires dashboard.enabled." rule_description:"Overrides the top-level dashboardApproval for matching deps (with updateTypes: for updates of those types). A PR needs approval when any of its updates does."`
 
 	schedule  *schedule.Set  // parsed Schedule
 	templates prtemplate.Set // parsed PRTitle, PRHeader and PRFooter; members of unset fields are nil
@@ -343,9 +333,9 @@ func (c *Config) MonoreposEnabled() bool { return c.Monorepos == nil || *c.Monor
 func (c *Config) ReplacementsEnabled() bool { return c.Replacements == nil || *c.Replacements }
 
 // GomodUpdateImportPathsEnabled reports whether major module path updates are proposed
-// (default true).
+// (gomod.updateImportPaths, default true).
 func (c *Config) GomodUpdateImportPathsEnabled() bool {
-	return c.GomodUpdateImportPaths == nil || *c.GomodUpdateImportPaths
+	return c.Gomod.UpdateImportPaths == nil || *c.Gomod.UpdateImportPaths
 }
 
 // UpdateNotScheduledEnabled reports whether open PRs are updated outside their schedule
@@ -354,9 +344,23 @@ func (c *Config) UpdateNotScheduledEnabled() bool {
 	return c.UpdateNotScheduled == nil || *c.UpdateNotScheduled
 }
 
-// DashboardTitle returns DependencyDashboardTitle, or DefaultDashboardTitle when unset.
+// DashboardTitle returns dashboard.title, or DefaultDashboardTitle when unset.
 func (c *Config) DashboardTitle() string {
-	return cmp.Or(c.DependencyDashboardTitle, DefaultDashboardTitle)
+	return cmp.Or(c.Dashboard.Title, DefaultDashboardTitle)
+}
+
+// RunWideKeys returns the top-level keys that span all base branches of a run (the fields
+// tagged scope:"run"): the config of a base branch (useBaseBranchConfig) does not change them.
+func RunWideKeys() []string {
+	var keys []string
+	t := reflect.TypeFor[Config]()
+	for f := range t.Fields() {
+		if f.Tag.Get("scope") == "run" {
+			name, _, _ := strings.Cut(f.Tag.Get("yaml"), ",")
+			keys = append(keys, name)
+		}
+	}
+	return keys
 }
 
 // RebaseLabelName returns RebaseLabel, or DefaultRebaseLabel when unset.
@@ -410,12 +414,12 @@ func (s *Settings) validateSettings(f string, c *Config, add addFunc) {
 		}
 	}
 	// Approval happens on the dashboard: without it, updates needing approval never get a PR.
-	if !c.DependencyDashboard {
+	if !c.Dashboard.Enabled {
 		if s.DashboardApproval != nil && *s.DashboardApproval {
-			add(f+"dashboardApproval", "requires dependencyDashboard: true")
+			add(f+"dashboardApproval", "requires dashboard.enabled: true")
 		}
 		if s.PRCreation == PRCreationApproval {
-			add(f+"prCreation", "approval requires dependencyDashboard: true")
+			add(f+"prCreation", "approval requires dashboard.enabled: true")
 		}
 	}
 }
@@ -442,7 +446,7 @@ func validateLabels(field string, ls []string, add addFunc) {
 	}
 }
 
-// Author is a parsed gitAuthor.
+// Author is a parsed git.author.
 type Author struct{ Name, Email string }
 
 // authorRe and emailRe accept git identities, including GitHub bot noreply addresses
@@ -506,6 +510,36 @@ func (g *GitLabCI) validate(add addFunc) {
 // Terraform holds terraform manager settings.
 type Terraform struct {
 	DefaultRegistry string `yaml:"defaultRegistry" jsonschema_description:"Registry host of provider and module addresses without one in *.tf files, e.g. registry.opentofu.org; empty means registry.terraform.io. *.tofu files default to registry.opentofu.org unless this is set."`
+}
+
+// Gomod holds gomod manager settings.
+type Gomod struct {
+	// UpdateImportPaths enables major module path updates (Renovate's
+	// postUpdateOptions: [gomodUpdateImportPaths]).
+	UpdateImportPaths *bool `yaml:"updateImportPaths" jsonschema:"default=true" jsonschema_description:"Propose major updates of Go modules to their next major module path (github.com/x/y/v2 → /v3, also /v2 for v0/v1 modules), rewriting the require and the import paths in the module's .go files before go mod tidy. The new major's API may differ, so the build can break. false proposes no module path changes (go mod tidy would undo a path change without rewritten imports)."`
+}
+
+// Composer holds composer manager settings.
+type Composer struct {
+	// IgnorePlatformReqs are the platform requirements composer update ignores (Renovate's
+	// composerIgnorePlatformReqs); nil = deps' default (composer.Locker).
+	IgnorePlatformReqs []string `yaml:"ignorePlatformReqs" jsonschema_description:"Platform requirements composer update ignores when it updates composer.lock, each passed as --ignore-platform-req=<req> (php, ext-intl, ext-*, lib-*); [] or null ignores none, so the runner's PHP and extensions must satisfy them. Unset, deps ignores every platform requirement, or only ext-* and lib-* when composer.json sets config.platform.php."`
+}
+
+// Git holds the commit identity and how deps commits.
+type Git struct {
+	Author string `yaml:"author" jsonschema:"default=deps[bot] <deps-bot@noreply.invalid>" jsonschema_description:"Author and committer of deps commits as 'Name <email>' (git identity). Overridden by $DEPS_GIT_AUTHOR and the --author-name/--author-email flags. With a signing key (run --signing-key), use a verified email of the key's owner on the forge, or the signature does not count as verified. Ignored for platform commits (git.platformCommit), whose author is the token's account; branches whose tip it authored still count as deps' own."`
+	// IgnoredAuthors are emails whose commits on an update branch count as the bot's own.
+	IgnoredAuthors []string `yaml:"ignoredAuthors" jsonschema_description:"Commit author emails (case-insensitive) besides the bot's own whose commits on an update branch do not count as modifications: such branches are still updated and rebased."`
+	// PlatformCommit creates commits through the GitHub API (Renovate's platformCommit).
+	PlatformCommit string `yaml:"platformCommit" jsonschema:"default=auto" jsonschema_description:"Create commits and move update branches through the GitHub API instead of git, so that GitHub signs them and shows them as verified, authored by the GitHub App (e.g. ocmbot[bot]). auto enables it on GitHub when the token is a GitHub App installation token (ghs_..., also GITHUB_TOKEN in Actions) and no signing key is set; enabled requires GitHub and no signing key; disabled always uses git. GitHub signs API commits only for App tokens; with a personal access token they stay unsigned. Overridden by $DEPS_PLATFORM_COMMIT."`
+}
+
+// Dashboard holds the dependency dashboard settings.
+type Dashboard struct {
+	Enabled bool     `yaml:"enabled" jsonschema:"default=false" jsonschema_description:"Maintain a dependency dashboard issue listing pending, blocked and open updates, errors and detected dependencies; its checkboxes make the next run create, recreate or rebase PRs. false leaves an existing dashboard untouched."`
+	Title   string   `yaml:"title" jsonschema:"default=Dependency Dashboard" jsonschema_description:"Title of the dependency dashboard issue; the issue is found by this exact title."`
+	Labels  []string `yaml:"labels" jsonschema_description:"Labels set when the dashboard issue is created (by name; on Gitea and Forgejo they must exist in the repository or its organization)."`
 }
 
 // PrePolicyKeys are the rules[] keys deps decides before the type of an update is known, so
@@ -888,8 +922,8 @@ func build(p string, layers []layer, probs []*Problem, extends []string) (*Confi
 	if c.IgnorePaths == nil && mapValue(root, "ignorePaths") == nil {
 		c.IgnorePaths = slices.Clone(DefaultIgnorePaths)
 	}
-	if c.ComposerIgnorePlatformReqs == nil && mapValue(root, "composerIgnorePlatformReqs") != nil {
-		c.ComposerIgnorePlatformReqs = []string{} // set to null or []: ignore none
+	if c.Composer.IgnorePlatformReqs == nil && mapValue(mapValue(root, "composer").value(), "ignorePlatformReqs") != nil {
+		c.Composer.IgnorePlatformReqs = []string{} // set to null or []: ignore none
 	}
 	c.setSources(layers)
 	if c.Version == 0 {
@@ -1025,19 +1059,19 @@ func (c *Config) validate() []*Problem {
 	if c.UseBaseBranchConfig != "" && !slices.Contains(BaseConfigs, c.UseBaseBranchConfig) {
 		add("useBaseBranchConfig", "%s", oneOf("useBaseBranchConfig", BaseConfigs, c.UseBaseBranchConfig))
 	}
-	if c.GitAuthor != "" {
-		if _, err := ParseAuthor(c.GitAuthor); err != nil {
-			add("gitAuthor", "%v", err)
+	if c.Git.Author != "" {
+		if _, err := ParseAuthor(c.Git.Author); err != nil {
+			add("git.author", "%v", err)
 		}
 	}
-	for i, e := range c.GitIgnoredAuthors {
+	for i, e := range c.Git.IgnoredAuthors {
 		if !emailRe.MatchString(e) {
-			add(fmt.Sprintf("gitIgnoredAuthors[%d]", i), "must be an email address, got %q", e)
+			add(fmt.Sprintf("git.ignoredAuthors[%d]", i), "must be an email address, got %q", e)
 		}
 	}
-	for i, r := range c.ComposerIgnorePlatformReqs {
+	for i, r := range c.Composer.IgnorePlatformReqs {
 		if r == "" || strings.ContainsFunc(r, unicode.IsSpace) {
-			add(fmt.Sprintf("composerIgnorePlatformReqs[%d]", i), "must be a platform package name or pattern such as ext-*, got %q", r)
+			add(fmt.Sprintf("composer.ignorePlatformReqs[%d]", i), "must be a platform package name or pattern such as ext-*, got %q", r)
 		}
 	}
 	if c.PRConcurrentLimit < 0 {
@@ -1052,13 +1086,13 @@ func (c *Config) validate() []*Problem {
 	if c.RebaseWhen != "" && !slices.Contains(RebaseWhens, c.RebaseWhen) {
 		add("rebaseWhen", "%s", oneOf("rebaseWhen", RebaseWhens, c.RebaseWhen))
 	}
-	if c.PlatformCommit != "" && !slices.Contains(PlatformCommits, c.PlatformCommit) {
-		add("platformCommit", "%s", oneOf("platformCommit", PlatformCommits, c.PlatformCommit))
+	if c.Git.PlatformCommit != "" && !slices.Contains(PlatformCommits, c.Git.PlatformCommit) {
+		add("git.platformCommit", "%s", oneOf("git.platformCommit", PlatformCommits, c.Git.PlatformCommit))
 	}
-	if c.DependencyDashboardTitle != "" && (strings.TrimSpace(c.DependencyDashboardTitle) == "" || strings.ContainsAny(c.DependencyDashboardTitle, "\r\n")) {
-		add("dependencyDashboardTitle", "must be a non-blank single line, got %q", c.DependencyDashboardTitle)
+	if c.Dashboard.Title != "" && (strings.TrimSpace(c.Dashboard.Title) == "" || strings.ContainsAny(c.Dashboard.Title, "\r\n")) {
+		add("dashboard.title", "must be a non-blank single line, got %q", c.Dashboard.Title)
 	}
-	validateLabels("dependencyDashboardLabels", c.DependencyDashboardLabels, add)
+	validateLabels("dashboard.labels", c.Dashboard.Labels, add)
 	for _, l := range []struct{ key, v string }{{"rebaseLabel", c.RebaseLabel}, {"stopUpdatingLabel", c.StopUpdatingLabel}} {
 		if l.v != "" && (strings.TrimSpace(l.v) == "" || strings.Contains(l.v, ",")) {
 			add(l.key, "must be a non-blank label name without ',', got %q", l.v)
@@ -1081,6 +1115,7 @@ func (c *Config) validate() []*Problem {
 	for i := range c.Rules {
 		c.validateRule(i, add)
 	}
+
 	for i := range c.Custom {
 		c.Custom[i].validate(fmt.Sprintf("custom[%d]", i), c, add)
 	}

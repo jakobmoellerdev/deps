@@ -43,7 +43,7 @@ Work through the warnings one by one and record the decision for the user. Typic
 | custom datasource dropped (templated URL, `html`, JSONata) | Write `customDatasources.<name>` by hand: `url`, `format`, `versions` (jq-subset selector such as `.releases \| keys` or `.items[].tag_name`) and `versionRegex`. The custom managers that used it were dropped too; re-add them once it exists. |
 | custom manager dropped (templates, `combination` strategy, non-regex `customType`) | Rewrite as a `custom[]` entry: regex mode with literal `datasource`/`name`/`versioning`, or annotation mode if the files carry `# renovate: datasource=… depName=…` markers (annotation mode reads those unchanged). |
 | schedule entry dropped (`on the 1st through 7th day of the month`, a cron with a fixed minute, …) | Rewrite it as a window deps accepts (`deps help` lists the clauses in the configuration reference, `schedule`) and confirm with the user. |
-| `automergeType: branch`, `platformAutomerge: false`, `dependencyDashboardApproval` without a dashboard | Explain the deps behavior (platform automerge of the PR; approval needs `dependencyDashboard: true`) and confirm with the user. |
+| `automergeType: branch`, `platformAutomerge: false`, `dependencyDashboardApproval` without a dashboard | Explain the deps behavior (platform automerge of the PR; approval needs `dashboard.enabled: true`) and confirm with the user. |
 | `pin`/`rangeStrategy`/`versioning` dropped next to `matchUpdateTypes` | Move the field to a rule without `updateTypes` (deps decides these before the update type is known). |
 | `versioning` (or `extractVersion`) dropped next to `currentVersion`/`currentAge` | Move `versioning` to a rule that selects the same deps without `currentVersion`/`currentAge`, if the deps need that scheme. |
 | `prHeader`/`prFooter`: `unsupported Handlebars expression …` | Rewrite the text as a Go template over `.Type`, `.Scope`, `.Name`, `.Group`, `.From`, `.To`, `.UpdateType`, `.Count`, `.IsSecurity` (`{{if}}` and `{{with}}` work), or drop it. |
@@ -76,7 +76,7 @@ Put the config at `.deps.yaml` (or `.github/deps.yaml` with `--config`) and add 
 
 - `on.schedule`: a cron that runs inside every window from step 1 (hourly, `0 * * * *`, always works), plus one for unscheduled updates if the windows leave long gaps.
 - `push` to the default branch and `workflow_dispatch`; on `pull_request` touching the config, run `plan` to validate it (exit 2 on an invalid key).
-- The same identity Renovate used (GitHub App token to both `actions/checkout` and the deps action, with workflows write so Action updates can be pushed); keep `gitAuthor`/`gitIgnoredAuthors` from the translation.
+- The same identity Renovate used (GitHub App token to both `actions/checkout` and the deps action, with workflows write so Action updates can be pushed); keep `git.author`/`git.ignoredAuthors` from the translation.
 - Pin the action by tag and set `version:` to the same tag, so a later `pin: digest` rewrite of the ref keeps the release.
 
 Alternatively run straight from the Renovate config with `args: run --renovate`. That keeps one config file during a trial, at the price of the translation notes appearing only in the log.
@@ -85,7 +85,7 @@ Alternatively run straight from the Renovate config with `args: run --renovate`.
 
 Choose with the user:
 
-- **Trial next to Renovate (recommended for busy repositories):** set `branchPrefix: deps/` and `dependencyDashboardTitle: Dependency Dashboard (deps trial)` in `.deps.yaml`, so deps neither closes Renovate's PRs nor collides with its dashboard. Compare a few scheduled runs, then switch.
+- **Trial next to Renovate (recommended for busy repositories):** set `branchPrefix: deps/` and `dashboard.title: Dependency Dashboard (deps trial)` in `.deps.yaml`, so deps neither closes Renovate's PRs nor collides with its dashboard. Compare a few scheduled runs, then switch.
 - **Direct takeover:** keep `branchPrefix: renovate/`. Disable Renovate first (its workflow or app). deps does not adopt Renovate's PRs: it opens its own branches (`renovate/<slug>`, one per dependency name across managers as in Renovate, and `renovate/group/<slug>`; never Renovate's own names) and, after a run without lookup errors, closes every open PR under the prefix it does not manage and deletes those branches.
 
 At cutover: disable Renovate, set the final `branchPrefix`, drop the trial dashboard title, close Renovate's dashboard issue, then delete the Renovate config in a separate commit once deps runs cleanly.
