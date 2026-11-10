@@ -3663,6 +3663,13 @@
         },
         "separate": {
           "type": "string",
+          "enum": [
+            "none",
+            "major",
+            "majors",
+            "minor-patch",
+            "majors-minor-patch"
+          ],
           "description": "Overrides the top-level separate for matching deps (with updateTypes: for candidates of those types).",
           "markdownDescription": "Overrides the top-level separate for matching deps (with updateTypes: for candidates of those types).\n\nSee the bucket table under [`separate`](#separate)."
         },
@@ -3947,6 +3954,13 @@
     },
     "separate": {
       "type": "string",
+      "enum": [
+        "none",
+        "major",
+        "majors",
+        "minor-patch",
+        "majors-minor-patch"
+      ],
       "description": "How the candidate updates of one dep are split into PRs: none (only the newest update), major (the newest major apart, branch suffix -major, from the newest minor/patch), majors (one PR per newer major, branch suffix -v<N>, newest release of each), minor-patch (major apart, plus the newest minor (-minor) apart from the newest patch of the current minor (-patch)), majors-minor-patch (both).",
       "default": "major",
       "markdownDescription": "How the candidate updates of one dep are split into PRs: none (only the newest update), major (the newest major apart, branch suffix -major, from the newest minor/patch), majors (one PR per newer major, branch suffix -v\\<N>, newest release of each), minor-patch (major apart, plus the newest minor (-minor) apart from the newest patch of the current minor (-patch)), majors-minor-patch (both).\n\n`separate` splits one dep's candidate updates into **PR buckets**. Each bucket yields at most one update, and each update gets its own branch (suffix) and PR:\n\n| `separate` | Buckets (branch suffix) |\n|---|---|\n| `none` | one bucket, the newest update of any kind (no suffix) |\n| `major` (default) | newest major (`-major`); newest minor/patch (no suffix) |\n| `majors` | one per newer major *N*, the newest release of each (`-v<N>`); minor/patch (no suffix) |\n| `minor-patch` | newest major (`-major`); newest minor (`-minor`); newest patch of the current minor (`-patch`) |\n| `majors-minor-patch` | one per newer major (`-v<N>`); newest minor (`-minor`); newest patch (`-patch`) |\n\nRenovate's `separateMajorMinor: false` is `none`, `separateMultipleMajor` is `majors`, `separateMinorPatch` is `minor-patch`, and both together are `majors-minor-patch`.\n\n- The bucket of a candidate comes from the policy of its update type. A rule with `updateTypes` can therefore set `separate` for its types, unlike in Renovate (see [behavior differences](../migrating-from-renovate.md#behavior-differences)).\n- `plan`/`apply` write one update per dep: the newest non-major one, else the lowest major. The others are reported with `, separate PR`.\n- A policy group inherits its members' bucket suffix: `deps/group/actions-patch`."

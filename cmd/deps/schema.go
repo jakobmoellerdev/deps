@@ -166,6 +166,7 @@ func addEnums(s *jsonschema.Schema) {
 		scalar(n, "automergeType", enumOf(config.AutomergeTypes))
 		scalar(n, "minimumReleaseAgeBehaviour", enumOf(config.MinimumReleaseAgeBehaviours))
 		scalar(n, "prCreation", enumOf(config.PRCreations))
+		scalar(n, "separate", enumOf(config.Separations))
 	}
 	scalar(s, "rebaseWhen", enumOf(config.RebaseWhens))
 	scalar(s.Definitions["Git"], "platformCommit", enumOf(config.PlatformCommits))

@@ -491,6 +491,7 @@ How the candidate updates of one dep are split into PRs: none (only the newest u
 
 - **Type:** string
 - **Default:** `major`
+- **Values:** `none`, `major`, `majors`, `minor-patch`, `majors-minor-patch`
 
 `separate` splits one dep's candidate updates into **PR buckets**. Each bucket yields at most one update, and each update gets its own branch (suffix) and PR:
 
@@ -1390,6 +1391,7 @@ Overrides the top-level abandonmentThreshold for matching deps, e.g. `2 years`; 
 Overrides the top-level separate for matching deps (with updateTypes: for candidates of those types).
 
 - **Type:** string
+- **Values:** `none`, `major`, `majors`, `minor-patch`, `majors-minor-patch`
 
 See the bucket table under [`separate`](#separate).
 

@@ -118,6 +118,8 @@ func TestSchema(t *testing.T) {
 		{"rules.automergeStrategy", rule.Properties["automergeStrategy"], config.AutomergeStrategies},
 		{"automergeType", s.Properties["automergeType"], config.AutomergeTypes},
 		{"rules.automergeType", rule.Properties["automergeType"], config.AutomergeTypes},
+		{"separate", s.Properties["separate"], config.Separations},
+		{"rules.separate", rule.Properties["separate"], config.Separations},
 	}
 	for _, e := range enums {
 		if got := strs(e.got.Enum); !slices.Equal(got, e.want) {
