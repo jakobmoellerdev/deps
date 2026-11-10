@@ -182,8 +182,8 @@ func TestMajorPathUpdates(t *testing.T) {
 		wantProbes int32
 	}{
 		{name: "newest major path", want: []wantUpdate{minor, withBucket(v4, "major")}, wantProbes: 1},
-		{name: "one per major", cfg: "separateMultipleMajor: true\n", want: []wantUpdate{minor, withBucket(v3, "v3"), withBucket(v4, "v4")}, wantProbes: 1},
-		{name: "single bucket", cfg: "separateMajorMinor: false\n", want: []wantUpdate{v4}, wantProbes: 1},
+		{name: "one per major", cfg: "separate: majors\n", want: []wantUpdate{minor, withBucket(v3, "v3"), withBucket(v4, "v4")}, wantProbes: 1},
+		{name: "single bucket", cfg: "separate: none\n", want: []wantUpdate{v4}, wantProbes: 1},
 		{name: "switched off", skipPaths: true, want: []wantUpdate{minor}},
 		{name: "majors not allowed", cfg: "rules: [{allowedUpdateTypes: [minor, patch]}]\n", want: []wantUpdate{minor}},
 		{name: "majors ignored", cfg: "rules: [{updateTypes: [major], ignore: true}]\n", want: []wantUpdate{minor}},
@@ -244,7 +244,7 @@ func TestMajorPathSecurityKept(t *testing.T) {
 		rels:   map[string][]string{name: {"v2.1.0", "v2.1.1", "v2.2.0"}},
 		majors: map[string][]datasource.ModulePath{name: {{Name: "example.com/m/v3", Releases: []Release{{Version: "v3.0.0"}}}}},
 	}
-	root, cfg := setup(t, "separateMajorMinor: false\nrules: [{allowedUpdateTypes: [major]}]\n", map[string]string{"go.mod": "module example.com/x\n\nrequire " + name + " v2.1.0\n"})
+	root, cfg := setup(t, "separate: none\nrules: [{allowedUpdateTypes: [major]}]\n", map[string]string{"go.mod": "module example.com/x\n\nrequire " + name + " v2.1.0\n"})
 	sec := &fakeSec{vulns: map[string][]Vuln{name: {{Advisory: dep.Advisory{ID: "GO-1"}, Fixed: []string{"v2.1.1"}}}}}
 	res, err := Resolve(t.Context(), root, cfg, env, Options{Managers: managers, Datasources: map[string]Datasource{"go": ds}, Security: sec, Now: ageNow})
 	if err != nil || len(res.Errors) > 0 {

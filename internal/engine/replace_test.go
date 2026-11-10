@@ -130,7 +130,7 @@ rules:
 		},
 		{
 			name: "replacements off and replacement ignored",
-			cfg: `replacements: false
+			cfg: `builtins: {replacements: false}
 rangeStrategy: bump
 rules:
   - names: [request]

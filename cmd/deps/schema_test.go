@@ -157,8 +157,8 @@ func TestSchema(t *testing.T) {
 			t.Errorf("%s pattern %q is too loose", name, n.Pattern)
 		}
 	}
-	if want := []string{"version", "pin", "rangeStrategy", "schedule", "timezone", "security", "branchPrefix", "baseBranches", "additionalBranchPrefix", "useBaseBranchConfig", "rebaseWhen", "monorepos", "replacements", "git", "prConcurrentLimit", "prHourlyLimit", "actions", "terraform", "gomod", "gitlabci", "composer", "minimumReleaseAge", "minimumReleaseAgeBehaviour", "abandonmentThreshold", "ignorePaths",
-		"separateMajorMinor", "separateMultipleMajor", "separateMinorPatch", "updateNotScheduled", "automerge", "automergeStrategy", "automergeType", "draftPR", "prCreation", "prNotPendingHours", "labels", "reviewers", "assignees", "prTitle", "prHeader", "prFooter", "rebaseLabel", "stopUpdatingLabel",
+	if want := []string{"version", "pin", "rangeStrategy", "schedule", "timezone", "branchPrefix", "baseBranches", "additionalBranchPrefix", "useBaseBranchConfig", "rebaseWhen", "builtins", "git", "prConcurrentLimit", "prHourlyLimit", "actions", "terraform", "gomod", "gitlabci", "composer", "minimumReleaseAge", "minimumReleaseAgeBehaviour", "abandonmentThreshold", "ignorePaths",
+		"separate", "updateNotScheduled", "automerge", "automergeStrategy", "automergeType", "draftPR", "prCreation", "prNotPendingHours", "labels", "reviewers", "assignees", "prTitle", "prHeader", "prFooter", "rebaseLabel", "stopUpdatingLabel",
 		"dashboard", "dashboardApproval", "extends", "rules", "custom", "customDatasources", "registryAliases", "lockFileMaintenance"}; len(s.Properties) != len(want) {
 		t.Errorf("root properties = %d, want %v", len(s.Properties), want)
 	} else {
@@ -183,9 +183,8 @@ func TestSchema(t *testing.T) {
 	if !slices.Equal(custom.Required, []string{"files"}) || rule.Required != nil || s.Required != nil {
 		t.Errorf("required: root %v rule %v custom %v", s.Required, rule.Required, custom.Required)
 	}
-	if s.Properties["pin"].Default != "keep" || s.Properties["rangeStrategy"].Default != config.RangeAuto || s.Properties["security"].Default != true || custom.Properties["versioning"].Default != "semver" ||
-		s.Properties["separateMajorMinor"].Default != true || s.Properties["separateMultipleMajor"].Default != false ||
-		s.Properties["separateMinorPatch"].Default != false || s.Properties["updateNotScheduled"].Default != true ||
+	if s.Properties["pin"].Default != "keep" || s.Properties["rangeStrategy"].Default != config.RangeAuto || custom.Properties["versioning"].Default != "semver" ||
+		s.Properties["separate"].Default != config.SeparateMajor || s.Properties["updateNotScheduled"].Default != true ||
 		s.Properties["automerge"].Default != false || s.Properties["automergeStrategy"].Default != "auto" ||
 		s.Properties["draftPR"].Default != false || s.Properties["prCreation"].Default != config.PRCreationImmediate ||
 		dashboard.Properties["enabled"].Default != false || dashboard.Properties["title"].Default != config.DefaultDashboardTitle || s.Properties["dashboardApproval"].Default != false ||

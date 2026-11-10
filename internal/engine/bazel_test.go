@@ -35,7 +35,7 @@ oci.pull(name = "nginx", image = "nginx", tag = "1.27.1", digest = "` + nginxOld
 		"docker":          fakeDocker{"nginx": {"1.27.1", "1.28.0"}},
 		"github-releases": fakeReleases{"9.3.1", "9.4.0"},
 	}}
-	root, cfg := setup(t, "separateMajorMinor: false\n", map[string]string{"MODULE.bazel": module, ".bazelversion": "9.3.1\n"})
+	root, cfg := setup(t, "separate: none\n", map[string]string{"MODULE.bazel": module, ".bazelversion": "9.3.1\n"})
 	res, err := Resolve(t.Context(), root, cfg, env, opts)
 	if err != nil || len(res.Errors) > 0 {
 		t.Fatalf("err = %v, errors = %v", err, res.Errors)

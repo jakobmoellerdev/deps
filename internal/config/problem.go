@@ -293,6 +293,9 @@ var movedKeys = map[string]string{
 	"platformCommit":             "git.platformCommit",
 	"gomodUpdateImportPaths":     "gomod.updateImportPaths",
 	"composerIgnorePlatformReqs": "composer.ignorePlatformReqs",
+	"security":                   "builtins.security",
+	"monorepos":                  "builtins.monorepos",
+	"replacements":               "builtins.replacements",
 }
 
 func (d *decoder) unknownKey(k *yaml.Node, t reflect.Type, parent string, fields []structField) {

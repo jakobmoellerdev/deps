@@ -32,7 +32,7 @@ libraryDependencies ++= Seq(
 		"project/build.properties": "sbt.version=1.10.0\n",
 		".scalafmt.conf":           "version = 1.10.0\n",
 	}
-	root, cfg := setup(t, "separateMajorMinor: false\n", files)
+	root, cfg := setup(t, "separate: none\n", files)
 	res, err := Resolve(t.Context(), root, cfg, env, opts)
 	if err != nil || len(res.Errors) > 0 {
 		t.Fatalf("err = %v, errors = %v", err, res.Errors)

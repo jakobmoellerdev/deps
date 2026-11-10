@@ -47,7 +47,7 @@ func pubKind(cur, next cargoVersion) dep.UpdateType {
 }
 
 // pubMajor is the compatibility range of a caret constraint: "1" for 1.x, "0.4" for 0.4.x and
-// 0.0.x alike ("0.0": `^0.0.3` is `<0.1.0` in pub). It names separateMultipleMajor buckets.
+// 0.0.x alike ("0.0": `^0.0.3` is `<0.1.0` in pub). It names the buckets of separate: majors.
 func pubMajor(c cargoVersion) string {
 	if c.parts[0] > 0 {
 		return strconv.FormatUint(c.parts[0], 10)

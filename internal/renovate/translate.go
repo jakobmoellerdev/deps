@@ -355,6 +355,7 @@ func silentKey(k string) bool { return k == "$schema" || k == "description" || k
 
 type translator struct {
 	n         *notes
+	sep       [3]bool // the top-level separateMajorMinor, separateMultipleMajor, separateMinorPatch
 	monorepos bool
 	repl      replacementPresets
 	cds       omap            // translated customDatasources
@@ -565,13 +566,13 @@ func (t *translator) translate(cfg map[string]any) omap {
 		t.n.warn("vulnerabilityAlerts", "must be an object; ignored")
 	}
 	security := vam["enabled"] != false || osv == true
-	emit("security", security)
+	emit("builtins.security", security)
 	t.n.info("vulnerabilityAlerts", "security updates come from OSV")
 	t.n.builtin = t.builtinOnly("vulnerabilityAlerts")
 	securityGroup := t.vulnerabilityAlerts(vam)
 	t.n.builtin = false
-	emit("monorepos", t.monorepos)
-	emit("replacements", t.replacements(t.repl))
+	emit("builtins.monorepos", t.monorepos)
+	emit("builtins.replacements", t.replacements(t.repl))
 	automerge, _ := cfg["automerge"].(bool)
 	rebase := ""
 	if v, ok := get("rebaseWhen"); ok {
@@ -590,10 +591,22 @@ func (t *translator) translate(cfg map[string]any) omap {
 		}
 	}
 	emit("rebaseWhen", rebase)
-	for _, k := range []string{"separateMajorMinor", "separateMultipleMajor", "separateMinorPatch", "updateNotScheduled"} {
+	t.sep = [3]bool{true, false, false}
+	setSep := false
+	for i, k := range separateKeys {
 		if v, ok := get(k); ok {
-			emit(k, v)
+			if b, isBool := v.(bool); isBool {
+				t.sep[i], setSep = b, true
+			} else {
+				t.n.warn(k, "must be a boolean; ignored")
+			}
 		}
+	}
+	if setSep {
+		emit("separate", separate(t.sep))
+	}
+	if v, ok := get("updateNotScheduled"); ok {
+		emit("updateNotScheduled", v)
 	}
 	mra, hasMRA := get("minimumReleaseAge")
 	sd, hasSD := get("stabilityDays")
@@ -1229,4 +1242,23 @@ func (t *translator) prCreation(path string, v any) (string, bool) {
 	}
 	t.n.warn(path, "unsupported value %v; dropped", v)
 	return "", false
+}
+
+// separateKeys are Renovate's PR bucket options, which deps' separate combines.
+var separateKeys = []string{"separateMajorMinor", "separateMultipleMajor", "separateMinorPatch"}
+
+// separate is the separate value of Renovate's separateMajorMinor, separateMultipleMajor and
+// separateMinorPatch.
+func separate(f [3]bool) string {
+	switch {
+	case !f[0]:
+		return config.SeparateNone
+	case f[1] && f[2]:
+		return config.SeparateMajorsMinorPatch
+	case f[1]:
+		return config.SeparateMajors
+	case f[2]:
+		return config.SeparateMinorPatch
+	}
+	return config.SeparateMajor
 }

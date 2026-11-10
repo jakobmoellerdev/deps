@@ -188,7 +188,7 @@ func TestPreviewUseBaseBranchConfig(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cleanEnv(t)
 			newFakeNet(t)
-			origin, base := baseConfigRepo(t, tt.mainConfig, "monorepos: true\n")
+			origin, base := baseConfigRepo(t, tt.mainConfig, "builtins: {monorepos: true}\n")
 			git(t, base, "checkout", "-q", "release/1.x")
 			pr := t.TempDir()
 			git(t, pr, "clone", "-q", "-b", "release/1.x", origin, ".")

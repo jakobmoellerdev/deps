@@ -34,7 +34,7 @@ var Doc = refdoc.Manager{
 		}},
 		{Title: "Major module paths (`gomod.updateImportPaths`)", Items: []string{
 			"Major versions ≥ 2 live under their own module path. For a requirement on `<path>/v<N>` (or an unsuffixed v0/v1 module, `/v<M+1>` for `vM.x.y+incompatible`, `gopkg.in/x.v<N>`), deps lists `/v<N+1>`, `/v<N+2>`, … from the GOPROXY URLs until one has no releases (at most 5).",
-			"The newest stable release of each path that the major policy accepts (`allowedUpdateTypes`, `allow`, `minimumReleaseAge`, `ignore` per update type) is a `major` update in the major PR bucket (`v<N>` buckets with `separateMultipleMajor`); a newer path replaces an older one in the same bucket.",
+			"The newest stable release of each path that the major policy accepts (`allowedUpdateTypes`, `allow`, `minimumReleaseAge`, `ignore` per update type) is a `major` update in the major PR bucket (`v<N>` buckets with `separate: majors`); a newer path replaces an older one in the same bucket.",
 			"The update rewrites the require (path and version) and every import of the old path and its packages in the module's `.go` files (below the go.mod, skipping `vendor`, `testdata`, `.`/`_` directories and nested modules; only the import path literals change). `go mod tidy` then sees the rewritten files through `-overlay`.",
 			"The new major's API may have changed: the PR body says so, and the build is not guaranteed to pass.",
 			"`gomod: {updateImportPaths: false}` turns module path updates off. Only GOPROXY URLs are probed: GONOPROXY/GOPRIVATE modules, and paths no proxy before `direct` has, get no module path updates.",

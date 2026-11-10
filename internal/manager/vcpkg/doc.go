@@ -38,7 +38,7 @@ var Doc = refdoc.Manager{
 			"A port resolves to the registry whose `packages` match it (an exact name beats a `prefix*` pattern, the longest pattern wins), else to `default-registry`, else to the builtin registry at `builtin-baseline`, as vcpkg resolves it. " +
 				"A manifest's embedded `vcpkg-configuration` takes precedence over the `vcpkg-configuration.json` next to it.",
 			"The versions of a port are read from the registry's versions database (`versions/<first letter>-/<port>.json`) at its current baseline, or, when that baseline moves in the same run, at the new commit: the baseline bump and the port versions it unlocks arrive together, in the built-in `vcpkg` group's PR (see `monorepos`). " +
-				"When the port's updates would not share that PR (a rule sets another group, `monorepos: false`, a major in its own bucket), the port is read at its current baseline, so a proposed `version>=` always installs with the baseline it ships with; the versions the bump unlocks then follow in the next run.",
+				"When the port's updates would not share that PR (a rule sets another group, `builtins.monorepos: false`, a major in its own bucket), the port is read at its current baseline, so a proposed `version>=` always installs with the baseline it ships with; the versions the bump unlocks then follow in the next run.",
 			"Baseline updates are `digest` updates of the registry repository's default branch (or `reference`); like git-submodules, they have no release notes. " +
 				"Port updates have release notes when the port's manifest (`ports/<port>/vcpkg.json`) names a GitHub, GitLab or Codeberg repository as `homepage`; the `#<port-version>` suffix is ignored when matching release tags.",
 		}},

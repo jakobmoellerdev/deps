@@ -54,7 +54,7 @@ var Doc = refdoc.Manager{
 			"`node`: `<name>@<range>` is an npm dependency-section range (see the npm manager's Ranges): its versions, skips and rewrites are the npm manager's, without a lockfile.",
 			"`python`: a PEP 508 requirement as in requirements files (see Specifiers and Ranges below); markers and extras are kept.",
 			"`golang`: `<path>@<version>` as `go install` takes it. The path may name a package rather than a module: the `go` datasource resolves it as the go command does, to its longest prefix whose lookup lists versions (`github.com/wasilibs/go-shellcheck/cmd/shellcheck` → module `github.com/wasilibs/go-shellcheck`). The version is rewritten in place; major module path updates are not made.",
-			"Security advisories (`security`) are looked up for python additional dependencies (OSV queries PyPI deps of every manager), not for node and golang ones.",
+			"Security advisories (`builtins.security`) are looked up for python additional dependencies (OSV queries PyPI deps of every manager), not for node and golang ones.",
 			"There is no lockfile: under the default `rangeStrategy` (`auto` = `update-lockfile`) a version a range admits is not proposed, and one outside it rewrites the range (`black==26.1.0` → `black==26.3.1`, `prettier@^3.6.2` → `prettier@^4.0.0`); see [`rangeStrategy`](configuration.md#rangestrategy).",
 			"`pin: digest` pins hook repositories only: npm, PyPI and Go packages have no digest.",
 		}},

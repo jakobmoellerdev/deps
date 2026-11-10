@@ -405,7 +405,7 @@ func TestPlanSecurityUpdate(t *testing.T) {
 	for _, tt := range []struct{ cfg, want string }{
 		{"rules: [{managers: [gomod], allowedUpdateTypes: [patch]}]\n",
 			"update  go.mod:5  example.com/vuln  v1.0.0 -> v1.1.0  (minor)  security: GO-TEST-1\n"},
-		{"security: false\nrules: [{managers: [gomod], allowedUpdateTypes: [patch]}]\n", "0 updates in 0 files"},
+		{"builtins: {security: false}\nrules: [{managers: [gomod], allowedUpdateTypes: [patch]}]\n", "0 updates in 0 files"},
 	} {
 		dir := t.TempDir()
 		writeFiles(t, dir, map[string]string{"go.mod": mod, ".deps.yaml": tt.cfg})

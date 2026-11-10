@@ -67,7 +67,7 @@ func TestVcpkgPortsAtMovedBaseline(t *testing.T) {
 			{"fmt", "11.2.0#1", headBase, "vcpkg"},
 			{"curl", "8.2.0", oldBase, "vcpkg"},
 		}},
-		{"monorepos: false\n", []up{
+		{"builtins: {monorepos: false}\n", []up{
 			{"microsoft/vcpkg", "HEAD", vcpkg.BuiltinRepo, ""},
 			{"fmt", "11.1.0", oldBase, ""},
 			{"curl", "8.2.0", oldBase, ""},

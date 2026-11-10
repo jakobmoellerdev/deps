@@ -21,7 +21,7 @@ func TestAutomerge(t *testing.T) {
 			"      - uses: ./local\n",
 	}
 	root, cfg := setup(t, `automergeStrategy: squash
-separateMajorMinor: false
+separate: none
 draftPR: true
 rules:
   - updateTypes: [minor, patch]

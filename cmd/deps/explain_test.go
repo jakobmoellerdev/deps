@@ -207,7 +207,7 @@ func TestWriteTrace(t *testing.T) {
 		{DepTypes: []string{"direct"}, Ignore: &yes, Schedule: []string{"* 0-5 * * *", "* * * * 0"}},
 		{Paths: []string{"chart/**"}, Datasources: []string{"docker"}},
 		{MinimumReleaseAge: "28 days", MinimumReleaseAgeBehaviour: config.TimestampRequired},
-		{Allow: `/^\d+\.\d+$/`, Versioning: "loose", SeparateMultipleMajor: &yes},
+		{Allow: `/^\d+\.\d+$/`, Versioning: "loose", Separate: config.SeparateMajors},
 		{RangeStrategy: config.RangeUpdateLockfile},
 		{Names: []string{"x*", "!xy"}, CurrentVersion: "< 2", CurrentAge: "> 1 year", Group: "stale"},
 		{Paths: []string{"!test/**"}, CurrentAge: "< 30 days", Ignore: &yes},
@@ -331,7 +331,7 @@ func TestWriteTrace(t *testing.T) {
 			},
 			want: `x  f:4  (-, -, -, loose)
   current   1877.25
-  rules     #4 match: all; apply: separateMultipleMajor=true allow=/^\d+\.\d+$/ versioning=loose
+  rules     #4 match: all; apply: separate=majors allow=/^\d+\.\d+$/ versioning=loose
   policy    pin=keep allow=- allowedUpdateTypes=major,minor group=- schedule=always minAge=- versioning=loose
   candidates 4
   rejected  none

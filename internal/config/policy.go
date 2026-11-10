@@ -78,7 +78,7 @@ type Policy struct {
 	Labels, Reviewers, Assignees []string
 	// Tasks are the postUpgradeTasks of the last matching rule that sets them.
 	Tasks dep.Tasks
-	// PR buckets (separateMajorMinor, separateMultipleMajor, separateMinorPatch).
+	// PR buckets of separate: majors apart from minor/patch, one per major, minor apart from patch.
 	SeparateMajorMinor, SeparateMultipleMajor, SeparateMinorPatch bool
 	// AdditionalBranchPrefix is the additionalBranchPrefix template (ExpandBranchPrefix).
 	AdditionalBranchPrefix string
@@ -329,9 +329,11 @@ func (p *Policy) apply(s *Settings) {
 		p.TimestampRequired = s.MinimumReleaseAgeBehaviour == TimestampRequired
 	}
 	setPtr(&p.AbandonAfter, s.abandon)
-	setPtr(&p.SeparateMajorMinor, s.SeparateMajorMinor)
-	setPtr(&p.SeparateMultipleMajor, s.SeparateMultipleMajor)
-	setPtr(&p.SeparateMinorPatch, s.SeparateMinorPatch)
+	if s.Separate != "" {
+		p.SeparateMajorMinor = s.Separate != SeparateNone
+		p.SeparateMultipleMajor = s.Separate == SeparateMajors || s.Separate == SeparateMajorsMinorPatch
+		p.SeparateMinorPatch = s.Separate == SeparateMinorPatch || s.Separate == SeparateMajorsMinorPatch
+	}
 	setPtr(&p.Automerge, s.Automerge)
 	p.AutomergeStrategy = cmp.Or(s.AutomergeStrategy, p.AutomergeStrategy)
 	p.AutomergeType = cmp.Or(s.AutomergeType, p.AutomergeType)

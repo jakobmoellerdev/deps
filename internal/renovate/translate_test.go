@@ -93,9 +93,10 @@ func TestLoadDefaults(t *testing.T) {
 branchPrefix: renovate/
 prConcurrentLimit: 10
 prHourlyLimit: 2
-security: true
-monorepos: false
-replacements: false
+builtins:
+  security: true
+  monorepos: false
+  replacements: false
 rebaseWhen: conflicted
 minimumReleaseAgeBehaviour: timestamp-required
 ignorePaths: ['**/node_modules/**', '**/bower_components/**']
@@ -735,9 +736,10 @@ additionalBranchPrefix: '{{manager}}-'
 prConcurrentLimit: 3
 pin: digest
 rangeStrategy: pin
-security: false
-monorepos: false
-replacements: false
+builtins:
+  security: false
+  monorepos: false
+  replacements: false
 rebaseWhen: behind-base-branch
 minimumReleaseAge: 7 days
 minimumReleaseAgeBehaviour: timestamp-required
@@ -1204,6 +1206,30 @@ func TestLoadDashboardApproval(t *testing.T) {
 	for _, n := range noteLines(res) {
 		if strings.Contains(n, "dependencyDashboardApproval") {
 			t.Errorf("unexpected note %q", n)
+		}
+	}
+}
+
+// Renovate's three bucket flags become one separate value; a rule's flags fill in the others
+// from the top level.
+func TestLoadSeparate(t *testing.T) {
+	for _, tc := range []struct{ cfg, want string }{
+		{`{}`, ""},
+		{`{separateMajorMinor: false, separateMultipleMajor: true}`, "\nseparate: none\n"},
+		{`{separateMultipleMajor: true}`, "\nseparate: majors\n"},
+		{`{separateMinorPatch: true}`, "\nseparate: minor-patch\n"},
+		{`{extends: ['default:separateMultipleMajorReleases', 'default:separatePatchReleases']}`, "\nseparate: majors-minor-patch\n"},
+		{`{separateMultipleMajor: true, separateMinorPatch: true, packageRules: [{matchManagers: ['npm'], separateMinorPatch: false}]}`,
+			"# packageRules[0]\n    managers: [npm]\n    separate: majors\n"},
+		{`{packageRules: [{matchManagers: ['npm'], separateMajorMinor: false}]}`, "# packageRules[0]\n    managers: [npm]\n    separate: none\n"},
+	} {
+		res, err := load(t, tc.cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		y := string(res.YAML)
+		if tc.want == "" && strings.Contains(y, "separate") || !strings.Contains(y, tc.want) {
+			t.Errorf("%s: YAML:\n%s", tc.cfg, y)
 		}
 	}
 }

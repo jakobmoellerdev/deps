@@ -248,7 +248,7 @@ func (r *resolver) preset(e string, i int) (map[string]any, error) {
 		case name == "group:monorepos", name == "group:recommended", name == "group:goOpenapi",
 			groupMonorepoRe.MatchString(name), ref.repo == "monorepo":
 			r.monorepos = true
-			r.notes.info(e, "deps' built-in monorepo groups (monorepos: true)")
+			r.notes.info(e, "deps' built-in monorepo groups (builtins.monorepos: true)")
 			return nil, nil
 		case name == "helpers:pinGitHubActionDigests":
 		case ref.repo == "replacements":

@@ -140,7 +140,7 @@ func TestResolve(t *testing.T) {
 	}
 	want := []string{
 		"warn :testA: preset cycle, skipped",
-		"info group:monorepos: deps' built-in monorepo groups (monorepos: true)",
+		"info group:monorepos: deps' built-in monorepo groups (builtins.monorepos: true)",
 		"warn npm>x: unsupported preset source, skipped",
 	}
 	var gotNotes []string

@@ -34,7 +34,7 @@ func TestClojureProjects(t *testing.T) {
         io.github.o/head {:git/sha "1111111"}}}
 `,
 	}
-	root, cfg := setup(t, "separateMajorMinor: false\n", files)
+	root, cfg := setup(t, "separate: none\n", files)
 	res, err := Resolve(t.Context(), root, cfg, env, opts)
 	if err != nil || len(res.Errors) > 0 {
 		t.Fatalf("err = %v, errors = %v", err, res.Errors)

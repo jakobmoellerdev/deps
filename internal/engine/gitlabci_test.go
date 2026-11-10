@@ -86,7 +86,7 @@ func TestGitLabIncludeDigests(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			root, cfg := setup(t, tc.cfg+"separateMajorMinor: false\n", map[string]string{".gitlab-ci.yml": src})
+			root, cfg := setup(t, tc.cfg+"separate: none\n", map[string]string{".gitlab-ci.yml": src})
 			ms, err := Managers(cfg)
 			if err != nil {
 				t.Fatal(err)

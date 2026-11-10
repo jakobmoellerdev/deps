@@ -104,7 +104,7 @@ func TestResolveCompiledRequirements(t *testing.T) {
 		},
 		{
 			name: "indirect opted in",
-			cfg:  "rules:\n  - managers: [pip_requirements]\n    depTypes: [indirect]\n    ignore: false\n    separateMajorMinor: false\n",
+			cfg:  "rules:\n  - managers: [pip_requirements]\n    depTypes: [indirect]\n    ignore: false\n    separate: none\n",
 			want: []string{
 				"app/requirements.in requirements Flask 3.1.0->3.1.3",
 				"app/requirements.in requirements requests 2.32.3->2.32.5 lockfile",

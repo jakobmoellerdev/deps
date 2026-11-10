@@ -30,18 +30,16 @@ version: 1
 schedule: ["0 5 * * 1-5"]          # create PRs in the weekday run (a cron of the workflow)
 pin: digest                         # pin actions to SHAs and images to digests
 minimumReleaseAge: 3 days
-security: true
 branchPrefix: deps/
 rebaseWhen: behind-base-branch
 git:
   author: 'deps[bot] <deps-bot@noreply.invalid>'
 prConcurrentLimit: 10
 prHourlyLimit: 2
-separateMinorPatch: false
 dashboard:
   enabled: true
   labels: [dependencies]
-separateMultipleMajor: true
+separate: majors                    # one PR per newer major
 ignorePaths: ['**/node_modules/**', '**/testdata/**', 'third_party/**']
 rules:
   - managers: [github-actions]      # minor+patch of all actions in one PR
@@ -96,9 +94,7 @@ customDatasources:
 - [`minimumReleaseAge`](#minimumreleaseage)
 - [`minimumReleaseAgeBehaviour`](#minimumreleaseagebehaviour)
 - [`abandonmentThreshold`](#abandonmentthreshold)
-- [`separateMajorMinor`](#separatemajorminor)
-- [`separateMultipleMajor`](#separatemultiplemajor)
-- [`separateMinorPatch`](#separateminorpatch)
+- [`separate`](#separate)
 - [`automerge`](#automerge)
 - [`automergeStrategy`](#automergestrategy)
 - [`automergeType`](#automergetype)
@@ -112,13 +108,14 @@ customDatasources:
 - [`prFooter`](#prfooter)
 - [`dashboardApproval`](#dashboardapproval)
 - [`timezone`](#timezone)
-- [`security`](#security)
 - [`branchPrefix`](#branchprefix)
 - [`baseBranches`](#basebranches)
 - [`useBaseBranchConfig`](#usebasebranchconfig)
 - [`rebaseWhen`](#rebasewhen)
-- [`monorepos`](#monorepos)
-- [`replacements`](#replacements)
+- [`builtins`](#builtins)
+  - [`builtins.security`](#builtinssecurity)
+  - [`builtins.monorepos`](#builtinsmonorepos)
+  - [`builtins.replacements`](#builtinsreplacements)
 - [`git`](#git)
   - [`git.author`](#gitauthor)
   - [`git.ignoredAuthors`](#gitignoredauthors)
@@ -164,9 +161,7 @@ customDatasources:
   - [`rules[].minimumReleaseAge`](#rulesminimumreleaseage)
   - [`rules[].minimumReleaseAgeBehaviour`](#rulesminimumreleaseagebehaviour)
   - [`rules[].abandonmentThreshold`](#rulesabandonmentthreshold)
-  - [`rules[].separateMajorMinor`](#rulesseparatemajorminor)
-  - [`rules[].separateMultipleMajor`](#rulesseparatemultiplemajor)
-  - [`rules[].separateMinorPatch`](#rulesseparateminorpatch)
+  - [`rules[].separate`](#rulesseparate)
   - [`rules[].automerge`](#rulesautomerge)
   - [`rules[].automergeStrategy`](#rulesautomergestrategy)
   - [`rules[].automergeType`](#rulesautomergetype)
@@ -409,7 +404,7 @@ Text between branchPrefix and the branch topic (the dependency name, or group/\<
 
 - **Type:** string
 
-Renovate's `additionalBranchPrefix`: text between [`branchPrefix`](#branchprefix) and the branch topic. Renovate builds branch names as `{{branchPrefix}}{{additionalBranchPrefix}}{{branchTopic}}`; deps' topics are the dependency name (`slug(name)`) and, for groups, `group/<slug(group)>`, followed by the [bucket](#separatemajorminor) suffix. Without it (the default `""`) the updates of one dependency name share one branch and PR across managers and files, as in Renovate: `anchore/syft` updated as a GitHub action, a Homebrew formula and a [custom](#custom) match gets one PR on `deps/anchore-syft`.
+Renovate's `additionalBranchPrefix`: text between [`branchPrefix`](#branchprefix) and the branch topic. Renovate builds branch names as `{{branchPrefix}}{{additionalBranchPrefix}}{{branchTopic}}`; deps' topics are the dependency name (`slug(name)`) and, for groups, `group/<slug(group)>`, followed by the [bucket](#separate) suffix. Without it (the default `""`) the updates of one dependency name share one branch and PR across managers and files, as in Renovate: `anchore/syft` updated as a GitHub action, a Homebrew formula and a [custom](#custom) match gets one PR on `deps/anchore-syft`.
 
 - **Templates.** Literal text plus Renovate's `{{manager}}` (the deps manager), `{{parentDir}}` (the name of the directory of the dependency's file, `""` at the root) and `{{packageFileDir}}` (that directory's path, `""` at the root); the triple-brace forms (`{{{manager}}}`) are the same. Any other template is a config error naming these three. The expanded text is cleaned as Renovate cleans branch names: whitespace is dropped, characters git rejects become `-`, repeated `/` and `-` collapse, and no component starts with `-` or `.`, so `{{parentDir}}-` of a file at the root expands to nothing.
 - **Sharing.** Updates whose expanded prefix differs never share a branch or PR, also in a [group](#rulesgroup): `{{manager}}/` keeps managers apart (`deps/github-actions/anchore-syft`, `deps/homebrew/anchore-syft`; groups `deps/github-actions/group/tools`), `{{parentDir}}-` splits a monorepo by directory (`deps/web-react`). Lock file maintenance ignores it.
@@ -490,43 +485,28 @@ rules:
     abandonmentThreshold: 0
 ```
 
-## `separateMajorMinor`
+## `separate`
 
-Propose the newest major update in its own PR (branch suffix -major), apart from the newest minor/patch update; false proposes only the newest update.
+How the candidate updates of one dep are split into PRs: none (only the newest update), major (the newest major apart, branch suffix -major, from the newest minor/patch), majors (one PR per newer major, branch suffix -v\<N>, newest release of each), minor-patch (major apart, plus the newest minor (-minor) apart from the newest patch of the current minor (-patch)), majors-minor-patch (both).
 
-- **Type:** boolean
-- **Default:** `true`
+- **Type:** string
+- **Default:** `major`
 
-`separateMajorMinor`, `separateMultipleMajor` and `separateMinorPatch` split one dep's candidate updates into **PR buckets**. Each bucket yields at most one update, and each update gets its own branch (suffix) and PR:
+`separate` splits one dep's candidate updates into **PR buckets**. Each bucket yields at most one update, and each update gets its own branch (suffix) and PR:
 
-| Setting | Buckets (branch suffix) |
+| `separate` | Buckets (branch suffix) |
 |---|---|
-| `separateMajorMinor: false` | one bucket, the newest update of any kind (no suffix) |
-| default (`separateMajorMinor: true`) | newest major (`-major`); newest minor/patch (no suffix) |
-| `+ separateMultipleMajor: true` | one per newer major *N*, the newest release of each (`-v<N>`); minor/patch (no suffix) |
-| `+ separateMinorPatch: true` | newest minor (`-minor`); newest patch of the current minor (`-patch`) |
+| `none` | one bucket, the newest update of any kind (no suffix) |
+| `major` (default) | newest major (`-major`); newest minor/patch (no suffix) |
+| `majors` | one per newer major *N*, the newest release of each (`-v<N>`); minor/patch (no suffix) |
+| `minor-patch` | newest major (`-major`); newest minor (`-minor`); newest patch of the current minor (`-patch`) |
+| `majors-minor-patch` | one per newer major (`-v<N>`); newest minor (`-minor`); newest patch (`-patch`) |
 
-- The bucket of a candidate comes from the policy of its update type. A rule with `updateTypes` can therefore set these flags for its types, unlike in Renovate (see [behavior differences](../migrating-from-renovate.md#behavior-differences)).
+Renovate's `separateMajorMinor: false` is `none`, `separateMultipleMajor` is `majors`, `separateMinorPatch` is `minor-patch`, and both together are `majors-minor-patch`.
+
+- The bucket of a candidate comes from the policy of its update type. A rule with `updateTypes` can therefore set `separate` for its types, unlike in Renovate (see [behavior differences](../migrating-from-renovate.md#behavior-differences)).
 - `plan`/`apply` write one update per dep: the newest non-major one, else the lowest major. The others are reported with `, separate PR`.
 - A policy group inherits its members' bucket suffix: `deps/group/actions-patch`.
-
-## `separateMultipleMajor`
-
-With separateMajorMinor: one PR per newer major version (branch suffix -v\<N>, newest release of each major) instead of one for the newest major.
-
-- **Type:** boolean
-- **Default:** `false`
-
-See the bucket table under [`separateMajorMinor`](#separatemajorminor).
-
-## `separateMinorPatch`
-
-With separateMajorMinor: separate PRs for the newest minor (branch suffix -minor) and the newest patch of the current minor (-patch).
-
-- **Type:** boolean
-- **Default:** `false`
-
-See the bucket table under [`separateMajorMinor`](#separatemajorminor).
 
 ## `automerge`
 
@@ -732,25 +712,6 @@ IANA time zone (e.g. Europe/Berlin) of the schedule time windows; default UTC. C
 
 Renovate's `timezone`. An [IANA time zone](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) name such as `Europe/Berlin` or `America/New_York`; the time zone database is built into deps. It applies to the time windows of every schedule (top level, `rules[].schedule`, `lockFileMaintenance.schedule`), including daylight saving time; cron triggers are matched as text and are unaffected. `Local` is rejected, unknown names fail with `timezone: unknown IANA time zone "Europe/Berln"`. Summaries and `deps explain` print a schedule with windows outside UTC with its zone, e.g. `before 6am on monday (Europe/Berlin)`.
 
-## `security`
-
-Look up OSV advisories and propose security updates that bypass allow, allowedUpdateTypes and schedule.
-
-- **Type:** boolean
-- **Default:** `true`
-
-deps queries [OSV](https://osv.dev) for Go modules, npm packages, crates.io crates, PyPI packages, Maven artifacts and GitHub Actions. A vulnerable dep is moved to the smallest compatible release at or above the minimum fixed version.
-
-- The go.mod `toolchain` directive is checked against the Go standard library (`stdlib`) and the go command (`toolchain`), so `toolchain go1.22.0` gets a security update to the smallest Go release of its line that fixes its advisories (`1.22.2` for GO-2024-2687). The `go` directive is checked too once a rule un-ignores it (it is ignored by default); a 2-part `go 1.22` admits every 1.22.x toolchain, so only an advisory without a fix in 1.22 moves it.
-- Container images, Terraform providers and modules, and Helm charts get no security updates: OSV has no ecosystem for them. The queries per ecosystem are listed under [Security advisories (OSV)](managers.md#security-advisories-osv).
-- Security updates bypass `allow`, `allowedUpdateTypes`, schedules, `minimumReleaseAge` and rules with `updateTypes`. They never bypass a pre-policy `ignore`, except the default ignore of pip_requirements `indirect` pins (the transitive pins of pip-compile/`uv pip compile` output, which Renovate's vulnerability alerts enable too): those get security updates, and only those, unless a rule ignores them.
-- They always use commit type `fix`, get a `[security]` title suffix, and are not put into a `group`. A rule's [`securityGroup`](#rulessecuritygroup) opts in to batching them into a PR of their own.
-- A failed OSV lookup is reported as an error (`security advisories: <err>`). Advisories that cannot be fetched while others can are logged as a warning and left out.
-
-```yaml
-security: false
-```
-
 ## `branchPrefix`
 
 Prefix of update branches (\<prefix>\<additionalBranchPrefix>\<name>, \<prefix>\<additionalBranchPrefix>group/\<group>); must end with `/`. Only branches and PRs under it are managed.
@@ -830,7 +791,42 @@ When to rebuild an open update PR whose content is unchanged: conflicted (only w
 
 A PR whose content changed is always updated. Branches with commits by other authors are never rebuilt (see [`git.ignoredAuthors`](#gitignoredauthors)).
 
-## `monorepos`
+## `builtins`
+
+Switches of built-in behaviors, all on by default: OSV security lookups, the built-in monorepo groups and the built-in replacements.
+
+- **Type:** object
+
+Switches for what deps does on its own, without any rule: all three are on unless set to `false`. They are the built-in data and lookups Renovate gets from presets (`config:recommended`'s vulnerability alerts, `group:monorepos`, `replacements:all`).
+
+```yaml
+builtins:
+  security: false      # no OSV lookups, no security updates
+  monorepos: false     # no built-in monorepo, ruby and vcpkg groups
+  replacements: false  # no built-in replacements
+```
+
+### `builtins.security`
+
+Look up OSV advisories and propose security updates that bypass allow, allowedUpdateTypes and schedule.
+
+- **Type:** boolean
+- **Default:** `true`
+
+deps queries [OSV](https://osv.dev) for Go modules, npm packages, crates.io crates, PyPI packages, Maven artifacts and GitHub Actions. A vulnerable dep is moved to the smallest compatible release at or above the minimum fixed version.
+
+- The go.mod `toolchain` directive is checked against the Go standard library (`stdlib`) and the go command (`toolchain`), so `toolchain go1.22.0` gets a security update to the smallest Go release of its line that fixes its advisories (`1.22.2` for GO-2024-2687). The `go` directive is checked too once a rule un-ignores it (it is ignored by default); a 2-part `go 1.22` admits every 1.22.x toolchain, so only an advisory without a fix in 1.22 moves it.
+- Container images, Terraform providers and modules, and Helm charts get no security updates: OSV has no ecosystem for them. The queries per ecosystem are listed under [Security advisories (OSV)](managers.md#security-advisories-osv).
+- Security updates bypass `allow`, `allowedUpdateTypes`, schedules, `minimumReleaseAge` and rules with `updateTypes`. They never bypass a pre-policy `ignore`, except the default ignore of pip_requirements `indirect` pins (the transitive pins of pip-compile/`uv pip compile` output, which Renovate's vulnerability alerts enable too): those get security updates, and only those, unless a rule ignores them.
+- They always use commit type `fix`, get a `[security]` title suffix, and are not put into a `group`. A rule's [`securityGroup`](#rulessecuritygroup) opts in to batching them into a PR of their own.
+- A failed OSV lookup is reported as an error (`security advisories: <err>`). Advisories that cannot be fetched while others can are logged as a warning and left out.
+
+```yaml
+builtins:
+  security: false
+```
+
+### `builtins.monorepos`
 
 Group deps released from one source repository (built-in list, e.g. kubernetes, opentelemetry-go, babel) into one PR, and the Ruby version (the Gemfile ruby directive, .ruby-version, asdf and mise ruby) into the group ruby; rules can override the group.
 
@@ -841,15 +837,16 @@ When `true`, deps released from one source repository share a PR, with group `<n
 
 The Ruby version is grouped the same way: every dep of the `ruby-version` datasource (the Gemfile `ruby` directive, `.ruby-version`, the asdf and mise `ruby` tool) gets group `ruby`, so one PR moves all files naming it, `Gemfile.lock`'s `RUBY VERSION` included. `ruby` Docker images (`ruby:3.4-slim` in a Dockerfile or CI config) stay docker deps; a rule such as `{managers: [docker], names: [ruby], group: ruby}` adds them to that PR.
 
-The deps of the `vcpkg` manager (registry baselines and port versions) get group `vcpkg`: a port is looked up at the new commit of its registry's baseline when that baseline moves in the same run, and a port version newer than the baseline does not install with the old one, so the bump and the port versions it unlocks share one PR. With another group, `monorepos: false`, or a port update in another bucket (a major with `separateMajorMinor`), the port is looked up at its current baseline instead, and the versions the bump unlocks follow in the next run.
+The deps of the `vcpkg` manager (registry baselines and port versions) get group `vcpkg`: a port is looked up at the new commit of its registry's baseline when that baseline moves in the same run, and a port version newer than the baseline does not install with the old one, so the bump and the port versions it unlocks share one PR. With another group, `builtins.monorepos: false`, or a port update in another bucket (a major with [`separate`](#separate) other than `none`), the port is looked up at its current baseline instead, and the versions the bump unlocks follow in the next run.
 
 They are applied as implicit rules *before* the user rules, so any rule that sets `group` overrides them. `deps explain` shows them as `builtin  monorepo <name> -> group "<name> monorepo"`, `builtin  toolchain ruby -> group "ruby"` and `builtin  registry vcpkg -> group "vcpkg"`.
 
 ```yaml
-monorepos: false
+builtins:
+  monorepos: false
 ```
 
-## `replacements`
+### `builtins.replacements`
 
 Replace packages that moved or were renamed upstream with a replacement update: the built-in list generated from Renovate's replacements presets (lib/data/replacements.json, the moves deps can write: e.g. k8s.gcr.io/\* images to registry.k8s.io/\*, npm jade to pug 2.0.0, google-github-actions/release-please-action to googleapis/release-please-action). Rules' replacementName overrides an entry; updateTypes: [replacement] with ignore: true switches replacements off per dep.
 
@@ -988,7 +985,7 @@ Propose major updates of Go modules to their next major module path (github.com/
 - **Type:** boolean
 - **Default:** `true`
 
-Go majors from v2 on live under their own module path (`github.com/google/go-github/v92` → `/v93`). For every go.mod requirement whose major updates the rules allow, deps lists the next module paths (`/v<N+1>`, … up to 5; `/v2` for v0/v1 modules, `gopkg.in/x.v<N+1>`) from the GOPROXY and proposes the newest release of each as a `major` update (PR buckets as for other majors, see [`separateMajorMinor`](#separatemajorminor)).
+Go majors from v2 on live under their own module path (`github.com/google/go-github/v92` → `/v93`). For every go.mod requirement whose major updates the rules allow, deps lists the next module paths (`/v<N+1>`, … up to 5; `/v2` for v0/v1 modules, `gopkg.in/x.v<N+1>`) from the GOPROXY and proposes the newest release of each as a `major` update (PR buckets as for other majors, see [`separateMajorMinor`](#separate)).
 
 - The update rewrites the require (path and version) and the import paths of the old module and its packages in the `.go` files of that module (vendor, testdata and nested modules excluded); `go mod tidy` sees the rewritten files.
 - The new major's API may differ, so the PR may need code changes before it builds; its body says so.
@@ -1207,7 +1204,7 @@ Policy rules, evaluated top to bottom; every set field of a matching rule overri
 A rule has two groups of fields:
 
 - **Match** fields select what the rule applies to: `managers`, `names`, `depTypes`, `paths`, `datasources`, `baseBranches`, `currentVersion`, `currentAge` and `updateTypes`. A rule **matches** a dep (or, with `updateTypes`, a candidate update of it) when every match field it sets matches; a list matches when any of its entries does. A rule without match fields matches every dep.
-- **Apply** fields override the policy of what the rule matches: every other field (`ignore`, `pin`, `allow`, `allowedUpdateTypes`, `rangeStrategy`, `versioning`, the `separate*` flags, `group`, `commitType`, `commitScope`, `schedule`, `dashboardApproval`, `minimumReleaseAge` and the `automerge*` fields). Every apply field a matching rule sets **overrides** the value from earlier rules (field-wise); `allowedUpdateTypes` replaces the earlier list, it is not merged.
+- **Apply** fields override the policy of what the rule matches: every other field (`ignore`, `pin`, `allow`, `allowedUpdateTypes`, `rangeStrategy`, `versioning`, `separate`, `group`, `commitType`, `commitScope`, `schedule`, `dashboardApproval`, `minimumReleaseAge` and the `automerge*` fields). Every apply field a matching rule sets **overrides** the value from earlier rules (field-wise); `allowedUpdateTypes` replaces the earlier list, it is not merged.
 
 **Warnings.** `plan`, `apply`, `run` and `explain` warn on stderr (`warn    <path>: <field>: <msg>`) about rules that cannot have an effect: a rule without apply fields (or without any field), a `depTypes` entry no listed manager produces, a `datasources` entry no listed manager uses, and `depTypes` and `datasources` no dep has together (`managers: [gomod], depTypes: [devDependencies]` matches nothing: `devDependencies` are npm's). After resolving, `plan`, `apply` and `run` also warn about every rule of the repository's own config that matched none of its dependencies, e.g. one for a manager the repository does not use or a misspelled name glob: `warn    rule .deps.yaml:12 matched no dependency (managers=[npm] names=[react])`, with `--renovate` `warn    rule renovate.json packageRules[3] matched no dependency (…)`. Rules of extended configs and Renovate presets, and those deps adds for Renovate's defaults, are written for many repositories; they are only counted, in an `info` log record.
 
@@ -1215,7 +1212,7 @@ A rule has two groups of fields:
 
 1. The policy of a dep starts as `{pin: <top-level>, allowedUpdateTypes: all five types (all but `major` for travis deps, as in Renovate: `node_js` lists are test matrices), schedule: <top-level>, minimumReleaseAge: <top-level>, bucket flags: <top-level>}`. The commit type starts as `fix` for production deps (gomod `direct`, npm, cargo, poetry and bundler `dependencies`, pep621 `project.dependencies`, pipenv `packages`, elm `direct` and `dependencies`, julia `deps`, pub `dependencies`, mix `prod`, gleam `dependencies`) and `chore` otherwise, and the scope as `deps`.
 2. **Default ignores.** Dep types `indirect` (Go, pip_requirements' transitive pins of compiled requirements files, which still get security updates, and Elm applications' indirect dependencies), `test-indirect` (Elm applications' indirect test dependencies), `go` (the go.mod `go` directive), `peerDependencies` and `engines` (npm), `submodule` (git-submodules, disabled by default as in Renovate), `task` (azure-pipelines tasks: Renovate disables the manager, since a public task version may not be installed in the organization yet) and `tool.uv.constraint-dependencies`, `tool.uv.override-dependencies`, `tool.uv.build-constraint-dependencies` (pep621: uv's lists usually cap versions on purpose; Renovate does not extract them) are ignored unless a rule sets `ignore: false`. The skip reason is `ignored by default (<type>; enable with a rule setting ignore: false)`.
-3. **Built-in monorepo groups** set `group: <name> monorepo`, the Ruby version deps `group: ruby` and the vcpkg deps `group: vcpkg` (unless [`monorepos: false`](#monorepos)).
+3. **Built-in monorepo groups** set `group: <name> monorepo`, the Ruby version deps `group: ruby` and the vcpkg deps `group: vcpkg` (unless [`builtins.monorepos: false`](#builtinsmonorepos)).
 4. **Pre-policy.** Rules *without* `updateTypes` are evaluated top to bottom. Together they decide `ignore`, `pin`, `versioning`, and whether the dep is looked up at all. An ignored dep is skipped as `ignored by rule #<i>`. When a [`currentAge`](#rulescurrentage) rule can match, this waits for the release time of the current version.
 5. **Per-type policy.** Once a candidate's type is known, *all* rules are evaluated again in file order, and rules with `updateTypes` participate when they list that type. The candidate is accepted when that policy does not ignore it, its type is in `allowedUpdateTypes`, and it satisfies `allow`. Otherwise the next candidate of the bucket is tried, so ignoring indirect majors keeps their minor and patch updates. Rejections read `ignored by rule #<i> for <type>`, `update type <type> not allowed` or `outside allow <allow>`.
 6. The chosen update takes `group`, `schedule`, `commitType`, `commitScope`, `prTitle`, `prHeader`, `prFooter`, `automerge`, `automergeStrategy` and `postUpgradeTasks` from the policy of its type. Security updates take only `securityGroup`, the commit scope, the PR templates, the automerge settings and `postUpgradeTasks`.
@@ -1388,25 +1385,13 @@ Overrides the top-level abandonmentThreshold for matching deps, e.g. `2 years`; 
 
 - **Type:** string
 
-### `rules[].separateMajorMinor`
+### `rules[].separate`
 
-Overrides the top-level separateMajorMinor for matching deps (with updateTypes: for candidates of those types).
+Overrides the top-level separate for matching deps (with updateTypes: for candidates of those types).
 
-- **Type:** boolean
+- **Type:** string
 
-See the bucket table under [`separateMajorMinor`](#separatemajorminor).
-
-### `rules[].separateMultipleMajor`
-
-Overrides the top-level separateMultipleMajor for matching deps (with updateTypes: for candidates of those types).
-
-- **Type:** boolean
-
-### `rules[].separateMinorPatch`
-
-Overrides the top-level separateMinorPatch for matching deps (with updateTypes: for candidates of those types).
-
-- **Type:** boolean
+See the bucket table under [`separate`](#separate).
 
 ### `rules[].automerge`
 
@@ -1588,7 +1573,7 @@ Group name: all deps with the same group share one PR.
 - **Single deps.** Every other update gets the branch `<prefix><additionalBranchPrefix><slug(name)>`, shared by the updates of that dependency name in every manager and file, with titles `<p> update <name> to <ver>`, `<p> pin <name> to <sha7>` and `<p> update <name> digest to <sha7>`. [`prTitle`](#prtitle) replaces these built-in titles.
 - `slug` lowercases the name, maps bytes outside `[a-z0-9._-]` to `-`, and collapses and trims `-`.
 - **Commit type in groups.** A group uses `fix` if any member's type is `fix`, else the first member's type. It always uses the first member's scope and [PR templates](#prtitle).
-- Built-in [monorepo groups](#monorepos) are overridden by any rule that sets `group`.
+- Built-in [monorepo groups](#builtinsmonorepos) are overridden by any rule that sets `group`.
 - Security updates are not members (except of a shared version definition, which cannot be split); [`securityGroup`](#rulessecuritygroup) groups them apart.
 
 ### `rules[].securityGroup`

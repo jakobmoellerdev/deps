@@ -207,9 +207,9 @@ type Update struct {
 	// Templates are the PR title, header and footer templates of the policy (prTitle,
 	// prHeader, prFooter); a group's PR uses its first update's.
 	Templates prtemplate.Set
-	// Bucket is the PR bucket of the update among the dep's updates (separateMajorMinor and
-	// friends): "" for the only bucket or the non-major one, "major", "v<N>" (one per major
-	// with separateMultipleMajor), "minor" or "patch" (separateMinorPatch). A non-empty bucket
+	// Bucket is the PR bucket of the update among the dep's updates (the config's
+	// separate): "" for the only bucket or the non-major one, "major", "v<N>" (one per major
+	// with majors), "minor" or "patch" (minor-patch). A non-empty bucket
 	// is appended to the branch as "-<bucket>".
 	Bucket string
 	// BranchTopicPrefix is the expanded additionalBranchPrefix of the update's policy: it

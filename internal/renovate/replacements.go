@@ -32,11 +32,11 @@ func (p *replacementPresets) add(entry, name string) {
 //
 // deps' built-in list (config.Replacements) is Renovate's lib/data/replacements.json as far
 // as deps can write it, behind one switch. Renovate only replaces through presets and rules:
-//   - replacements:all (in config:recommended): replacements: true, plus rules switching
+//   - replacements:all (in config:recommended): builtins.replacements: true, plus rules switching
 //     off built-in entries of presets replacements:all does not extend;
-//   - only single presets: replacements: false, plus rules with replacementName for the
+//   - only single presets: builtins.replacements: false, plus rules with replacementName for the
 //     built-in entries of those presets;
-//   - no replacements preset: replacements: false.
+//   - no replacements preset: builtins.replacements: false.
 func (t *translator) replacements(p replacementPresets) bool {
 	skipped := func(name string) []string {
 		var out []string
@@ -51,7 +51,7 @@ func (t *translator) replacements(p replacementPresets) bool {
 		return slices.ContainsFunc(config.Replacements, func(r config.Replacement) bool { return r.Name == name })
 	}
 	if p.all != "" {
-		t.n.info(p.all, "deps' built-in replacements cover it (replacements: true)")
+		t.n.info(p.all, "deps' built-in replacements cover it (builtins.replacements: true)")
 		for _, name := range config.ReplacementsAll {
 			if s := skipped(name); len(s) > 0 {
 				t.n.info(p.all, "deps cannot apply %s", strings.Join(s, "; "))
@@ -62,7 +62,7 @@ func (t *translator) replacements(p replacementPresets) bool {
 		e := p.entries[i]
 		switch s := skipped(name); {
 		case known(name) && p.all != "":
-			t.n.info(e, "deps' built-in replacements cover it (replacements: true)")
+			t.n.info(e, "deps' built-in replacements cover it (builtins.replacements: true)")
 		case known(name):
 			t.n.info(e, "translated into rules from deps' built-in replacements")
 			if len(s) > 0 {

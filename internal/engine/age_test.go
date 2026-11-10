@@ -119,7 +119,7 @@ func TestMinimumReleaseAge(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ds := goTimed()
 			// One bucket, so a too-new major falls back to minors and patches.
-			res, tr := resolveStub(t, "separateMajorMinor: false\n"+tc.cfg, "gomod", goDep, ds, nil)
+			res, tr := resolveStub(t, "separate: none\n"+tc.cfg, "gomod", goDep, ds, nil)
 			switch {
 			case tc.want == "" && len(res.Updates) != 0:
 				t.Fatalf("updates = %+v, want none", res.Updates)
@@ -379,7 +379,7 @@ func TestMinimumReleaseAgeReleaseBound(t *testing.T) {
 // versions) is aged by the release it stands for: v1.2.0 is looked up for 1.2.0.
 func TestMinimumReleaseAgeVPrefixless(t *testing.T) {
 	d := []dep.Dep{{Datasource: "go", Versioning: "semver", Name: "example.com/a", Version: "1.0.0", Line: 1}}
-	res, _ := resolveStub(t, "separateMajorMinor: false\nminimumReleaseAge: 28 days\n", "custom", d, goTimed(), nil)
+	res, _ := resolveStub(t, "separate: none\nminimumReleaseAge: 28 days\n", "custom", d, goTimed(), nil)
 	if len(res.Updates) != 1 || res.Updates[0].NewVersion != "1.0.1" {
 		t.Fatalf("updates = %+v, want 1.0.1 (newer ones are too new)", res.Updates)
 	}

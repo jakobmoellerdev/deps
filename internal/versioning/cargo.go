@@ -105,7 +105,7 @@ func cargoKind(cur, next cargoVersion) dep.UpdateType {
 }
 
 // cargoMajor is the compatibility range: "1" for 1.x, "0.4" for 0.4.x, "0.0.3" for 0.0.3.
-// It names separateMultipleMajor buckets (v1, v0.4).
+// It names the buckets of separate: majors (v1, v0.4).
 func cargoMajor(c cargoVersion) string {
 	switch {
 	case c.parts[0] > 0:

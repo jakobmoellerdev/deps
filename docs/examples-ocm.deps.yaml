@@ -8,10 +8,10 @@
 #
 # extends:
 #   config:recommended, config:best-practices -> the defaults: security (OSV) updates on,
-#                                                separateMajorMinor, :ignoreModulesAndTests (the
+#                                                separate: major, :ignoreModulesAndTests (the
 #                                                default ignorePaths), semantic commit prefixes
 #   docker:pinDigests, helpers:pinGitHubActionDigests -> pin: digest
-#   group:kubernetesMonorepo, group:goOpenapi    -> monorepos: true (built-in groups, the default)
+#   group:kubernetesMonorepo, group:goOpenapi    -> builtins.monorepos (built-in groups, the default)
 #   security:openssf-scorecard                   -> not supported (no scorecard badge in PR bodies)
 #   :dependencyDashboard                         -> dashboard.enabled: true
 #   :rebaseStalePrs                              -> rebaseWhen: behind-base-branch
@@ -34,15 +34,16 @@ git:
 prConcurrentLimit: 0 # prConcurrentLimit: 0 (unlimited, also the deps default)
 prHourlyLimit: 0 # prHourlyLimit: 0 (unlimited, also the deps default)
 pin: digest # docker:pinDigests + helpers:pinGitHubActionDigests
-monorepos: true # group:kubernetesMonorepo, group:goOpenapi (and the rest of group:monorepos)
-security: true # config:recommended vulnerability alerts (deps queries OSV)
+builtins:
+  monorepos: true # group:kubernetesMonorepo, group:goOpenapi (and the rest of group:monorepos)
+  security: true # config:recommended vulnerability alerts (deps queries OSV)
 minimumReleaseAge: 28 days # minimumReleaseAge: '28 days'
 # Renovate 42+ default: releases without a release time (Garden Linux images without `created`,
 # the envtest custom datasource) are held back, not proposed. deps defaults to timestamp-optional.
 minimumReleaseAgeBehaviour: timestamp-required
-separateMajorMinor: true # config:recommended: majors get their own PR
-separateMinorPatch: true # separateMinorPatch: true
-separateMultipleMajor: true # separateMultipleMajor: true
+# config:recommended (separateMajorMinor) + separateMinorPatch: true + separateMultipleMajor: true:
+# one PR per newer major, minor apart from patch.
+separate: majors-minor-patch
 updateNotScheduled: true # updateNotScheduled: true: open PRs are kept current outside their schedule
 automerge: false # automerge: false (rule 2 automerges minor and patch updates)
 automergeType: pr # automergeType: 'pr'
@@ -106,13 +107,13 @@ rules:
   - updateTypes: [minor, patch]                                 # 2 automerge minor/patch once
     automerge: true                                             #   required checks pass
   - managers: [github-actions]                                  # 3 separateMinorPatch off, weekly
-    separateMinorPatch: false
+    separate: majors
     schedule: ['0 0 * * 0']
   - managers: [github-actions]                                  # 4 groupName 'GitHub Actions'
     updateTypes: [minor, patch]
     group: GitHub Actions
   - managers: [npm]                                             # 5 separateMinorPatch off, weekly
-    separateMinorPatch: false
+    separate: majors
     schedule: ['0 0 * * 0']
   - managers: [npm]                                             # 6 groupName 'npm dependencies'
     updateTypes: [minor, patch]
@@ -151,7 +152,7 @@ rules:
     minimumReleaseAge: 0 days
   - names: ['helm.sh/helm/v4', 'helm/helm']                     # 14 'Helm': CLI pin and library in
     group: Helm                                                 #   one PR (gomodTidy is always on)
-    separateMinorPatch: false
+    separate: majors # separateMinorPatch: false
     schedule: ['0 0 * * 0']
   - names: ['golang.org/x/{/,}**']                              # 15 'Golang X Repositories'
     group: Golang X Repositories
@@ -183,7 +184,7 @@ rules:
     ignore: true
   - paths: ['website/hack/generate-cli-docs/**']                # 23 'Website CLI-docs generator
     group: Website CLI-docs generator dependencies              #   dependencies', all bumps
-    separateMinorPatch: false
+    separate: majors # separateMinorPatch: false
     schedule: ['0 0 * * 0']
   - managers: [gomod]                                           # 24 matchDepTypes golang off: the
     depTypes: [go]                                              #   go directive (toolchain stays)

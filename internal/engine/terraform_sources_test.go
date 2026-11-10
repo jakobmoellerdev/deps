@@ -43,7 +43,7 @@ terraform {
 		"git-tags": fakeTags{"https://github.com/cloudposse/x.git": {"0.4.0", "0.5.0"}, "https://github.com/acme/app.git": {"v1.0.0", "v1.1.0"}},
 		"docker":   fakeDocker{"ghcr.io/acme/vpc": {"1.0.0", "1.1.0"}},
 	}}
-	root, cfg := setup(t, "separateMajorMinor: false\npin: digest\n", map[string]string{
+	root, cfg := setup(t, "separate: none\npin: digest\n", map[string]string{
 		"infra/main.tf":                main,
 		"live/root.hcl":                "",
 		"live/_envcommon/app.hcl":      "locals {\n  base = \"git::https://github.com/acme/app.git//modules/app\"\n}\n",

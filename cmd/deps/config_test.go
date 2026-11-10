@@ -47,7 +47,7 @@ func TestConfigShow(t *testing.T) {
 	for _, want := range []string{
 		"# effective configuration of " + filepath.Join(dir, ".deps.yaml") + "\n",
 		"\nversion: 1\npin: digest\nrangeStrategy: auto\n",
-		"\nsecurity: true\nbranchPrefix: deps/\n",
+		"\nbuiltins:\n  security: true\n  monorepos: true\n  replacements: true\n",
 		"\ngit:\n  author: deps[bot] <deps-bot@noreply.invalid>\n",
 		"\nactions:\n  defaultHost: github.com\n",
 		"\ngitlabci:\n  url: https://gitlab.com\n",

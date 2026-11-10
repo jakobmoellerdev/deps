@@ -124,7 +124,8 @@ func TestLoadErrors(t *testing.T) {
 		{"lockFileMaintenance: {enabled: true, schedule: ['60 5 * * *']}\n", `lockFileMaintenance.schedule[0]: "60 5 * * *": minute`},
 		{"lockFileMaintenance: {enable: true}\n", "1:23: lockFileMaintenance.enable: unknown key (did you mean enabled?)"},
 		{"rules: [{depTypes: [weird]}]\n", `rules[0].depTypes[0]: unknown value "weird" (see deps config describe rules[].depTypes)`},
-		{"security: maybe\n", `.deps.yaml:1:11: security: want a boolean, got "maybe"`},
+		{"builtins: {security: maybe}\n", `.deps.yaml:1:22: builtins.security: want a boolean, got "maybe"`},
+		{"security: false\n", `security: unknown key (moved to builtins.security)`},
 		{"custom: [{}]\n", "custom[0].files: must not be empty"},
 		{"custom: [{files: ['[']}]\n", "custom[0].files[0]: invalid glob"},
 		{"custom: [{files: ['/(/']}]\n", `custom[0].files[0]: invalid regex "/(/"`},
@@ -146,7 +147,7 @@ func TestLoadErrors(t *testing.T) {
 		{"branchPrefix: 'a//'\n", "branchPrefix: must be a valid git ref prefix"},
 		{"branchPrefix: '.x/'\n", "branchPrefix: must be a valid git ref prefix"},
 		{"branchPrefix: 'x.lock/'\n", "branchPrefix: must be a valid git ref prefix"},
-		{"monorepos: maybe\n", `monorepos: want a boolean, got "maybe"`},
+		{"builtins: {monorepos: maybe}\n", `builtins.monorepos: want a boolean, got "maybe"`},
 		{"rules: [{commitType: feature}]\n", `rules[0].commitType: unknown value "feature" (see deps config describe rules[].commitType)`},
 		{"rules: [{commitType: chor}]\n", `rules[0].commitType: unknown value "chor" (did you mean chore?)`},
 		{"rules: [{commitScope: 'a b'}]\n", "rules[0].commitScope: must match"},
@@ -202,8 +203,10 @@ func TestLoadErrors(t *testing.T) {
 		{"rules: [{registryUrls: ['https://x', 'dl-cdn.alpinelinux.org/alpine']}]\n", `rules[0].registryUrls[1]: must be an http(s) URL, got "dl-cdn.alpinelinux.org/alpine"`},
 		{"minimumReleaseAgeBehaviour: timestamp-strict\n", `minimumReleaseAgeBehaviour: must be one of timestamp-optional, timestamp-required, got "timestamp-strict"`},
 		{"rules: [{minimumReleaseAgeBehaviour: required}]\n", `rules[0].minimumReleaseAgeBehaviour: must be one of timestamp-optional, timestamp-required, got "required"`},
-		{"separateMinorPatch: maybe\n", `separateMinorPatch: want a boolean, got "maybe"`},
-		{"rules: [{separateMultipleMajor: 1}]\n", `1:33: rules[0].separateMultipleMajor: want a boolean, got "1"`},
+		{"separate: maybe\n", `separate: must be one of none, major, majors, minor-patch, majors-minor-patch, got "maybe"`},
+		{"separateMinorPatch: true\n", `separateMinorPatch: unknown key (Renovate's separateMajorMinor, separateMultipleMajor and separateMinorPatch are one key separate here`},
+		{"rules: [{separateMultipleMajor: true}]\n", `1:10: rules[0].separateMultipleMajor: unknown key (Renovate's`},
+		{"rules: [{separate: majors-minor}]\n", `1:20: rules[0].separate: must be one of none, major, majors, minor-patch, majors-minor-patch, got "majors-minor"`},
 		{"additionalBranchPrefix: '{{depName}}-'\n", `additionalBranchPrefix: unsupported template {{depName}}; supported: {{manager}}, {{parentDir}}, {{packageFileDir}}, got "{{depName}}-"`},
 		{"rules: [{additionalBranchPrefix: '{{{ baseDir }}}/'}]\n", `rules[0].additionalBranchPrefix: unsupported template {{{ baseDir }}}; supported: {{manager}}, {{parentDir}}, {{packageFileDir}}`},
 		{"additionalBranchPrefix: '{{manager'\n", "additionalBranchPrefix: unbalanced template braces"},
@@ -294,7 +297,7 @@ security: maybe
 		p + ":10:1: ignoreDeps: unknown key (Renovate's ignoreDeps is a rule with names and ignore: true here)",
 		p + ":12:6: customDatasources.e.url: required",
 		p + ":12:7: customDatasources.e.defaultRegistryUrlTemplate: unknown key (Renovate's defaultRegistryUrlTemplate is url here)",
-		p + `:13:11: security: want a boolean, got "maybe"`,
+		p + ":13:1: security: unknown key (moved to builtins.security)",
 	}, "\n")
 	var ce *Error
 	if !errors.As(err, &ce) || err.Error() != want {
@@ -515,7 +518,7 @@ func TestRangeStrategyPolicy(t *testing.T) {
 
 func TestNewKeys(t *testing.T) {
 	c, err := load(t, ".deps.yaml", `schedule: ["0 5 * * *", "0 5 * * 0"]
-security: false
+builtins: {security: false}
 rules:
   - depTypes: [indirect]
     ignore: false
@@ -875,7 +878,7 @@ func TestMonorepos(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	off, err := load(t, ".deps.yaml", "monorepos: false\n")
+	off, err := load(t, ".deps.yaml", "builtins: {monorepos: false}\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -917,7 +920,7 @@ func TestRubyGroup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	off, err := load(t, ".deps.yaml", "monorepos: false\n")
+	off, err := load(t, ".deps.yaml", "builtins: {monorepos: false}\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -947,7 +950,7 @@ func TestVcpkgGroup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	off, err := load(t, ".deps.yaml", "monorepos: false\n")
+	off, err := load(t, ".deps.yaml", "builtins: {monorepos: false}\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -997,7 +1000,7 @@ func TestReplacementPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	off, err := load(t, ".deps.yaml", "replacements: false\n"+rules)
+	off, err := load(t, ".deps.yaml", "builtins: {replacements: false}\n"+rules)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1499,19 +1502,18 @@ customDatasources:
 }
 
 func TestVersioningAndBucketPolicy(t *testing.T) {
-	c, err := load(t, ".deps.yaml", `separateMultipleMajor: true
-separateMinorPatch: true
+	c, err := load(t, ".deps.yaml", `separate: majors-minor-patch
 updateNotScheduled: false
 rules:
   - managers: [github-actions]
-    separateMinorPatch: false
+    separate: majors
   - names: [fips]
     versioning: loose
   - names: [cosign]
     versioning: 'regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)[-+]ocm\.(?<build>\d+)$'
   - managers: [npm]
     updateTypes: [major]
-    separateMajorMinor: false
+    separate: none
 `)
 	if err != nil {
 		t.Fatal(err)
@@ -1530,8 +1532,8 @@ rules:
 		{dep.Dep{Manager: "github-actions", Name: "x"}, "", "", flags{true, true, false}},
 		{dep.Dep{Manager: "docker", Name: "fips"}, "", "loose", flags{true, true, true}},
 		{dep.Dep{Manager: "docker", Name: "cosign"}, "", `regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)[-+]ocm\.(?<build>\d+)$`, flags{true, true, true}},
-		{dep.Dep{Manager: "npm", Name: "x"}, "", "", flags{true, true, true}},         // the updateTypes rule is not in the pre-policy
-		{dep.Dep{Manager: "npm", Name: "x"}, dep.Major, "", flags{false, true, true}}, // ... but in the major policy
+		{dep.Dep{Manager: "npm", Name: "x"}, "", "", flags{true, true, true}},           // the updateTypes rule is not in the pre-policy
+		{dep.Dep{Manager: "npm", Name: "x"}, dep.Major, "", flags{false, false, false}}, // ... but in the major policy
 		{dep.Dep{Manager: "npm", Name: "x"}, dep.Minor, "", flags{true, true, true}},
 	} {
 		p := c.PolicyFor(tc.d, tc.kind)

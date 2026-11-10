@@ -30,22 +30,18 @@ func TestBucketMatrix(t *testing.T) {
 	ds := fakeGo{"example.com/a": {"1.2.2", "1.2.4", "1.2.5", "1.3.0", "1.4.1", "2.0.0", "2.1.0", "3.0.0", "3.1.2", "4.0.0-rc.1"}}
 	single := []string{"3.1.2 major -"}
 	tests := []struct {
-		majorMinor, multipleMajor, minorPatch bool
-		want                                  []string
+		separate string
+		want     []string
 	}{
-		{false, false, false, single},
-		{false, true, false, single},
-		{false, false, true, single},
-		{false, true, true, single},
-		{true, false, false, []string{"1.4.1 minor -", "3.1.2 major major"}},
-		{true, true, false, []string{"1.4.1 minor -", "2.1.0 major v2", "3.1.2 major v3"}},
-		{true, false, true, []string{"1.2.5 patch patch", "1.4.1 minor minor", "3.1.2 major major"}},
-		{true, true, true, []string{"1.2.5 patch patch", "1.4.1 minor minor", "2.1.0 major v2", "3.1.2 major v3"}},
+		{"none", single},
+		{"major", []string{"1.4.1 minor -", "3.1.2 major major"}},
+		{"majors", []string{"1.4.1 minor -", "2.1.0 major v2", "3.1.2 major v3"}},
+		{"minor-patch", []string{"1.2.5 patch patch", "1.4.1 minor minor", "3.1.2 major major"}},
+		{"majors-minor-patch", []string{"1.2.5 patch patch", "1.4.1 minor minor", "2.1.0 major v2", "3.1.2 major v3"}},
 	}
 	for _, tc := range tests {
-		name := fmt.Sprintf("majorMinor=%v,multipleMajor=%v,minorPatch=%v", tc.majorMinor, tc.multipleMajor, tc.minorPatch)
-		t.Run(name, func(t *testing.T) {
-			cfg := fmt.Sprintf("separateMajorMinor: %v\nseparateMultipleMajor: %v\nseparateMinorPatch: %v\n", tc.majorMinor, tc.multipleMajor, tc.minorPatch)
+		t.Run(tc.separate, func(t *testing.T) {
+			cfg := "separate: " + tc.separate + "\n"
 			res, tr := resolveStub(t, cfg, "gomod", semDep, ds, nil)
 			if got := summary(res.Updates); !slices.Equal(got, tc.want) {
 				t.Errorf("updates = %q, want %q", got, tc.want)
@@ -57,14 +53,14 @@ func TestBucketMatrix(t *testing.T) {
 	}
 
 	t.Run("policy per bucket", func(t *testing.T) {
-		res, _ := resolveStub(t, "separateMultipleMajor: true\nrules: [{allow: '< 3'}]\n", "gomod", semDep, ds, nil)
+		res, _ := resolveStub(t, "separate: majors\nrules: [{allow: '< 3'}]\n", "gomod", semDep, ds, nil)
 		if got, want := summary(res.Updates), []string{"1.4.1 minor -", "2.1.0 major v2"}; !slices.Equal(got, want) {
 			t.Errorf("updates = %q, want %q", got, want)
 		}
 	})
 	t.Run("updateTypes rules decide the buckets of their types", func(t *testing.T) {
 		// Majors share the non-major bucket "" (empty here); minors and patches stay apart.
-		res, _ := resolveStub(t, "separateMinorPatch: true\nrules: [{updateTypes: [major], separateMajorMinor: false}]\n", "gomod", semDep, ds, nil)
+		res, _ := resolveStub(t, "separate: minor-patch\nrules: [{updateTypes: [major], separate: none}]\n", "gomod", semDep, ds, nil)
 		if got, want := summary(res.Updates), []string{"1.2.5 patch patch", "1.4.1 minor minor", "3.1.2 major -"}; !slices.Equal(got, want) {
 			t.Errorf("updates = %q, want %q", got, want)
 		}
@@ -87,7 +83,7 @@ func TestBucketsReleaseAge(t *testing.T) {
 		},
 	}
 	semDep := []dep.Dep{{Datasource: "go", Versioning: "semver", Name: "example.com/a", Version: "v1.0.0", Line: 1}}
-	res, tr := resolveStub(t, "minimumReleaseAge: 28 days\nseparateMultipleMajor: true\n", "gomod", semDep, ds, nil)
+	res, tr := resolveStub(t, "minimumReleaseAge: 28 days\nseparate: majors\n", "gomod", semDep, ds, nil)
 	if got, want := summary(res.Updates), []string{"v1.0.1 patch -", "v2.0.0 major v2"}; !slices.Equal(got, want) {
 		t.Errorf("updates = %q, want %q", got, want)
 	}
@@ -120,13 +116,13 @@ func TestBucketsSecurity(t *testing.T) {
 		want           []string
 		advised        []string
 	}{
-		{"the lowest update at or above the fix carries the advisories", "separateMinorPatch: true\n", "1.2.5",
+		{"the lowest update at or above the fix carries the advisories", "separate: minor-patch\n", "1.2.5",
 			[]string{"1.2.6 patch patch", "1.3.0 minor minor", "2.0.0 major major"}, []string{"1.2.6 GO-1"}},
-		{"a minimal fix replaces its bucket's update", "separateMinorPatch: true\nrules: [{allow: '< 1.2.5'}]\n", "1.2.5",
+		{"a minimal fix replaces its bucket's update", "separate: minor-patch\nrules: [{allow: '< 1.2.5'}]\n", "1.2.5",
 			[]string{"1.2.5 patch patch"}, []string{"1.2.5 GO-1"}},
 		{"an update above the fix carries the advisories, whatever its type", "rules: [{allowedUpdateTypes: [major]}]\n", "1.2.5",
 			[]string{"2.0.0 major major"}, []string{"2.0.0 GO-1"}},
-		{"a fix above every update joins in its own bucket", "separateMinorPatch: true\nrules: [{allow: '< 1.3'}]\n", "1.3.0",
+		{"a fix above every update joins in its own bucket", "separate: minor-patch\nrules: [{allow: '< 1.3'}]\n", "1.3.0",
 			[]string{"1.2.6 patch patch", "1.3.0 minor minor"}, []string{"1.3.0 GO-1"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -159,10 +155,9 @@ func (staticReleases) Digest(_ context.Context, _ dep.Dep, v string) (string, er
 
 // The open-component-model rules: cosign under regex versioning in one group, the Garden
 // Linux FIPS image under loose versioning limited to <major>.<patch> tags, with Renovate's
-// separateMinorPatch and separateMultipleMajor.
+// separateMinorPatch and separateMultipleMajor (separate: majors-minor-patch).
 func TestOCMVersioningRules(t *testing.T) {
-	const cfg = `separateMinorPatch: true
-separateMultipleMajor: true
+	const cfg = `separate: majors-minor-patch
 minimumReleaseAge: 28 days
 rules:
   - datasources: [docker]

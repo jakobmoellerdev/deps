@@ -1,6 +1,7 @@
 package renovate
 
 import (
+	"cmp"
 	"fmt"
 	"maps"
 	"regexp"
@@ -21,8 +22,7 @@ var updateTypeBlocks = []struct{ key, typ string }{
 
 // effectOrder is the output order of rule effects (the field order of config.Rule).
 var effectOrder = []string{"ignore", "pin", "allow", "rangeStrategy", "versioning", "extractVersion", "registryUrls", "replacementName",
-	"replacementVersion", "replacementPrefix", "separateMajorMinor",
-	"separateMultipleMajor", "separateMinorPatch", "group", "commitType", "commitScope", "schedule", "additionalBranchPrefix",
+	"replacementVersion", "replacementPrefix", "separate", "group", "commitType", "commitScope", "schedule", "additionalBranchPrefix",
 	"minimumReleaseAge", "minimumReleaseAgeBehaviour", "abandonmentThreshold", "automerge", "automergeStrategy", "automergeType",
 	"labels", "addLabels", "reviewers", "assignees", "prTitle", "prHeader", "prFooter", "postUpgradeTasks", "dashboardApproval",
 	"draftPR", "prCreation"}
@@ -595,7 +595,11 @@ func (t *translator) effects(origin string, r map[string]any) map[string]effect 
 					set("minimumReleaseAge", strconv.FormatFloat(f, 'f', -1, 64)+" days")
 				}
 			}
-		case "separateMajorMinor", "separateMultipleMajor", "separateMinorPatch", "automerge":
+		case "separateMajorMinor", "separateMultipleMajor", "separateMinorPatch":
+			if _, ok := v.(bool); !ok {
+				t.n.warn(p, "must be a boolean; ignored")
+			}
+		case "automerge":
 			set(k, v)
 		case "automergeType":
 			if s, ok := t.automergeType(p, v); ok {
@@ -659,6 +663,17 @@ func (t *translator) effects(origin string, r map[string]any) map[string]effect 
 				t.untranslated(p, k)
 			}
 		}
+	}
+	// The bucket options a rule leaves out keep their top-level values (Renovate's earlier
+	// rules are not taken into account).
+	sep, src := t.sep, ""
+	for i, k := range separateKeys {
+		if b, ok := r[k].(bool); ok {
+			sep[i], src = b, cmp.Or(src, k)
+		}
+	}
+	if src != "" {
+		eff["separate"] = effect{src, separate(sep)}
 	}
 	if !builtinOrigin(origin) {
 		own := map[string]any{}

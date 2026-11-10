@@ -1287,9 +1287,9 @@ func (k bucketKey) label() string {
 }
 
 // bucket returns the PR bucket of candidate c under the policy of its kind (Renovate's
-// getBucket): without separateMajorMinor every candidate shares one bucket; otherwise majors
-// go to "major" (or "v<N>" per major with separateMultipleMajor) and minors and patches share
-// the non-major bucket "", or get "minor" and "patch" with separateMinorPatch.
+// getBucket): with separate none every candidate shares one bucket; otherwise majors go to
+// "major" (or "v<N>" per major with majors) and minors and patches share the non-major bucket
+// "", or get "minor" and "patch" with minor-patch.
 func (p *policies) bucket(c versioning.Candidate) bucketKey {
 	kp := p.of(c.Kind)
 	switch {
@@ -1715,7 +1715,7 @@ func (r *resolver) usual(t *Trace, scheme versioning.Scheme, vulns func() []Vuln
 
 // versionUpdates resolves a dep with a valid version: the best candidate under policy per PR
 // bucket, plus the digest refresh or pin of the current version when no update sits in the
-// digest's bucket (Renovate proposes it next to a major under separateMajorMinor; for a Go
+// digest's bucket (Renovate proposes it next to a major under separate: major; for a Go
 // pseudo-version, without updates, the newer pseudo-version of the module's head), then
 // security, the digest and checksum of every
 // resulting version, and Go major module path updates. Updates are ordered by version, lowest

@@ -16,7 +16,7 @@ import (
 var versionsRe = regexp.MustCompile(`<!-- deps:versions=(\S+(?: \S+)*) -->`)
 
 // majorBucket reports whether ups are the updates of a major PR bucket: "major", or "v<N>"
-// per major with separateMultipleMajor (the other buckets are "", "minor" and "patch").
+// per major with separate: majors (the other buckets are "", "minor" and "patch").
 func majorBucket(ups []dep.Update) bool {
 	if len(ups) == 0 {
 		return false

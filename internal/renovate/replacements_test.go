@@ -20,7 +20,7 @@ func TestLoadReplacements(t *testing.T) {
     names: [corentinmusard/otel-cicd-action]
     updateTypes: [replacement]
     ignore: true`
-	allNotes := "info replacements:all: deps' built-in replacements cover it (replacements: true)" +
+	allNotes := "info replacements:all: deps' built-in replacements cover it (builtins.replacements: true)" +
 		"|info replacements:all: deps cannot apply " + config.ReplacementsSkipped[0] +
 		"|info replacements:all: replacements:all does not extend clang-format-to-maintenance-fork from deps' built-in list; switched off by a rule" +
 		"|info replacements:all: replacements:all does not extend corentinmusard-otel-cicd-action-to-dash0hq from deps' built-in list; switched off by a rule"
@@ -60,10 +60,10 @@ func TestLoadReplacements(t *testing.T) {
     names: [corentinmusard/otel-cicd-action]
     updateTypes: [replacement]
     ignore: true` + defaultExclusions,
-			notes: "info replacements:all: deps' built-in replacements cover it (replacements: true)" +
+			notes: "info replacements:all: deps' built-in replacements cover it (builtins.replacements: true)" +
 				"|info replacements:all: deps cannot apply " + config.ReplacementsSkipped[0] +
-				"|info replacements:clang-format-to-maintenance-fork: deps' built-in replacements cover it (replacements: true)" +
-				"|info replacements:k8s-registry-move: deps' built-in replacements cover it (replacements: true)" +
+				"|info replacements:clang-format-to-maintenance-fork: deps' built-in replacements cover it (builtins.replacements: true)" +
+				"|info replacements:k8s-registry-move: deps' built-in replacements cover it (builtins.replacements: true)" +
 				"|info replacements:all: replacements:all does not extend corentinmusard-otel-cicd-action-to-dash0hq from deps' built-in list; switched off by a rule",
 		},
 		{
@@ -91,9 +91,9 @@ func TestLoadReplacements(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := "\nreplacements: false\n"
+			want := "\n  replacements: false\n"
 			if tt.on {
-				want = "\nreplacements: true\n"
+				want = "\n  replacements: true\n"
 			}
 			if !strings.Contains(string(res.YAML), want) {
 				t.Errorf("want %q in\n%s", want, res.YAML)

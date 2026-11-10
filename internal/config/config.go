@@ -119,6 +119,20 @@ const (
 	AutomergeTypeBranch = "branch"
 )
 
+// PR buckets of separate: none proposes only the newest update; major the newest major apart
+// from the newest minor/patch; majors one PR per newer major; minor-patch the major apart and
+// minor apart from patch; majors-minor-patch both.
+const (
+	SeparateNone             = "none"
+	SeparateMajor            = "major"
+	SeparateMajors           = "majors"
+	SeparateMinorPatch       = "minor-patch"
+	SeparateMajorsMinorPatch = "majors-minor-patch"
+)
+
+// Separations are the accepted separate values.
+var Separations = []string{SeparateNone, SeparateMajor, SeparateMajors, SeparateMinorPatch, SeparateMajorsMinorPatch}
+
 // AutomergeTypes are the accepted automergeType values.
 var AutomergeTypes = []string{AutomergeTypePR, AutomergeTypeBranch}
 
@@ -220,14 +234,12 @@ type Config struct {
 	Version      int `yaml:"version" jsonschema:"default=1" jsonschema_description:"Config format version; must be 1 if set."`
 	Settings     `yaml:",inline"`
 	Timezone     string   `yaml:"timezone" jsonschema_description:"IANA time zone (e.g. Europe/Berlin) of the schedule time windows; default UTC. Cron triggers are unaffected."`
-	Security     *bool    `yaml:"security" jsonschema:"default=true" jsonschema_description:"Look up OSV advisories and propose security updates that bypass allow, allowedUpdateTypes and schedule."`
 	BranchPrefix string   `yaml:"branchPrefix" scope:"run" jsonschema:"default=deps/" jsonschema_description:"Prefix of update branches (<prefix><additionalBranchPrefix><name>, <prefix><additionalBranchPrefix>group/<group>); must end with '/'. Only branches and PRs under it are managed."`
 	BaseBranches []string `yaml:"baseBranches" scope:"run" jsonschema_description:"Base branches deps run proposes updates against, each resolved from its own tip: branch names, $default (the repository's default branch) and RE2 regexes '/<RE2>/' (flag i allowed) matching branches on origin. With more than one entry, or a regex, update branches carry their base (<prefix><base>/<name>) and PRs, cleanup and the dashboard are kept per base. Empty means the default branch; run --base overrides it."`
 	// UseBaseBranchConfig is Renovate's useBaseBranchConfig.
 	UseBaseBranchConfig string    `yaml:"useBaseBranchConfig" scope:"run" jsonschema:"default=none" jsonschema_description:"Config of the base branches run resolves from their own tip (baseBranches, explain --base, preview --base): none (the checkout's config), merge (the config file of the same name on the base branch is merged over the checkout's config as extends merges, the base's keys winning; a base without the file is a config error), merge-if-present (as merge, a base without the file uses the checkout's config). The keys that span the run (baseBranches, useBaseBranchConfig, branchPrefix, the PR limits, prNotPendingHours, git, the rebase settings, the dashboard) stay the checkout's."`
 	RebaseWhen          string    `yaml:"rebaseWhen" scope:"run" jsonschema:"default=conflicted" jsonschema_description:"When to rebuild an open update PR whose content is unchanged: conflicted (only when not mergeable), behind-base-branch (also when the base branch moved), never (only when its content changes)."`
-	Monorepos           *bool     `yaml:"monorepos" jsonschema:"default=true" jsonschema_description:"Group deps released from one source repository (built-in list, e.g. kubernetes, opentelemetry-go, babel) into one PR, and the Ruby version (the Gemfile ruby directive, .ruby-version, asdf and mise ruby) into the group ruby; rules can override the group."`
-	Replacements        *bool     `yaml:"replacements" jsonschema:"default=true" jsonschema_description:"Replace packages that moved or were renamed upstream with a replacement update: the built-in list generated from Renovate's replacements presets (lib/data/replacements.json, the moves deps can write: e.g. k8s.gcr.io/* images to registry.k8s.io/*, npm jade to pug 2.0.0, google-github-actions/release-please-action to googleapis/release-please-action). Rules' replacementName overrides an entry; updateTypes: [replacement] with ignore: true switches replacements off per dep."`
+	Builtins            Builtins  `yaml:"builtins" jsonschema_description:"Switches of built-in behaviors, all on by default: OSV security lookups, the built-in monorepo groups and the built-in replacements."`
 	Git                 Git       `yaml:"git" scope:"run" jsonschema_description:"Commit identity and how deps commits."`
 	PRConcurrentLimit   int       `yaml:"prConcurrentLimit" scope:"run" jsonschema:"minimum=0,default=0" jsonschema_description:"Maximum number of open managed PRs; new PRs are only created below it. 0 means unlimited."`
 	PRHourlyLimit       int       `yaml:"prHourlyLimit" scope:"run" jsonschema:"minimum=0,default=0" jsonschema_description:"Maximum number of managed PRs created per hour, counting existing PRs by creation time. 0 means unlimited."`
@@ -289,16 +301,13 @@ type Settings struct {
 	// AbandonmentThreshold flags deps whose newest release is older than it (Renovate's
 	// abandonmentThreshold); a string like MinimumReleaseAge.
 	AbandonmentThreshold string `yaml:"abandonmentThreshold" jsonschema_description:"Age of a dependency's newest release after which the dependency dashboard and its PRs flag it as abandoned, e.g. '1 year' or '18 months' (units of minimumReleaseAge, plus months of 30 days and years of 365 days); empty or '0' turns the check off. It costs at most one release time lookup per dep (npm: none when its modified time is old enough)." rule_description:"Overrides the top-level abandonmentThreshold for matching deps, e.g. '2 years'; '0' turns the check off for them."`
-	// Separate* split the candidates of one dep into PR buckets (Renovate's options of the
-	// same names); rules override them.
-	SeparateMajorMinor    *bool  `yaml:"separateMajorMinor" jsonschema:"default=true" jsonschema_description:"Propose the newest major update in its own PR (branch suffix -major), apart from the newest minor/patch update; false proposes only the newest update." rule_description:"Overrides the top-level separateMajorMinor for matching deps (with updateTypes: for candidates of those types)."`
-	SeparateMultipleMajor *bool  `yaml:"separateMultipleMajor" jsonschema:"default=false" jsonschema_description:"With separateMajorMinor: one PR per newer major version (branch suffix -v<N>, newest release of each major) instead of one for the newest major." rule_description:"Overrides the top-level separateMultipleMajor for matching deps (with updateTypes: for candidates of those types)."`
-	SeparateMinorPatch    *bool  `yaml:"separateMinorPatch" jsonschema:"default=false" jsonschema_description:"With separateMajorMinor: separate PRs for the newest minor (branch suffix -minor) and the newest patch of the current minor (-patch)." rule_description:"Overrides the top-level separateMinorPatch for matching deps (with updateTypes: for candidates of those types)."`
-	Automerge             *bool  `yaml:"automerge" jsonschema:"default=false" jsonschema_description:"Request platform auto-merge for update PRs: the forge merges them once required checks pass. Rules override it, e.g. for minor and patch updates only." rule_description:"Overrides the top-level automerge for matching deps (with updateTypes: for updates of those types). A PR is automerged only when all of its updates are."`
-	AutomergeStrategy     string `yaml:"automergeStrategy" jsonschema:"default=auto" jsonschema_description:"Merge method of automerged PRs: auto (the repository's default merge style), merge, squash or rebase." rule_description:"Overrides the top-level automergeStrategy for matching deps; a PR uses the strategy of its first update."`
-	AutomergeType         string `yaml:"automergeType" jsonschema:"default=pr" jsonschema_description:"How updates are automerged: pr (platform auto-merge of the PR) or branch (push the branch without a PR and fast-forward the base branch to it once its checks pass; a PR is raised only when they fail)." rule_description:"Overrides the top-level automergeType for matching deps; a group merges its branch only when all of its updates use branch."`
-	DraftPR               *bool  `yaml:"draftPR" jsonschema:"default=false" jsonschema_description:"Open new update PRs as drafts (GitHub draft PRs; on Gitea and Forgejo the title starts with WIP:, on GitLab with Draft:). PRs that automerge are never drafts. Rules override it." rule_description:"Overrides the top-level draftPR for matching deps (with updateTypes: for updates of those types). A group's PR is a draft when any of its updates asks for one."`
-	PRCreation            string `yaml:"prCreation" jsonschema:"default=immediate" jsonschema_description:"When the PR of a new update branch is opened: immediate (right after the push), not-pending (on a later run, once the branch's checks finished, passed or failed, or prNotPendingHours after its last commit), status-success (once they all passed) or approval (once its checkbox under Pending approval on the dependency dashboard is ticked; requires dashboard.enabled). Until then the branch waits without a PR, listed on the dependency dashboard. Rules override it." rule_description:"Overrides the top-level prCreation for matching deps; a group waits as long as the most waiting of its updates asks (approval over status-success over not-pending over immediate)."`
+	// Separate splits the candidates of one dep into PR buckets (Separations); rules override it.
+	Separate          string `yaml:"separate" jsonschema:"default=major" jsonschema_description:"How the candidate updates of one dep are split into PRs: none (only the newest update), major (the newest major apart, branch suffix -major, from the newest minor/patch), majors (one PR per newer major, branch suffix -v<N>, newest release of each), minor-patch (major apart, plus the newest minor (-minor) apart from the newest patch of the current minor (-patch)), majors-minor-patch (both)." rule_description:"Overrides the top-level separate for matching deps (with updateTypes: for candidates of those types)."`
+	Automerge         *bool  `yaml:"automerge" jsonschema:"default=false" jsonschema_description:"Request platform auto-merge for update PRs: the forge merges them once required checks pass. Rules override it, e.g. for minor and patch updates only." rule_description:"Overrides the top-level automerge for matching deps (with updateTypes: for updates of those types). A PR is automerged only when all of its updates are."`
+	AutomergeStrategy string `yaml:"automergeStrategy" jsonschema:"default=auto" jsonschema_description:"Merge method of automerged PRs: auto (the repository's default merge style), merge, squash or rebase." rule_description:"Overrides the top-level automergeStrategy for matching deps; a PR uses the strategy of its first update."`
+	AutomergeType     string `yaml:"automergeType" jsonschema:"default=pr" jsonschema_description:"How updates are automerged: pr (platform auto-merge of the PR) or branch (push the branch without a PR and fast-forward the base branch to it once its checks pass; a PR is raised only when they fail)." rule_description:"Overrides the top-level automergeType for matching deps; a group merges its branch only when all of its updates use branch."`
+	DraftPR           *bool  `yaml:"draftPR" jsonschema:"default=false" jsonschema_description:"Open new update PRs as drafts (GitHub draft PRs; on Gitea and Forgejo the title starts with WIP:, on GitLab with Draft:). PRs that automerge are never drafts. Rules override it." rule_description:"Overrides the top-level draftPR for matching deps (with updateTypes: for updates of those types). A group's PR is a draft when any of its updates asks for one."`
+	PRCreation        string `yaml:"prCreation" jsonschema:"default=immediate" jsonschema_description:"When the PR of a new update branch is opened: immediate (right after the push), not-pending (on a later run, once the branch's checks finished, passed or failed, or prNotPendingHours after its last commit), status-success (once they all passed) or approval (once its checkbox under Pending approval on the dependency dashboard is ticked; requires dashboard.enabled). Until then the branch waits without a PR, listed on the dependency dashboard. Rules override it." rule_description:"Overrides the top-level prCreation for matching deps; a group waits as long as the most waiting of its updates asks (approval over status-success over not-pending over immediate)."`
 	// Labels, Reviewers and Assignees are set on new update PRs; rules override them.
 	Labels    []string `yaml:"labels" jsonschema_description:"Labels added to new update PRs (by name; on Gitea and Forgejo they must exist in the repository or its organization). Rules replace them (labels) or add to them (addLabels)." rule_description:"Replaces the labels of new PRs of matching deps; [] removes them. A group's PR gets the labels of all its updates."`
 	Reviewers []string `yaml:"reviewers" jsonschema_description:"Reviewers requested on new update PRs: user names, or team:<slug> for a team of the repository's organization (not on GitLab). Rules replace them." rule_description:"Replaces the reviewers of new PRs of matching deps (user names or team:<slug>); [] removes them. A group's PR requests the reviewers of all its updates."`
@@ -324,13 +333,15 @@ func (c *Config) NotPendingHours() int {
 }
 
 // SecurityEnabled reports whether OSV lookups are on (default true).
-func (c *Config) SecurityEnabled() bool { return c.Security == nil || *c.Security }
+func (c *Config) SecurityEnabled() bool { return c.Builtins.Security == nil || *c.Builtins.Security }
 
 // MonoreposEnabled reports whether the built-in monorepo groups apply (default true).
-func (c *Config) MonoreposEnabled() bool { return c.Monorepos == nil || *c.Monorepos }
+func (c *Config) MonoreposEnabled() bool { return c.Builtins.Monorepos == nil || *c.Builtins.Monorepos }
 
 // ReplacementsEnabled reports whether the built-in replacements apply (default true).
-func (c *Config) ReplacementsEnabled() bool { return c.Replacements == nil || *c.Replacements }
+func (c *Config) ReplacementsEnabled() bool {
+	return c.Builtins.Replacements == nil || *c.Builtins.Replacements
+}
 
 // GomodUpdateImportPathsEnabled reports whether major module path updates are proposed
 // (gomod.updateImportPaths, default true).
@@ -387,6 +398,7 @@ func (s *Settings) validateSettings(f string, c *Config, add addFunc) {
 		{"pin", s.Pin, Pins}, {"rangeStrategy", s.RangeStrategy, RangeStrategies},
 		{"minimumReleaseAgeBehaviour", s.MinimumReleaseAgeBehaviour, MinimumReleaseAgeBehaviours},
 		{"automergeStrategy", s.AutomergeStrategy, AutomergeStrategies}, {"automergeType", s.AutomergeType, AutomergeTypes},
+		{"separate", s.Separate, Separations},
 		{"prCreation", s.PRCreation, PRCreations},
 	} {
 		if e.v != "" && !slices.Contains(e.vals, e.v) {
@@ -533,6 +545,13 @@ type Git struct {
 	IgnoredAuthors []string `yaml:"ignoredAuthors" jsonschema_description:"Commit author emails (case-insensitive) besides the bot's own whose commits on an update branch do not count as modifications: such branches are still updated and rebased."`
 	// PlatformCommit creates commits through the GitHub API (Renovate's platformCommit).
 	PlatformCommit string `yaml:"platformCommit" jsonschema:"default=auto" jsonschema_description:"Create commits and move update branches through the GitHub API instead of git, so that GitHub signs them and shows them as verified, authored by the GitHub App (e.g. ocmbot[bot]). auto enables it on GitHub when the token is a GitHub App installation token (ghs_..., also GITHUB_TOKEN in Actions) and no signing key is set; enabled requires GitHub and no signing key; disabled always uses git. GitHub signs API commits only for App tokens; with a personal access token they stay unsigned. Overridden by $DEPS_PLATFORM_COMMIT."`
+}
+
+// Builtins switches deps' built-in behaviors (each on when unset).
+type Builtins struct {
+	Security     *bool `yaml:"security" jsonschema:"default=true" jsonschema_description:"Look up OSV advisories and propose security updates that bypass allow, allowedUpdateTypes and schedule."`
+	Monorepos    *bool `yaml:"monorepos" jsonschema:"default=true" jsonschema_description:"Group deps released from one source repository (built-in list, e.g. kubernetes, opentelemetry-go, babel) into one PR, and the Ruby version (the Gemfile ruby directive, .ruby-version, asdf and mise ruby) into the group ruby; rules can override the group."`
+	Replacements *bool `yaml:"replacements" jsonschema:"default=true" jsonschema_description:"Replace packages that moved or were renamed upstream with a replacement update: the built-in list generated from Renovate's replacements presets (lib/data/replacements.json, the moves deps can write: e.g. k8s.gcr.io/* images to registry.k8s.io/*, npm jade to pug 2.0.0, google-github-actions/release-please-action to googleapis/release-please-action). Rules' replacementName overrides an entry; updateTypes: [replacement] with ignore: true switches replacements off per dep."`
 }
 
 // Dashboard holds the dependency dashboard settings.
@@ -828,7 +847,7 @@ func (e *Error) Unwrap() error { return e.Err }
 
 // Default returns the configuration used when no file exists.
 func Default() *Config {
-	return &Config{Version: FormatVersion, Pin: PinKeep, BranchPrefix: DefaultBranchPrefix, Monorepos: new(true), IgnorePaths: slices.Clone(DefaultIgnorePaths)}
+	return &Config{Version: FormatVersion, Pin: PinKeep, BranchPrefix: DefaultBranchPrefix, Builtins: Builtins{Monorepos: new(true)}, IgnorePaths: slices.Clone(DefaultIgnorePaths)}
 }
 
 // Load reads explicitPath (which must exist) or, if empty, .deps.yaml then

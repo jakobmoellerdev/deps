@@ -34,7 +34,7 @@ func TestCurrentAgeRules(t *testing.T) {
 			ds := goTimed()
 			ds.versions = ds.versions[:4] // no major: olderThanCurrent would ask the current time too
 			d := []dep.Dep{{Datasource: "go", Versioning: "semver", Name: "example.com/a", Version: tc.version, DepType: tc.depType, Line: 1}}
-			res, tr := resolveStub(t, "separateMajorMinor: false\n"+tc.cfg+"\n", "gomod", d, ds, nil)
+			res, tr := resolveStub(t, "separate: none\n"+tc.cfg+"\n", "gomod", d, ds, nil)
 			switch {
 			case tc.want == "" && len(res.Updates) != 0:
 				t.Fatalf("updates = %+v, want none", res.Updates)
