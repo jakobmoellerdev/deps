@@ -869,8 +869,8 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 3. **Flags.** `--platform`, `--api-url` and `--repo` override the detected values. If only the kind is overridden, the API URL is derived with the per-kind rule above.
 
 **Default host for `owner/repo@ref`**, first match wins:
-1. `actions.defaultHost` in the config (source `config`).
-2. `DEPS_DEFAULT_ACTIONS_URL` (source `env`).
+1. `DEPS_DEFAULT_ACTIONS_URL` (source `env`).
+2. `actions.defaultHost` in the config (source `config`).
 3. Platform default (source `platform default`): forgejo → `data.forgejo.org`; github, gitea or unknown → `github.com`.
 
 `DEPS_DEFAULT_ACTIONS_URL` is not set by the composite action (it uses no `gitea.` expressions, so it runs unchanged on GitHub). Gitea's `gitea_default_actions_url` is not exposed to expressions by the Gitea 28 runner anyway, so the platform default applies. Instances with a non-default `DEFAULT_ACTIONS_URL` set `actions.defaultHost` in `.deps.yaml`.

@@ -547,13 +547,15 @@ func configEnv(ctx context.Context, cfg *config.Config, info platform.Info, root
 	}
 }
 
-// actionsHost is the host of owner/repo@ref actions and where it came from: the config's
-// actions.defaultHost ("config"), else platform.DefaultActionsHost.
+// actionsHost is the host of owner/repo@ref actions and where it came from:
+// $DEPS_DEFAULT_ACTIONS_URL ("env"), else the config's actions.defaultHost ("config"),
+// else the platform default.
 func actionsHost(cfg *config.Config, info platform.Info) (host, source string) {
-	if cfg.Actions.DefaultHost != "" {
+	host, source = platform.DefaultActionsHost(info, os.Getenv)
+	if source != "env" && cfg.Actions.DefaultHost != "" {
 		return cfg.Actions.DefaultHost, "config"
 	}
-	return platform.DefaultActionsHost(info, os.Getenv)
+	return host, source
 }
 
 // addCustomSources adds the custom datasources of cfg as custom.<name>.

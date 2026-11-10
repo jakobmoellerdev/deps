@@ -7,7 +7,7 @@
         "defaultHost": {
           "type": "string",
           "description": "Host for owner/repo@ref actions; empty means auto-detected from the platform.",
-          "markdownDescription": "Host for owner/repo@ref actions; empty means auto-detected from the platform.\n\nFirst match wins:\n\n1. `actions.defaultHost` (source `config`);\n2. `$DEPS_DEFAULT_ACTIONS_URL`, its hostname (source `env`);\n3. the platform default (source `platform default`): `data.forgejo.org` on Forgejo, otherwise `github.com`.\n\nWith `--log-level info`, deps logs the result as `actions default host host=<h> source=<s>`. Gitea instances with a non-default `DEFAULT_ACTIONS_URL` should set this key.\n\n```yaml\nactions:\n  defaultHost: gitea.com\n```"
+          "markdownDescription": "Host for owner/repo@ref actions; empty means auto-detected from the platform.\n\nFirst match wins:\n\n1. `$DEPS_DEFAULT_ACTIONS_URL`, its hostname (source `env`);\n2. `actions.defaultHost` (source `config`);\n3. the platform default (source `platform default`): `data.forgejo.org` on Forgejo, otherwise `github.com`.\n\nWith `--log-level info`, deps logs the result as `actions default host host=<h> source=<s>`. Gitea instances with a non-default `DEFAULT_ACTIONS_URL` should set this key.\n\n```yaml\nactions:\n  defaultHost: gitea.com\n```"
         }
       },
       "additionalProperties": false,

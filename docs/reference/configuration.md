@@ -958,8 +958,8 @@ Host for owner/repo@ref actions; empty means auto-detected from the platform.
 
 First match wins:
 
-1. `actions.defaultHost` (source `config`);
-2. `$DEPS_DEFAULT_ACTIONS_URL`, its hostname (source `env`);
+1. `$DEPS_DEFAULT_ACTIONS_URL`, its hostname (source `env`);
+2. `actions.defaultHost` (source `config`);
 3. the platform default (source `platform default`): `data.forgejo.org` on Forgejo, otherwise `github.com`.
 
 With `--log-level info`, deps logs the result as `actions default host host=<h> source=<s>`. Gitea instances with a non-default `DEFAULT_ACTIONS_URL` should set this key.

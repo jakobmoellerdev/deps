@@ -430,8 +430,8 @@ To keep deps' branches fast-forwardable when other changes land first, set [`reb
 
 **Short `owner/repo@ref` actions.** Forges resolve them against `DEFAULT_ACTIONS_URL`: github.com on GitHub and Gitea, data.forgejo.org on Forgejo. deps has to look the action up on the same host. It picks the host in this order:
 
-1. [`actions.defaultHost`](reference/configuration.md#actionsdefaulthost) in `.deps.yaml`;
-2. `DEPS_DEFAULT_ACTIONS_URL`, a URL or a bare host;
+1. `DEPS_DEFAULT_ACTIONS_URL`, a URL or a bare host;
+2. [`actions.defaultHost`](reference/configuration.md#actionsdefaulthost) in `.deps.yaml`;
 3. the platform default: `data.forgejo.org` on Forgejo, `github.com` otherwise.
 
 With `--log-level info`, deps logs the chosen host as `actions default host host=<h> source=<s>`. For an instance whose `DEFAULT_ACTIONS_URL` is, e.g., `https://gitea.com`, add this to the config:

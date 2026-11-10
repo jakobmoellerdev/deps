@@ -4,6 +4,7 @@ import (
 	"slices"
 	"testing"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 )
@@ -66,5 +67,21 @@ func TestGitLabBases(t *testing.T) {
 	}
 	if got := gitLabBases("https://git.example/gitlab"); !slices.Equal(got, []string{"https://gitlab.com", "https://git.example/gitlab"}) {
 		t.Errorf("self-managed = %q", got)
+	}
+}
+
+func TestActionsHostEnvOverridesConfig(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Actions.DefaultHost = "config.example.com"
+	t.Setenv("DEPS_DEFAULT_ACTIONS_URL", "https://env.example.com/")
+	if h, s := actionsHost(cfg, platform.Info{}); h != "env.example.com" || s != "env" {
+		t.Errorf("env set: got %q (%s), want env.example.com (env)", h, s)
+	}
+	t.Setenv("DEPS_DEFAULT_ACTIONS_URL", "")
+	if h, s := actionsHost(cfg, platform.Info{Kind: platform.Forgejo}); h != "config.example.com" || s != "config" {
+		t.Errorf("env unset: got %q (%s), want config.example.com (config)", h, s)
+	}
+	if h, s := actionsHost(&config.Config{}, platform.Info{Kind: platform.Forgejo}); h != "data.forgejo.org" || s != "platform default" {
+		t.Errorf("default: got %q (%s)", h, s)
 	}
 }
