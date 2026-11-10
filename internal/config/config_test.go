@@ -1,6 +1,7 @@
 package config
 
 import (
+	"cmp"
 	"errors"
 	"os"
 	"path/filepath"
@@ -368,10 +369,11 @@ func TestRenovateHintTargets(t *testing.T) {
 	for typ, s := range scopes {
 		byScope[s] = typ
 	}
-	for key, h := range RenovateOptions {
+	for _, h := range RenovateOptions {
+		key := cmp.Or(strings.Join(h.Keys, ","), h.Renovate)
 		if h.To == "" {
-			if h.Note == "" {
-				t.Errorf("%s: neither To nor Note", key)
+			if h.Note == "" && h.Doc == "" {
+				t.Errorf("%s: neither To, Note nor Doc", key)
 			}
 			continue
 		}
@@ -380,9 +382,12 @@ func TestRenovateHintTargets(t *testing.T) {
 			t.Errorf("%s: unknown scope %q", key, h.Scope)
 			continue
 		}
-		to, _, _ := strings.Cut(h.To, ":")
+		to, value, _ := strings.Cut(h.To, ":")
 		if !hasFieldPath(&d, typ, to) {
 			t.Errorf("%s: %s %s is no key", key, h.Scope, h.To)
+		}
+		if h.Copy && value != "" {
+			t.Errorf("%s: Copy with a value in To", key)
 		}
 	}
 	for key, to := range movedKeys {

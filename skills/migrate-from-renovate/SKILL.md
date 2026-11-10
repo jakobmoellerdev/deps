@@ -7,7 +7,7 @@ description: Migrate a repository from Renovate to deps (git.jakob-moeller.cloud
 
 deps can read the Renovate config itself. `deps migrate` writes it as a commented `.deps.yaml`; `deps plan|apply|run|explain --renovate` run from the Renovate config directly. Both use the same translator, so a migrated file behaves exactly like compatibility mode. Your job is to run the translation, resolve what it reports, prove the result on the real repository, and cut over without two bots fighting over the same branches.
 
-Reference while working, fetch when you need it: the migration guide `https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/docs/migrating-from-renovate.md?ref=main` (option mapping, "What compatibility mode cannot translate", behavior differences, a worked example for open-component-model), the config reference `https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/docs/reference/configuration.md?ref=main`, and `deps help environment` / `deps migrate --help` locally.
+Reference while working, fetch when you need it: the migration guide `https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/docs/migrating-from-renovate.md?ref=main` ("What compatibility mode cannot translate", behavior differences, a worked example for open-component-model), the option mapping `https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/docs/reference/renovate-options.md?ref=main`, the config reference `https://git.jakob-moeller.cloud/api/v1/repos/jakobmoellerdev/deps/raw/docs/reference/configuration.md?ref=main`, and `deps help environment` / `deps migrate --help` locally.
 
 ## 0. Preconditions
 

@@ -371,6 +371,7 @@ CPU time is deps itself; the rest of the wall time is registry latency, mostly c
   - [CLI](docs/reference/cli.md): commands, flags, environment, output and exit codes
   - [managers and datasources](docs/reference/managers.md): what is found, skip reasons and lookups
   - [action](docs/reference/action.md): inputs and outputs of the composite action
+  - [Renovate options](docs/reference/renovate-options.md): each Renovate option and its `.deps.yaml` equivalent
 - **[Install and verify](docs/install.md)**: Debian, RPM, Arch Linux and Alpine packages, the static binary, `go install`, verifying a download, and running deps locally.
 - **[Migrating from Renovate](docs/migrating-from-renovate.md)**: `deps migrate` and `--renovate` (run from an existing Renovate config), option mapping, what cannot be translated, and differences. An [agent skill](skills/migrate-from-renovate/SKILL.md) does the migration for you.
 - **Background:** [design](docs/design.md), [Renovate parity](docs/renovate-parity.md), [changelog](CHANGELOG.md) ([how releases are made](docs/ci.md#releases-maintainers)).

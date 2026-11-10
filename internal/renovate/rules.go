@@ -554,10 +554,6 @@ func (t *translator) effects(origin string, r map[string]any) map[string]effect 
 			} else {
 				t.n.warn(p, "must be a boolean; ignored")
 			}
-		case "allowedVersions":
-			set("allow", v)
-		case "versioning", "extractVersion", "minimumReleaseAgeBehaviour":
-			set(k, v)
 		case "registryUrls":
 			if l, ok := strs(v); ok && len(l) > 0 {
 				set(k, l)
@@ -574,8 +570,6 @@ func (t *translator) effects(origin string, r map[string]any) map[string]effect 
 			if s, ok := t.prText(p, v); ok {
 				set(k, s)
 			}
-		case "groupName":
-			set("group", v)
 		case "schedule":
 			if s, ok := t.schedule(p, v); ok {
 				set("schedule", s)
@@ -599,8 +593,6 @@ func (t *translator) effects(origin string, r map[string]any) map[string]effect 
 			if _, ok := v.(bool); !ok {
 				t.n.warn(p, "must be a boolean; ignored")
 			}
-		case "automerge":
-			set(k, v)
 		case "automergeType":
 			if s, ok := t.automergeType(p, v); ok {
 				set(k, s)
@@ -617,12 +609,6 @@ func (t *translator) effects(origin string, r map[string]any) map[string]effect 
 			if s, ok := t.rangeStrategy(p, v); ok {
 				set(k, s)
 			}
-		case "replacementName", "replacementVersion":
-			set(k, v)
-		case "dependencyDashboardApproval":
-			set("dashboardApproval", v)
-		case "draftPR":
-			set(k, v)
 		case "prCreation":
 			if s, ok := t.prCreation(p, v); ok {
 				set(k, s)
@@ -648,14 +634,16 @@ func (t *translator) effects(origin string, r map[string]any) map[string]effect 
 			}
 		case "replacementVersionTemplate":
 			t.n.warn(p, "not supported; dropped")
-		case "semanticCommitType":
-			set("commitType", v)
 		case "semanticCommitScope":
 			if v == nil {
 				v = ""
 			}
 			set("commitScope", v)
 		default:
+			if to, ok := ruleCopies[k]; ok {
+				set(to, v)
+				continue
+			}
 			if titleKeys[k] && !builtinOrigin(origin) {
 				continue // composed below
 			}

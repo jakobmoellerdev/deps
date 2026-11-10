@@ -91,9 +91,9 @@ func newDocs() *cli.Command {
 	}
 }
 
-// writeDocs writes configuration.md, cli.md, action.md and managers.md to out and the schema
-// to schemaPath. root is the running command tree: it has the built-in completion command,
-// which urfave/cli adds at run time.
+// writeDocs writes configuration.md, cli.md, action.md, managers.md and renovate-options.md to
+// out and the schema to schemaPath. root is the running command tree: it has the built-in
+// completion command, which urfave/cli adds at run time.
 func writeDocs(root *cli.Command, out, schemaPath, actionPath string) error {
 	schema, err := configSchema()
 	if err != nil {
@@ -124,15 +124,25 @@ func writeDocs(root *cli.Command, out, schemaPath, actionPath string) error {
 	if err != nil {
 		return fmt.Errorf("managers.md: %w", err)
 	}
+	rows := make([]docgen.RenovateRow, 0, len(config.RenovateOptions))
+	for _, o := range config.RenovateOptions {
+		renovate, deps := o.Columns()
+		rows = append(rows, docgen.RenovateRow{Renovate: renovate, Deps: deps})
+	}
+	renovate, err := docgen.RenovateOptions(renovateIntro, rows)
+	if err != nil {
+		return fmt.Errorf("renovate-options.md: %w", err)
+	}
 	if err := os.MkdirAll(out, 0o755); err != nil {
 		return err
 	}
 	files := map[string][]byte{
-		schemaPath:                             schema,
-		filepath.Join(out, "configuration.md"): cfg,
-		filepath.Join(out, "cli.md"):           cliRef,
-		filepath.Join(out, "action.md"):        action,
-		filepath.Join(out, "managers.md"):      managers,
+		schemaPath:                                schema,
+		filepath.Join(out, "configuration.md"):    cfg,
+		filepath.Join(out, "cli.md"):              cliRef,
+		filepath.Join(out, "action.md"):           action,
+		filepath.Join(out, "managers.md"):         managers,
+		filepath.Join(out, "renovate-options.md"): renovate,
 	}
 	for p, b := range files {
 		if err := os.WriteFile(p, b, 0o644); err != nil {
@@ -141,6 +151,12 @@ func writeDocs(root *cli.Command, out, schemaPath, actionPath string) error {
 	}
 	return nil
 }
+
+// renovateIntro opens the Renovate option mapping (config.RenovateOptions).
+const renovateIntro = "Renovate's options and their `.deps.yaml` equivalents. `deps migrate`, `deps init --from-renovate` and " +
+	"`--renovate` translate a Renovate config by this mapping, see [Migrating from Renovate](../migrating-from-renovate.md). " +
+	"A Renovate option left in `.deps.yaml` is an unknown key, and the error names its deps equivalent, for example " +
+	"`.deps.yaml:3:5: rules[0].matchPackageNames: unknown key (Renovate's matchPackageNames is names here)`."
 
 // actionIntro describes what the composite action does; the inputs come from action.yml.
 const actionIntro = "The composite action in the repository root downloads the release archive `deps_linux_<arch>.tar.xz` " +

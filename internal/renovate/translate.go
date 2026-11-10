@@ -209,6 +209,10 @@ func toNode(v any) *yaml.Node {
 			n.Content = append(n.Content, c)
 		}
 		return n
+	case []any:
+		if l, ok := strs(v); ok {
+			return toNode(l) // a copied list of strings renders as a flow sequence
+		}
 	}
 	n := &yaml.Node{}
 	if err := n.Encode(v); err != nil {
@@ -353,6 +357,26 @@ func isInfoKey(k string) bool {
 // silentKeys are consumed without a note.
 func silentKey(k string) bool { return k == "$schema" || k == "description" || k == originKey }
 
+// topCopies and ruleCopies map the Renovate keys deps takes unchanged (config.RenovateOptions
+// rows with Copy) to their deps key, at the top level and in rules (rules[] rows, and
+// top-level rows of rule keys).
+var topCopies, ruleCopies = func() (top, rule map[string]string) {
+	top, rule = map[string]string{}, map[string]string{}
+	for _, o := range config.RenovateOptions {
+		for _, k := range o.Keys {
+			if to := cmp.Or(o.To, k); o.Copy && o.Scope == "" {
+				top[k] = to
+				if slices.Contains(effectOrder, to) {
+					rule[k] = to
+				}
+			} else if o.Copy && o.Scope == "rules[]" {
+				rule[k] = to
+			}
+		}
+	}
+	return top, rule
+}()
+
 type translator struct {
 	n         *notes
 	sep       [3]bool // the top-level separateMajorMinor, separateMultipleMajor, separateMinorPatch
@@ -482,7 +506,12 @@ func (t *translator) translate(cfg map[string]any) omap {
 		}
 		doc.set(k, v)
 	}
-
+	// copied emits Renovate key k unchanged under its deps key (topCopies).
+	copied := func(k string) {
+		if v, ok := get(k); ok {
+			emit(topCopies[k], v)
+		}
+	}
 	prefix := "renovate/"
 	if v, ok := get("branchPrefix"); ok {
 		if s, ok := v.(string); ok {
@@ -519,9 +548,7 @@ func (t *translator) translate(cfg map[string]any) omap {
 			t.n.warn("useBaseBranchConfig", "unsupported value %v; dropped", v)
 		}
 	}
-	if v, ok := get("gitAuthor"); ok {
-		emit("git.author", v)
-	}
+	copied("gitAuthor")
 	if v, ok := get("platformCommit"); ok {
 		switch v {
 		case true:
@@ -531,11 +558,7 @@ func (t *translator) translate(cfg map[string]any) omap {
 		}
 		emit("git.platformCommit", v)
 	}
-	if v, ok := get("gitIgnoredAuthors"); ok {
-		if l, ok := strs(v); ok {
-			emit("git.ignoredAuthors", l)
-		}
-	}
+	copied("gitIgnoredAuthors")
 	for _, lim := range []struct {
 		k   string
 		def int
@@ -605,9 +628,7 @@ func (t *translator) translate(cfg map[string]any) omap {
 	if setSep {
 		emit("separate", separate(t.sep))
 	}
-	if v, ok := get("updateNotScheduled"); ok {
-		emit("updateNotScheduled", v)
-	}
+	copied("updateNotScheduled")
 	mra, hasMRA := get("minimumReleaseAge")
 	sd, hasSD := get("stabilityDays")
 	switch {
@@ -629,9 +650,7 @@ func (t *translator) translate(cfg map[string]any) omap {
 			emit("schedule", s)
 		}
 	}
-	if v, ok := get("timezone"); ok {
-		emit("timezone", v)
-	}
+	copied("timezone")
 	if v, ok := get("registryAliases"); ok {
 		if m, isMap := v.(map[string]any); isMap {
 			var aliases omap
@@ -649,9 +668,7 @@ func (t *translator) translate(cfg map[string]any) omap {
 		ignorePaths = t.ignorePaths(l)
 	}
 	emit("ignorePaths", ignorePaths)
-	if v, ok := get("automerge"); ok {
-		emit("automerge", v)
-	}
+	copied("automerge")
 	if v, ok := get("automergeStrategy"); ok {
 		if s, ok := t.automergeStrategy("automergeStrategy", v); ok {
 			emit("automergeStrategy", s)
@@ -715,25 +732,12 @@ func (t *translator) translate(cfg map[string]any) omap {
 			doc.set("stopUpdatingLabel", v)
 		}
 	}
-	for _, k := range []struct{ renovate, deps string }{
-		{"dependencyDashboard", "dashboard.enabled"}, {"dependencyDashboardTitle", "dashboard.title"}, {"dependencyDashboardLabels", "dashboard.labels"},
-	} {
-		if v, ok := get(k.renovate); ok {
-			if l, isList := strs(v); isList && k.renovate == "dependencyDashboardLabels" {
-				v = l
-			}
-			emit(k.deps, v)
-			if k.renovate == "dependencyDashboard" {
-				t.dashboard = v == true
-			}
-		}
-	}
-	if v, ok := get("dependencyDashboardApproval"); ok {
-		emit("dashboardApproval", v)
-	}
-	if v, ok := get("draftPR"); ok {
-		emit("draftPR", v)
-	}
+	copied("dependencyDashboard")
+	t.dashboard = cfg["dependencyDashboard"] == true
+	copied("dependencyDashboardTitle")
+	copied("dependencyDashboardLabels")
+	copied("dependencyDashboardApproval")
+	copied("draftPR")
 	if v, ok := get("prCreation"); ok {
 		if s, ok := t.prCreation("prCreation", v); ok {
 			emit("prCreation", s)

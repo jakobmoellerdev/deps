@@ -362,7 +362,7 @@ func syntaxProblem(path string, err error) *Problem {
 
 // renovateHint returns the hint for Renovate option key found in scope, or "".
 func renovateHint(key, scope string) string {
-	h, ok := RenovateOptions[key]
+	h, ok := renovateHints[key]
 	if !ok {
 		return ""
 	}

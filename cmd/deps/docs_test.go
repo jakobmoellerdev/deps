@@ -44,7 +44,7 @@ func TestDocs(t *testing.T) {
 	if got := read("deps.schema.json"); got != schema {
 		t.Error("deps.schema.json differs from `deps schema`")
 	}
-	for _, f := range []string{"configuration.md", "cli.md", "action.md", "managers.md"} {
+	for _, f := range []string{"configuration.md", "cli.md", "action.md", "managers.md", "renovate-options.md"} {
 		if !strings.HasPrefix(read(filepath.Join("reference", f)), docgen.Header) {
 			t.Errorf("%s lacks the generated header", f)
 		}
