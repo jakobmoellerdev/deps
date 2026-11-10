@@ -166,7 +166,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           token: ${{ steps.app.outputs.token }}
-      - uses: jakobmoellerdev/deps@v0.10.0
+      - uses: jakobmoellerdev/deps@v0.11.0
         with:
           token: ${{ steps.app.outputs.token }}
 ```
@@ -198,7 +198,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.10.0
+      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.11.0
 ```
 
 `uses:` needs the full URL, because a short `owner/repo@ref` is looked up on the instance's default actions host (github.com). CI doesn't run on PRs opened with the job token; to get CI (and automerge), pass a personal access token to both steps ([Gitea](docs/ci.md#gitea)).
