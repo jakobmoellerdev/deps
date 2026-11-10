@@ -28,8 +28,9 @@ func sharedMember(u *dep.Update) bool {
 //   - per PR bucket (dep.Update.Bucket) every member takes the lowest NewVersion of the
 //     bucket, the highest version all of them are known to reach (each dep's update is its
 //     best accepted candidate). A lowered member gets the Type of the new version under its
-//     scheme, the NewDigest and NewChecksum of the update it was lowered to, and loses its
-//     advisories (the fix is no longer known to be included); it then takes policy(i, Type),
+//     scheme, the NewDigest and NewChecksum of the update it was lowered to (its own, when it
+//     writes them apart: lowerShared), and loses its advisories (the fix is no longer known to
+//     be included); it then takes policy(i, Type),
 //     the policy of its dep and new type, as an update without advisories (applyPolicy):
 //     group, schedule, dashboard approval, commit and automerge settings. Buckets only some
 //     members reach are kept: one bucket is one PR, so its edits never conflict, and Local
@@ -81,8 +82,23 @@ func unifyShared(ctx context.Context, ups []dep.Update, policy func(i int, kind 
 }
 
 // lowerShared lowers the members idx of one shared definition to the lowest NewVersion of
-// their bucket under s (see unifyShared).
+// their bucket under s (see unifyShared). A lowered member that writes a digest or checksum of
+// its own (shareCustom: other spans than the update it is lowered to) takes those of its own
+// update to that version, which holdTogether guarantees.
 func lowerShared(ups []dep.Update, idx []int, s versioning.Scheme, policy func(i int, kind dep.UpdateType) *config.Policy) {
+	type own struct {
+		digest, checksum dep.Span
+		version          string
+	}
+	var owns map[own]dep.Update // the updates of members with spans of their own, by spans and version
+	for _, i := range idx {
+		if u := &ups[i]; u.Dep.Together {
+			if owns == nil {
+				owns = map[own]dep.Update{}
+			}
+			owns[own{u.Dep.DigestSpan, u.Dep.ChecksumSpan, u.NewVersion}] = *u
+		}
+	}
 	for n, i := range idx {
 		if slices.ContainsFunc(idx[:n], func(j int) bool { return ups[j].Bucket == ups[i].Bucket }) {
 			continue // bucket done
@@ -99,7 +115,11 @@ func lowerShared(ups []dep.Update, idx []int, s versioning.Scheme, policy func(i
 			if u.Bucket != l.Bucket || u.NewVersion == l.NewVersion {
 				continue
 			}
-			u.NewVersion, u.NewDigest, u.NewChecksum, u.Advisories = l.NewVersion, l.NewDigest, l.NewChecksum, nil
+			src := l
+			if u.Dep.Together && (u.Dep.DigestSpan != l.Dep.DigestSpan || u.Dep.ChecksumSpan != l.Dep.ChecksumSpan) {
+				src = owns[own{u.Dep.DigestSpan, u.Dep.ChecksumSpan, l.NewVersion}]
+			}
+			u.NewVersion, u.NewDigest, u.NewChecksum, u.Advisories = l.NewVersion, src.NewDigest, src.NewChecksum, nil
 			if us, ok := versioning.Get(u.Dep.Versioning); ok {
 				u.Type = us.Kind(u.Dep.Version, u.NewVersion)
 			} else {
@@ -111,8 +131,10 @@ func lowerShared(ups []dep.Update, idx []int, s versioning.Scheme, policy func(i
 }
 
 // sameDep reports whether a and b are the same dependency occurrence (dep.Dep holds slices, so
-// it is not comparable): the fields that tell deps sharing one definition apart.
+// it is not comparable): the fields that tell deps sharing one definition apart, such as the
+// custom deps of one version with a checksum each (shareCustom).
 func sameDep(a, b dep.Dep) bool {
 	return a.Manager == b.Manager && a.Name == b.Name && a.DepType == b.DepType && a.File == b.File &&
-		a.Line == b.Line && a.RefSpan == b.RefSpan && a.Version == b.Version && a.Source == b.Source
+		a.Line == b.Line && a.RefSpan == b.RefSpan && a.Version == b.Version && a.Source == b.Source &&
+		a.DigestSpan == b.DigestSpan && a.ChecksumSpan == b.ChecksumSpan
 }

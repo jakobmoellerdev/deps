@@ -1,8 +1,13 @@
 package engine
 
 import (
+	"context"
+	"errors"
 	"slices"
+	"strings"
 	"testing"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
 
 func TestResolveAnnotationCoversNativeDep(t *testing.T) {
@@ -106,6 +111,106 @@ func TestResolveFirstCustomMatchWins(t *testing.T) {
 	}
 	if len(res.Updates) != 1 || res.Updates[0].Dep.Name != "example.com/a" || len(res.Skipped) != 1 || res.Skipped[0].Skip != "covered by custom match on line 1" {
 		t.Errorf("updates = %+v, skipped = %+v", res.Updates, res.Skipped)
+	}
+}
+
+// assetChecksums returns the checksum of the release asset a dep's checksum source names at a
+// version (missing = error, as a release without the asset).
+type assetChecksums map[string]string
+
+func (c assetChecksums) Checksum(_ context.Context, d dep.Dep, v, _ string) (string, error) {
+	a := dep.ExpandVersion(d.ChecksumSource.Asset, v)
+	if s, ok := c[a]; ok {
+		return s, nil
+	}
+	return "", errors.New("release " + v + " has no asset " + a)
+}
+
+// Custom entries matching one version with a checksum each (a tool pinned per platform):
+// with the same datasource and name they share the version, which moves once and only with
+// every checksum; a different name, or a later entry writing nothing of its own, is skipped as
+// a duplicate.
+func TestResolveCustomSharedVersion(t *testing.T) {
+	h0, x86, arm := strings.Repeat("0", 64), strings.Repeat("a", 64), strings.Repeat("b", 64)
+	src := "NFPM_VERSION=2.47.0\nNFPM_SHA256_LINUX_X86_64=" + h0 + "\nNFPM_SHA256_LINUX_ARM64=" + h0 + "\n"
+	entry := func(name, arch, asset string) string {
+		e := "  - files: [.env]\n    datasource: github-releases\n    name: " + name + "\n"
+		if arch == "" {
+			return e + `    match: 'NFPM_VERSION=(?P<version>\S+)'` + "\n"
+		}
+		return e + `    match: 'NFPM_VERSION=(?P<version>\S+)\n(?:.*\n)*?NFPM_SHA256_LINUX_` + arch + `=(?P<checksum>[0-9a-f]{64})'` + "\n" +
+			"    checksum: {asset: 'nfpm_{{version}}_Linux_" + asset + ".tar.gz'}\n"
+	}
+	both := assetChecksums{"nfpm_2.48.0_Linux_x86_64.tar.gz": x86, "nfpm_2.48.0_Linux_arm64.tar.gz": arm}
+	for _, c := range []struct {
+		name    string
+		second  string // the second custom entry
+		sums    assetChecksums
+		file    string   // the file after Build; "" = no updates
+		errs    []string // suffixes of the errors
+		skipped string   // the skip of the second entry's dep; "" = shares the version
+	}{
+		{name: "shared", second: entry("goreleaser/nfpm", "ARM64", "arm64"), sums: both,
+			file: "NFPM_VERSION=2.48.0\nNFPM_SHA256_LINUX_X86_64=" + x86 + "\nNFPM_SHA256_LINUX_ARM64=" + arm + "\n"},
+		{name: "one checksum missing", second: entry("goreleaser/nfpm", "ARM64", "arm64"),
+			sums: assetChecksums{"nfpm_2.48.0_Linux_x86_64.tar.gz": x86},
+			errs: []string{"release 2.48.0 has no asset nfpm_2.48.0_Linux_arm64.tar.gz",
+				"1 of 2 deps of goreleaser/nfpm in .env resolved to 2.48.0, the others did not; updated none"}},
+		{name: "other name", second: entry("goreleaser/other", "ARM64", "arm64"), sums: both,
+			file:    "NFPM_VERSION=2.48.0\nNFPM_SHA256_LINUX_X86_64=" + x86 + "\nNFPM_SHA256_LINUX_ARM64=" + h0 + "\n",
+			skipped: "covered by custom match on line 1"},
+		{name: "nothing of its own", second: entry("goreleaser/nfpm", "", ""), sums: both,
+			file:    "NFPM_VERSION=2.48.0\nNFPM_SHA256_LINUX_X86_64=" + x86 + "\nNFPM_SHA256_LINUX_ARM64=" + h0 + "\n",
+			skipped: "covered by custom match on line 1"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			root, cfg := setup(t, "custom:\n"+entry("goreleaser/nfpm", "X86_64", "x86_64")+c.second, map[string]string{".env": src})
+			ms, err := Managers(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			o := Options{Managers: ms, Checksums: c.sums, Datasources: map[string]Datasource{"github-releases": fakeReleases{"2.48.0", "2.47.0"}}}
+			res, err := Resolve(t.Context(), root, cfg, env, o)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var skips []string
+			for _, d := range res.Skipped {
+				skips = append(skips, d.Skip)
+			}
+			if want := slices.DeleteFunc([]string{c.skipped}, func(s string) bool { return s == "" }); len(res.Deps) != 2 || !slices.Equal(skips, want) {
+				t.Fatalf("deps = %+v, skipped = %q, want %q", res.Deps, skips, want)
+			}
+			var errs []string
+			for _, e := range res.Errors {
+				errs = append(errs, e.Error())
+			}
+			if len(errs) != len(c.errs) {
+				t.Errorf("errors = %q, want %q", errs, c.errs)
+			}
+			for _, want := range c.errs {
+				if !slices.ContainsFunc(errs, func(e string) bool { return strings.HasSuffix(e, want) }) {
+					t.Errorf("errors = %q, want one ending in %q", errs, want)
+				}
+			}
+			if c.file == "" {
+				if len(res.Updates) != 0 {
+					t.Errorf("updates = %+v, want none", res.Updates)
+				}
+				return
+			}
+			gs := GroupUpdates(res.Updates, "")
+			if len(gs) != 1 || gs[0].Title != "chore(deps): update goreleaser/nfpm to 2.48.0" {
+				t.Fatalf("groups = %+v, want one PR", gs)
+			}
+			if local, _ := Local(res.Updates); len(local) != len(res.Updates) {
+				t.Errorf("local = %+v of %+v, want all", local, res.Updates)
+			}
+			changes, errs2 := Build(t.Context(), root, ms, gs[0].Updates, nil)
+			if len(errs2) != 0 || len(changes) != 1 || string(changes[0].New) != c.file {
+				t.Fatalf("Build = %v, %v; want\n%s", changes, errs2, c.file)
+			}
+		})
 	}
 }
 

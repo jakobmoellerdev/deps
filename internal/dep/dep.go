@@ -102,7 +102,8 @@ type Dep struct {
 	InsertAt    int    // manager-defined insert offset (actions: after the uses value incl. closing quote)
 	Skip        string // non-empty = not updatable, with the reason
 	// VersionRef names the definition the version is read from when several deps can share
-	// it (a Maven property, a Gradle catalog version.ref or variable), e.g. "jackson.version";
+	// it (a Maven property, a Gradle catalog version.ref or variable, custom entries matching
+	// one version with a checksum each: their dep name), e.g. "jackson.version";
 	// RefSpan then points at the definition, which may be in another file than the dep's
 	// declaration (File is the definition's file). Updates of deps sharing one File+RefSpan
 	// are grouped into one PR with one version. "" = the version is the dep's own.
@@ -113,7 +114,8 @@ type Dep struct {
 	Gitlink string
 	// Together marks deps that move only as a whole: the downloads of a Homebrew formula or a
 	// Nix flake (per-platform urls with their checksums) and the statements following them
-	// (mirrors, version attributes). An update of a Together dep to a new version is proposed
+	// (mirrors, version attributes), and custom deps sharing one version (VersionRef) with a
+	// digest or checksum each. An update of a Together dep to a new version is proposed
 	// only when every Together dep with its Manager, File and Name that is not skipped has an
 	// update to that version; otherwise none of them is, and the engine reports the group's
 	// failure (one error per group and version) besides the errors of the deps that failed.

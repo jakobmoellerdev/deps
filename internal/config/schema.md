@@ -1086,6 +1086,22 @@ custom:
       file: 'gh_{{version}}_linux_amd64.tar.gz'
 ```
 
+One version with a checksum per platform takes one entry per checksum, each matching the same version. Entries with the same datasource and name share it: the version is written once, every checksum moves with it, and the updates form one PR. If one checksum cannot be fetched, none of them moves (`1 of 2 deps of goreleaser/nfpm in .env resolved to 2.48.0, the others did not; updated none`). See *Shared versions* under the [custom manager](managers.md#custom).
+
+```yaml
+custom:
+  - files: [.env]
+    match: 'NFPM_VERSION=(?P<version>\S+)\n(?:.*\n)*?NFPM_SHA256_LINUX_X86_64=(?P<checksum>[0-9a-f]{64})'
+    datasource: github-releases
+    name: goreleaser/nfpm
+    checksum: {asset: 'nfpm_{{version}}_Linux_x86_64.tar.gz'}
+  - files: [.env]
+    match: 'NFPM_VERSION=(?P<version>\S+)\n(?:.*\n)*?NFPM_SHA256_LINUX_ARM64=(?P<checksum>[0-9a-f]{64})'
+    datasource: github-releases
+    name: goreleaser/nfpm
+    checksum: {asset: 'nfpm_{{version}}_Linux_arm64.tar.gz'}
+```
+
 ## Config.customDatasources
 
 Names must match `^[A-Za-z0-9][A-Za-z0-9._-]*$`. The document is fetched once per run (unauthenticated, at most 10 MiB) and shared by every dep. It has no release times (so with a `minimumReleaseAge` its versions pass under `minimumReleaseAgeBehaviour: timestamp-optional` and are held back under `timestamp-required`) and no digests. Errors read `custom.<name>: GET <url>: HTTP 404` or `custom.<name>: <url>: selector ".a[]": cannot iterate over null`; an empty result is `no versions`.

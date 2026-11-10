@@ -73,7 +73,7 @@ var skipHints = []struct{ prefix, hint string }{
 	{"expression", "the value is computed at runtime"},
 	{dep.SkipUnknownRegistry + " ", "set `[registries.<name>] index` in `.cargo/config.toml` or `CARGO_REGISTRIES_<NAME>_INDEX`"},
 	{dep.SkipUnknownRegistry, "set `registryUrls` in a rule matching the package (Dockerfile `apt-get install` pins, `apk add` pins of an unknown Alpine release)"},
-	{"covered by custom match", "an earlier `custom` entry matches the same version; drop the duplicate entry"},
+	{"covered by custom match", "an earlier `custom` entry matches the same version; drop the duplicate entry, or give it that entry's datasource and name to share the version with a checksum of its own"},
 	{"covered by ", "a custom manager updates these bytes instead"},
 }
 

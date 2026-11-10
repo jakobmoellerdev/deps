@@ -4628,7 +4628,11 @@ The version is replaced. A captured digest (`@sha256:` for docker markers, a `di
 
 **Precedence over native managers.**
 
-When a custom dep and a native manager's dep (docker, helm, …) cover the same version bytes of a file, the custom dep wins: the native dep is skipped as `covered by annotation on line <n>` (regex mode: `covered by custom regex match on line <n>`, JSONata mode: `covered by custom jsonata match on line <n>`), so the bytes are edited once and only one PR is opened. Between custom entries the first one in `custom` wins; a later entry matching the same version is skipped as `covered by custom match on line <n>`.
+When a custom dep and a native manager's dep (docker, helm, …) cover the same version bytes of a file, the custom dep wins: the native dep is skipped as `covered by annotation on line <n>` (regex mode: `covered by custom regex match on line <n>`, JSONata mode: `covered by custom jsonata match on line <n>`), so the bytes are edited once and only one PR is opened. Between custom entries the first one in `custom` wins; a later entry matching the same version is skipped as `covered by custom match on line <n>`, unless it shares the version (below).
+
+**Shared versions.**
+
+A later custom entry whose match covers exactly the same version bytes, with the same datasource and name, and that writes a digest or checksum no earlier entry of that version writes, shares the version: one version pinned with a checksum per platform (`NFPM_VERSION=…` followed by `NFPM_SHA256_LINUX_X86_64=…` and `NFPM_SHA256_LINUX_ARM64=…`, one regex entry per checksum). Both deps are kept, the version is written once and each dep's digest or checksum moves with it. Their updates form one PR with one version (branch `<prefix>group/<name>` unless a rule's `group` applies), and move only together: when one checksum cannot be fetched, none of them moves and the run reports `<k> of <n> deps of <name> in <file> resolved to <version>, the others did not; updated none` besides the failed checksum. A different datasource or name on the same bytes, or an entry writing nothing besides the version, is a duplicate: `covered by custom match on line <n>`.
 
 ## Datasources
 

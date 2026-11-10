@@ -189,10 +189,13 @@ func Local(updates []dep.Update) (local []dep.Update, separate []bool) {
 }
 
 // sameSharedEdit reports whether u and c are updates of distinct deps sharing a version
-// definition that write the same bytes.
+// definition that write the same bytes: the same version, and the same digest and checksum
+// where they share the span (custom deps of one version each write a checksum of their own).
 func sameSharedEdit(u, c dep.Update) bool {
-	return u.Dep.VersionRef != "" && !sameDep(u.Dep, c.Dep) && u.NewVersion == c.NewVersion && u.NewDigest == c.NewDigest &&
-		u.NewName == c.NewName && u.NewChecksum == c.NewChecksum && u.Lockfile == c.Lockfile && u.RangeStrategy == c.RangeStrategy
+	return u.Dep.VersionRef != "" && !sameDep(u.Dep, c.Dep) && u.NewVersion == c.NewVersion &&
+		(u.NewDigest == c.NewDigest || u.Dep.DigestSpan != c.Dep.DigestSpan) &&
+		(u.NewChecksum == c.NewChecksum || u.Dep.ChecksumSpan != c.Dep.ChecksumSpan) &&
+		u.NewName == c.NewName && u.Lockfile == c.Lockfile && u.RangeStrategy == c.RangeStrategy
 }
 
 // SecuritySuffix ends the title of a PR with security updates.

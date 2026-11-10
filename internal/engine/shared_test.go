@@ -152,6 +152,29 @@ func TestUnifyShared(t *testing.T) {
 	}
 }
 
+// Custom deps sharing one version with a checksum each (shareCustom): a lowered member takes
+// the checksum of its own update to the lower version, not the other member's.
+func TestUnifySharedOwnChecksums(t *testing.T) {
+	up := func(sumAt int, version, sum, bucket string) dep.Update {
+		return dep.Update{Dep: dep.Dep{Manager: "custom", DepType: "regex", Versioning: "semver", File: ".env", Line: 1, Name: "o/t",
+			Version: "1.0.0", RefSpan: dep.Span{Start: 10, End: 15}, ChecksumSpan: dep.Span{Start: sumAt, End: sumAt + 64},
+			VersionRef: "o/t", Together: true}, NewVersion: version, NewChecksum: sum, Type: dep.Minor, Bucket: bucket}
+	}
+	ups := []dep.Update{
+		up(20, "1.2.0", "a12", ""), up(20, "1.1.0", "a11", "y"),
+		up(100, "1.1.0", "b11", ""), up(100, "1.2.0", "b12", "x"),
+	}
+	unifyShared(t.Context(), ups, noPolicy)
+	var got []string
+	for _, u := range ups {
+		got = append(got, fmt.Sprintf("%d %s %s %s %s", u.Dep.ChecksumSpan.Start, u.NewVersion, u.NewChecksum, u.Bucket, u.Group))
+	}
+	want := []string{"20 1.1.0 a11  o/t", "20 1.1.0 a11 y o/t", "100 1.1.0 b11  o/t", "100 1.2.0 b12 x o/t"}
+	if !slices.Equal(got, want) {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 func TestGroupUpdatesShared(t *testing.T) {
 	sec := sharedUp("jackson-databind", "2.17.0", dep.Minor, "", "")
 	sec.Advisories = []dep.Advisory{{ID: "GHSA-1"}}

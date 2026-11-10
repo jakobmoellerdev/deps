@@ -882,14 +882,17 @@ func extractFile(root string, jobs []job, idx []int, env manager.Env, ex []extra
 // explicit annotation (or regex match) wins over native extraction, and the first custom
 // manager (in config order) over later ones whose match claims the same version (Renovate
 // configs often add a generic regex next to a specific one), so the same version is never
-// patched twice nor proposed in two PRs.
+// patched twice nor proposed in two PRs. A later custom dep of the same version bytes,
+// datasource and name that pins a digest or checksum of its own (one version, a checksum per
+// platform) shares the version instead (shareCustom).
 func dedupeCovered(ex []extracted) {
 	type seen struct {
-		span dep.Span
-		line int
-		at   int // index in ex
+		d  *dep.Dep
+		at int // index in ex
+		// own are the digest and checksum spans of the deps sharing d's version.
+		own []dep.Span
 	}
-	first := map[string][]seen{}
+	first := map[string][]*seen{}
 	for i := range ex {
 		for j := range ex[i].deps {
 			d := &ex[i].deps[j]
@@ -898,14 +901,20 @@ func dedupeCovered(ex []extracted) {
 			}
 			dup := false
 			for _, s := range first[d.File] {
-				if s.at != i && d.RefSpan.Start < s.span.End && s.span.Start < d.RefSpan.End {
-					d.Skip = fmt.Sprintf("covered by custom match on line %d", s.line)
-					dup = true
-					break
+				if s.at == i || d.RefSpan.Start >= s.d.RefSpan.End || s.d.RefSpan.Start >= d.RefSpan.End {
+					continue
 				}
+				if own := ownSpans(d); shareable(s.d, d, s.own, own) {
+					shareCustom(s.d, d)
+					s.own = append(s.own, own...)
+				} else {
+					d.Skip = fmt.Sprintf("covered by custom match on line %d", s.d.Line)
+				}
+				dup = true
+				break
 			}
 			if !dup {
-				first[d.File] = append(first[d.File], seen{d.RefSpan, d.Line, i})
+				first[d.File] = append(first[d.File], &seen{d: d, at: i, own: ownSpans(d)})
 			}
 		}
 	}
@@ -937,9 +946,6 @@ func dedupeCovered(ex []extracted) {
 	if len(claims) == 0 {
 		return
 	}
-	overlaps := func(a, b dep.Span) bool {
-		return a.End > a.Start && b.End > b.Start && a.Start < b.End && b.Start < a.End
-	}
 	for i := range ex {
 		for j := range ex[i].deps {
 			d := &ex[i].deps[j]
@@ -961,6 +967,50 @@ func dedupeCovered(ex []extracted) {
 			}
 		}
 	}
+}
+
+// overlaps reports whether the non-empty spans a and b share a byte.
+func overlaps(a, b dep.Span) bool {
+	return a.End > a.Start && b.End > b.Start && a.Start < b.End && b.Start < a.End
+}
+
+// ownSpans returns the non-empty digest and checksum spans of d: the bytes it writes besides
+// its version.
+func ownSpans(d *dep.Dep) []dep.Span {
+	var own []dep.Span
+	for _, s := range [2]dep.Span{d.DigestSpan, d.ChecksumSpan} {
+		if s.End > s.Start {
+			own = append(own, s)
+		}
+	}
+	return own
+}
+
+// shareable reports whether the custom dep b may share the version of the earlier custom dep
+// a, whose sharing deps write aOwn besides it: both cover the same version bytes with the same
+// datasource and name, and b writes a digest or checksum (bOwn) none of them writes. Anything
+// else is a duplicate of a.
+func shareable(a, b *dep.Dep, aOwn, bOwn []dep.Span) bool {
+	if a.RefSpan != b.RefSpan || a.Datasource != b.Datasource || a.Name != b.Name || len(bOwn) == 0 {
+		return false
+	}
+	for _, s := range bOwn {
+		for _, t := range aOwn {
+			if overlaps(s, t) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// shareCustom makes the custom deps a and b, of one version, share it: a version definition
+// named after the dep (dep.Dep.VersionRef, so unifyShared gives their updates one version and
+// one PR and Local writes it once) whose deps move only as a whole (dep.Dep.Together, so no
+// digest or checksum moves unless all of them can).
+func shareCustom(a, b *dep.Dep) {
+	a.VersionRef, a.Together = a.Name, true
+	b.VersionRef, b.Together = a.Name, true
 }
 
 // security is the in-flight result of the single SecuritySource call.

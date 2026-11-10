@@ -130,7 +130,7 @@ func TestSummaryRender(t *testing.T) {
 			}}},
 			text: []string{
 				"       3  ignored by rules #56 (2), #51  (a rule sets ignore: true; narrow or remove it)\n" +
-					"       2  covered by custom match  (an earlier custom entry matches the same version; drop the duplicate entry)\n" +
+					"       2  covered by custom match  (an earlier custom entry matches the same version; drop the duplicate entry, or give it that entry's datasource and name to share the version with a checksum of its own)\n" +
 					"       1  covered by custom regex match  (a custom manager updates these bytes instead)\n",
 			},
 			md: []string{"**covered by custom match**\n\n- `a` `f:1` (covered by custom match on line 9)\n- `b` `f:2` (covered by custom match on line 73)\n"},
