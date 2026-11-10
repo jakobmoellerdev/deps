@@ -149,6 +149,11 @@ func windowsOf(c *config.Config) []string {
 	for _, r := range c.Rules {
 		add(r.Schedule)
 	}
+	for _, g := range c.Groups {
+		if g != nil {
+			add(g.Schedule)
+		}
+	}
 	if c.LockFileMaintenance.Enabled {
 		add(c.LockFileMaintenance.Schedule)
 	}
@@ -188,7 +193,7 @@ func toNode(v any) *yaml.Node {
 	case omap:
 		n := &yaml.Node{Kind: yaml.MappingNode}
 		for _, f := range v {
-			n.Content = append(n.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: f.k}, toNode(f.v))
+			n.Content = append(n.Content, toNode(f.k), toNode(f.v))
 		}
 		return n
 	case []item:
@@ -812,6 +817,7 @@ func (t *translator) translate(cfg map[string]any) omap {
 		t.addRule("vulnerabilityAlerts", omap{{"securityGroup", securityGroup}})
 	}
 	t.rules = append(t.rules, t.exclusionRules...)
+	groups := hoistGroupSettings(t.rules)
 
 	for _, k := range slices.Sorted(func(yield func(string) bool) {
 		for k := range cfg {
@@ -834,6 +840,9 @@ func (t *translator) translate(cfg map[string]any) omap {
 	}
 	if len(t.rules) > 0 {
 		doc.set("rules", t.rules)
+	}
+	if len(groups) > 0 {
+		doc.set("groups", groups)
 	}
 	return doc
 }

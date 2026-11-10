@@ -261,11 +261,13 @@ type Config struct {
 	// Dashboard configures the dashboard issue (Renovate's :dependencyDashboard).
 	Dashboard Dashboard `yaml:"dashboard" scope:"run" jsonschema_description:"The dependency dashboard issue."`
 	// Extends names configs of other repositories this file builds on.
-	Extends []string `yaml:"extends" jsonschema_description:"Configs this file builds on, each '<repo>[//<path>][#<ref>]': owner/name of a repository on the same forge (or a git URL: https://, ssh://, file://, user@host:path), the file in it (default .deps.yaml) and a branch, tag or commit (default: its default branch). Their rules come first, so this file's rules override them; this file's other keys replace theirs, custom managers are appended and customDatasources and registryAliases merged by name. Later entries override earlier ones; extended files may extend others, cycles are errors."`
+	Extends []string `yaml:"extends" jsonschema_description:"Configs this file builds on, each '<repo>[//<path>][#<ref>]': owner/name of a repository on the same forge (or a git URL: https://, ssh://, file://, user@host:path), the file in it (default .deps.yaml) and a branch, tag or commit (default: its default branch). Their rules come first, so this file's rules override them; this file's other keys replace theirs, custom managers are appended and customDatasources, registryAliases and groups merged by name. Later entries override earlier ones; extended files may extend others, cycles are errors."`
 	Rules   []Rule   `yaml:"rules" jsonschema_description:"Policy rules, evaluated top to bottom; every set field of a matching rule overrides earlier ones."`
 	Custom  []Custom `yaml:"custom" jsonschema_description:"Custom managers: '# deps: <datasource> <name>' annotations, or RE2 regex managers when match is set."`
 	// CustomDatasources are referenced as datasource custom.<name>.
 	CustomDatasources map[string]CustomDatasource `yaml:"customDatasources" jsonschema_description:"User-defined datasources by name; deps (custom[] entries, annotations, Renovate markers) refer to them as datasource custom.<name>. The version list is fetched once per run."`
+	// Groups are the settings of the PRs of policy groups, by group name.
+	Groups map[string]*GroupSettings `yaml:"groups" jsonschema_description:"Settings per group, by group name: the name a rule sets with group, or a built-in group ('<monorepo> monorepo', ruby, vcpkg). They apply to every update whose policy group is that name after the top level and all rules, so they win over both; security updates follow them like rule settings, apart from schedule and dashboardApproval. pin and rangeStrategy are decided before the group is known and are not accepted. Extended files merge it by group name."`
 	// LockFileMaintenance configures Renovate's lockFileMaintenance: one PR refreshing every
 	// lockfile.
 	LockFileMaintenance LockFileMaintenance `yaml:"lockFileMaintenance" jsonschema_description:"Lock file maintenance: one PR (branch <branchPrefix>lock-file-maintenance) that refreshes every lockfile deps maintains (Cargo.lock, npm-shrinkwrap.json, package-lock.json, pnpm-lock.yaml, yarn.lock, bun.lock, uv.lock, poetry.lock, pdm.lock, Pipfile.lock, Gemfile.lock, composer.lock, Julia manifests, mix.lock, Gleam manifest.toml, pubspec.lock, MODULE.bazel.lock, flake.lock, NuGet packages.lock.json, conda-lock.yml, deno.lock, Gradle lockfiles, .terraform.lock.hcl, pip-compile and uv pip compile output, and the indirect requirements of go.mod with go.sum) to the newest versions the requirements admit, without changing manifests."`
@@ -323,6 +325,32 @@ type Settings struct {
 	minAge    *time.Duration // parsed MinimumReleaseAge; nil = not set
 	abandon   *time.Duration // parsed AbandonmentThreshold; nil = not set
 }
+
+// GroupSettings are the settings of groups.<name>: the Settings of the updates whose policy
+// group is that name, applied after the top level and every rule (Config.policy). Pin and
+// RangeStrategy are pre-policy keys (decided before the group is known) and rejected. The
+// schema documents its keys with generated descriptions (variant "group").
+type GroupSettings struct {
+	Settings `yaml:",inline" jsonschema_variant:"group"`
+
+	source string // the file the entry is written in (Source)
+	line   int    // its line there
+}
+
+// Source returns the file a loaded groups entry is written in (as Rule.Source) and its line
+// there; "" when it was not loaded from a file.
+func (g *GroupSettings) Source() (file string, line int) { return g.source, g.line }
+
+// GroupKeys are the keys groups entries accept: the Settings keys but the pre-policy ones.
+var GroupKeys = func() []string {
+	var out []string
+	for _, f := range keyFields(reflect.TypeFor[Settings]()) {
+		if k := yamlKey(f); !slices.Contains(PrePolicyKeys, k) {
+			out = append(out, k)
+		}
+	}
+	return out
+}()
 
 // NotPendingHours returns prNotPendingHours (default DefaultPRNotPendingHours).
 func (c *Config) NotPendingHours() int {
@@ -388,8 +416,9 @@ const TeamPrefix = "team:"
 // userRe matches forge user and team names.
 var userRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
-// validateSettings checks the settings of the top level (f "") or of a rule (f "rules[i].") and
-// parses their ages, templates and schedule (in the time zone of c).
+// validateSettings checks the settings of the top level (f ""), a rule (f "rules[i].") or a
+// group (f "groups.<name>.") and parses their ages, templates and schedule (in the time zone
+// of c).
 func (s *Settings) validateSettings(f string, c *Config, add addFunc) {
 	for _, e := range []struct {
 		key, v string
@@ -994,7 +1023,8 @@ func (c *Config) Files() []string {
 	return files
 }
 
-// setSources records the file, line and comment of each rule.
+// setSources records the file, line and comment of each rule, and the file and line of each
+// groups entry (the last file setting it, whose entry the merge keeps).
 func (c *Config) setSources(layers []layer) {
 	i := 0
 	for _, ly := range layers {
@@ -1004,6 +1034,13 @@ func (c *Config) setSources(layers []layer) {
 				r.source, r.line, r.comment = ly.display, n.Line, nodeComment(n)
 			}
 			i++
+		}
+		if e := mapValue(ly.root, "groups"); e != nil && e.val.Kind == yaml.MappingNode {
+			for j := 0; j+1 < len(e.val.Content); j += 2 {
+				if g := c.Groups[e.val.Content[j].Value]; g != nil {
+					g.source, g.line = ly.display, e.val.Content[j].Line
+				}
+			}
 		}
 	}
 }
@@ -1134,6 +1171,14 @@ func (c *Config) validate() []*Problem {
 	for i := range c.Rules {
 		c.validateRule(i, add)
 	}
+	if _, ok := c.Groups[""]; ok {
+		add("groups", "a group name must not be empty")
+	}
+	for _, name := range slices.Sorted(maps.Keys(c.Groups)) {
+		if g := c.Groups[name]; g != nil {
+			g.validate("groups."+name+".", c, add)
+		}
+	}
 
 	for i := range c.Custom {
 		c.Custom[i].validate(fmt.Sprintf("custom[%d]", i), c, add)
@@ -1144,6 +1189,17 @@ func (c *Config) validate() []*Problem {
 	}
 	c.GitLabCI.validate(add)
 	return probs
+}
+
+// validate checks the settings of the groups entry f ("groups.<name>."): pin and rangeStrategy
+// are rejected, the rest is checked as the settings of a rule.
+func (g *GroupSettings) validate(f string, c *Config, add addFunc) {
+	for _, e := range []struct{ key, v string }{{"pin", g.Pin}, {"rangeStrategy", g.RangeStrategy}} {
+		if e.v != "" {
+			add(f+e.key, "cannot be set for a group: %s before the group is known; set it in a rule", prePolicyDecided[e.key])
+		}
+	}
+	g.validateSettings(f, c, add)
 }
 
 type addFunc func(field, format string, a ...any)

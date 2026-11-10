@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
@@ -16,6 +17,16 @@ type Monorepo struct {
 
 // MonorepoGroup returns the policy group name of the built-in monorepo name.
 func MonorepoGroup(name string) string { return name + " monorepo" }
+
+// BuiltinGroup reports whether name is the group of a built-in group rule (applied unless
+// builtins.monorepos is false): a MonorepoGroup, RubyGroup or VcpkgGroup.
+func BuiltinGroup(name string) bool {
+	if name == RubyGroup || name == VcpkgGroup {
+		return true
+	}
+	m, ok := strings.CutSuffix(name, " monorepo")
+	return ok && slices.ContainsFunc(Monorepos, func(r Monorepo) bool { return r.Name == m })
+}
 
 // RubyGroup is the built-in group of the Ruby version deps (datasource ruby-version: the
 // Gemfile `ruby` directive, `.ruby-version`, asdf and mise `ruby`), so a Ruby bump moves every

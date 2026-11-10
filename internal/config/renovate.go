@@ -71,7 +71,7 @@ var RenovateOptions = []RenovateOption{
 	{Keys: []string{"replacementName", "replacementVersion"}, Scope: "rules[]", Copy: true,
 		Doc: "same names in `rules`; `replacementNameTemplate` only in the prefix form `{{{replace '<prefix>' '<new prefix>' packageName}}}`, which becomes `rules[].replacementPrefix` and `replacementName`"},
 	{Keys: []string{"groupName"}, Scope: "rules[]", To: "group", Copy: true,
-		Doc: " (`groupSlug` is derived: `slug(group)`)"},
+		Doc: " (`groupSlug` is derived: `slug(group)`); settings shared by the group's rules can go into `groups.<name>` once"},
 	{Keys: []string{"schedule"}, To: "schedule",
 		Doc: " / `rules[].schedule`: Renovate's time windows as written (`before 6am on monday`, `every weekend`, `after 10pm and before 5am every weekday`, `on the first day of the month`, crons with minute `*` like `* 0-5 * * 1`), evaluated against the run time; or crons of the workflow's `on.schedule` triggers (see [behavior differences](../migrating-from-renovate.md#behavior-differences))"},
 	{Keys: []string{"timezone"}, To: "timezone", Copy: true,

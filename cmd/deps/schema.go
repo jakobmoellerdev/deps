@@ -70,6 +70,7 @@ func reflectConfig() (*jsonschema.Schema, error) {
 	}
 	s.Title = "deps configuration (.deps.yaml)"
 	s.ID = schemaURL(version)
+	describeGroupSettings(s)
 	addEnums(s)
 	allowCustomDatasources(s)
 	// postUpgradeTasks also takes a plain list of commands (config.PostUpgradeTasks.UnmarshalYAML).
@@ -162,6 +163,8 @@ func addEnums(s *jsonschema.Schema) {
 	for _, n := range []*jsonschema.Schema{s, rule} {
 		scalar(n, "pin", enumOf(config.Pins))
 		scalar(n, "rangeStrategy", enumOf(config.RangeStrategies))
+	}
+	for _, n := range []*jsonschema.Schema{s, rule, s.Definitions["GroupSettings"]} {
 		scalar(n, "automergeStrategy", enumOf(config.AutomergeStrategies))
 		scalar(n, "automergeType", enumOf(config.AutomergeTypes))
 		scalar(n, "minimumReleaseAgeBehaviour", enumOf(config.MinimumReleaseAgeBehaviours))
@@ -189,6 +192,25 @@ func addEnums(s *jsonschema.Schema) {
 	rule.Properties.Value("versioning").Pattern = versioningPattern
 	custom.Properties.Value("versioning").Pattern = versioningPattern
 	addRuleDepTypes(rule)
+}
+
+// describeGroupSettings completes the definition of groups.<name>, which the reflector leaves
+// without descriptions and defaults (variant "group" of Settings): the keys groups do not
+// accept (pin, rangeStrategy) are removed, and every other key is described as the group's
+// override of the top-level key.
+func describeGroupSettings(s *jsonschema.Schema) {
+	g := s.Definitions["GroupSettings"]
+	var drop []string
+	for key, p := range g.Properties.All() {
+		if !slices.Contains(config.GroupKeys, key) {
+			drop = append(drop, key)
+			continue
+		}
+		p.Description = fmt.Sprintf("Overrides %s for the updates of the group, after the top level and every rule (see the top-level %s).", key, key)
+	}
+	for _, key := range drop {
+		g.Properties.Delete(key)
+	}
 }
 
 // addRuleDepTypes adds one if/then per manager to the Rule definition: when managers lists

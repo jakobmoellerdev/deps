@@ -209,6 +209,25 @@ customDatasources:
   - [`customDatasources.<name>.format`](#customdatasourcesnameformat)
   - [`customDatasources.<name>.versions`](#customdatasourcesnameversions)
   - [`customDatasources.<name>.versionRegex`](#customdatasourcesnameversionregex)
+- [`groups`](#groups)
+  - [`groups.<name>.schedule`](#groupsnameschedule)
+  - [`groups.<name>.additionalBranchPrefix`](#groupsnameadditionalbranchprefix)
+  - [`groups.<name>.minimumReleaseAge`](#groupsnameminimumreleaseage)
+  - [`groups.<name>.minimumReleaseAgeBehaviour`](#groupsnameminimumreleaseagebehaviour)
+  - [`groups.<name>.abandonmentThreshold`](#groupsnameabandonmentthreshold)
+  - [`groups.<name>.separate`](#groupsnameseparate)
+  - [`groups.<name>.automerge`](#groupsnameautomerge)
+  - [`groups.<name>.automergeStrategy`](#groupsnameautomergestrategy)
+  - [`groups.<name>.automergeType`](#groupsnameautomergetype)
+  - [`groups.<name>.draftPR`](#groupsnamedraftpr)
+  - [`groups.<name>.prCreation`](#groupsnameprcreation)
+  - [`groups.<name>.labels`](#groupsnamelabels)
+  - [`groups.<name>.reviewers`](#groupsnamereviewers)
+  - [`groups.<name>.assignees`](#groupsnameassignees)
+  - [`groups.<name>.prTitle`](#groupsnameprtitle)
+  - [`groups.<name>.prHeader`](#groupsnameprheader)
+  - [`groups.<name>.prFooter`](#groupsnameprfooter)
+  - [`groups.<name>.dashboardApproval`](#groupsnamedashboardapproval)
 - [`lockFileMaintenance`](#lockfilemaintenance)
   - [`lockFileMaintenance.enabled`](#lockfilemaintenanceenabled)
   - [`lockFileMaintenance.schedule`](#lockfilemaintenanceschedule)
@@ -1174,7 +1193,7 @@ Each label must be non-blank and must not contain `,`. GitHub and GitLab create 
 
 ## `extends`
 
-Configs this file builds on, each `<repo>[//<path>][#<ref>]`: owner/name of a repository on the same forge (or a git URL: https://, ssh://, file://, user@host:path), the file in it (default .deps.yaml) and a branch, tag or commit (default: its default branch). Their rules come first, so this file's rules override them; this file's other keys replace theirs, custom managers are appended and customDatasources and registryAliases merged by name. Later entries override earlier ones; extended files may extend others, cycles are errors.
+Configs this file builds on, each `<repo>[//<path>][#<ref>]`: owner/name of a repository on the same forge (or a git URL: https://, ssh://, file://, user@host:path), the file in it (default .deps.yaml) and a branch, tag or commit (default: its default branch). Their rules come first, so this file's rules override them; this file's other keys replace theirs, custom managers are appended and customDatasources, registryAliases and groups merged by name. Later entries override earlier ones; extended files may extend others, cycles are errors.
 
 - **Type:** list of strings
 
@@ -1216,7 +1235,8 @@ A rule has two groups of fields:
 3. **Built-in monorepo groups** set `group: <name> monorepo`, the Ruby version deps `group: ruby` and the vcpkg deps `group: vcpkg` (unless [`builtins.monorepos: false`](#builtinsmonorepos)).
 4. **Pre-policy.** Rules *without* `updateTypes` are evaluated top to bottom. Together they decide `ignore`, `pin`, `versioning`, and whether the dep is looked up at all. An ignored dep is skipped as `ignored by rule #<i>`. When a [`currentAge`](#rulescurrentage) rule can match, this waits for the release time of the current version.
 5. **Per-type policy.** Once a candidate's type is known, *all* rules are evaluated again in file order, and rules with `updateTypes` participate when they list that type. The candidate is accepted when that policy does not ignore it, its type is in `allowedUpdateTypes`, and it satisfies `allow`. Otherwise the next candidate of the bucket is tried, so ignoring indirect majors keeps their minor and patch updates. Rejections read `ignored by rule #<i> for <type>`, `update type <type> not allowed` or `outside allow <allow>`.
-6. The chosen update takes `group`, `schedule`, `commitType`, `commitScope`, `prTitle`, `prHeader`, `prFooter`, `automerge`, `automergeStrategy` and `postUpgradeTasks` from the policy of its type. Security updates take only `securityGroup`, the commit scope, the PR templates, the automerge settings and `postUpgradeTasks`.
+6. **Group settings.** When the resulting policy (pre-policy or per-type) has a `group` with an entry in [`groups`](#groups), the keys the entry sets override it last, after every rule.
+7. The chosen update takes `group`, `schedule`, `commitType`, `commitScope`, `prTitle`, `prHeader`, `prFooter`, `automerge`, `automergeStrategy` and `postUpgradeTasks` from the policy of its type. Security updates take only `securityGroup`, the commit scope, the PR templates, the automerge settings and `postUpgradeTasks`.
 
 `updateTypes: [patch]` together with `ignore: false` opts a default-ignored or ignored dep in for those types only. `deps explain <name>` prints the matching rules, each as `match: <fields>; apply: <fields>`, and the resulting policy of a dep.
 
@@ -1577,6 +1597,7 @@ Group name: all deps with the same group share one PR.
 - **Commit type in groups.** A group uses `fix` if any member's type is `fix`, else the first member's type. It always uses the first member's scope and [PR templates](#prtitle).
 - Built-in [monorepo groups](#builtinsmonorepos) are overridden by any rule that sets `group`.
 - Security updates are not members (except of a shared version definition, which cannot be split); [`securityGroup`](#rulessecuritygroup) groups them apart.
+- **Settings** shared by the group's PR (schedule, labels, automerge, …) are written once in [`groups`](#groups) instead of on every rule setting the group.
 
 ### `rules[].securityGroup`
 
@@ -1974,6 +1995,152 @@ Examples: `.releases[].version`, `.releases | keys`, `[].tag_name`.
 RE2 regexp the selected values must match; its (?P\<version>) group, else the whole match, is the version (e.g. `^v?(?P<version>\d+\.\d+\.\d+)$` strips a leading v).
 
 - **Type:** string
+
+## `groups`
+
+Settings per group, by group name: the name a rule sets with group, or a built-in group (`<monorepo> monorepo`, ruby, vcpkg). They apply to every update whose policy group is that name after the top level and all rules, so they win over both; security updates follow them like rule settings, apart from schedule and dashboardApproval. pin and rangeStrategy are decided before the group is known and are not accepted. Extended files merge it by group name.
+
+- **Type:** map of name → object
+
+The settings of a group's PR, written once instead of on every rule that sets the group (as Dependabot's `groups.<name>`; Renovate repeats them in every `packageRules` entry with the `groupName`).
+
+```yaml
+rules:
+  - managers: [gomod]
+    names: ['k8s.io/**', 'sigs.k8s.io/**']
+    group: k8s
+  - managers: [custom]
+    names: [envtest]
+    group: k8s
+groups:
+  k8s:
+    schedule: ['0 0 * * 0']
+    labels: [kubernetes]
+  kubernetes monorepo:            # a built-in group
+    automerge: true
+```
+
+- **Which updates.** An entry applies to every policy whose group is its name: the `group` of the last matching rule that sets one ([`rules[].group`](#rulesgroup)), else a built-in group ([monorepo groups](#builtinsmonorepos) `<name> monorepo`, `ruby`, `vcpkg`). A rule with `updateTypes` that sets `group` puts only the updates of those types into the group, so only they get its settings.
+- **Precedence: top level < rules < groups.** The keys an entry sets override the top level and every matching rule, also rules written after the one that set the group: with a rule `{group: k8s, automerge: false}` and `groups: {k8s: {automerge: true}}` the group's updates automerge. To vary a key inside a group (per update type, say), set it in rules and leave it out of the entry.
+- **Keys** are the settings rules take apart from the pre-policy ones: `schedule`, `additionalBranchPrefix`, the release age keys, `separate`, the `automerge*` keys, `draftPR`, `prCreation`, `labels`, `reviewers`, `assignees`, the PR templates and `dashboardApproval`, with the values and errors of the top-level keys. `pin` and `rangeStrategy` are decided before the group is known and are errors (`groups.<name>.pin: cannot be set for a group: …`); match fields and the other rule keys (`ignore`, `allow`, `group`, `addLabels`, …) are unknown keys.
+- **Security updates** are no members of the group's PR, but take the policy of their type like any update, group settings included, apart from `schedule`, `group` and `dashboardApproval` (see [`securityGroup`](#rulessecuritygroup)); a `securityGroup` name selects no entry.
+- **Warnings.** An entry whose name no rule sets as `group` and no built-in group has (none with [`builtins.monorepos: false`](#builtinsmonorepos)) is a config warning: `warn    .deps.yaml: groups.k8: no rule sets group "k8", so its settings apply to nothing`.
+- **extends** merges `groups` by name: an entry replaces the extended files' entry of the same name as a whole.
+- `deps explain` prints the applied entry on a `group` line with its keys and file: `group     k8s settings: schedule=[0 0 * * 0] labels=[kubernetes] (from .deps.yaml:13)`.
+- `deps migrate` and `--renovate` move a setting into `groups` when every rule (at least two) with that `groupName` sets it to the same value and moving it changes no policy.
+
+### `groups.<name>.schedule`
+
+Overrides schedule for the updates of the group, after the top level and every rule (see the top-level schedule).
+
+- **Type:** list of strings
+
+### `groups.<name>.additionalBranchPrefix`
+
+Overrides additionalBranchPrefix for the updates of the group, after the top level and every rule (see the top-level additionalBranchPrefix).
+
+- **Type:** string
+
+### `groups.<name>.minimumReleaseAge`
+
+Overrides minimumReleaseAge for the updates of the group, after the top level and every rule (see the top-level minimumReleaseAge).
+
+- **Type:** string
+
+### `groups.<name>.minimumReleaseAgeBehaviour`
+
+Overrides minimumReleaseAgeBehaviour for the updates of the group, after the top level and every rule (see the top-level minimumReleaseAgeBehaviour).
+
+- **Type:** string
+- **Values:** `timestamp-optional`, `timestamp-required`
+
+### `groups.<name>.abandonmentThreshold`
+
+Overrides abandonmentThreshold for the updates of the group, after the top level and every rule (see the top-level abandonmentThreshold).
+
+- **Type:** string
+
+### `groups.<name>.separate`
+
+Overrides separate for the updates of the group, after the top level and every rule (see the top-level separate).
+
+- **Type:** string
+- **Values:** `none`, `major`, `majors`, `minor-patch`, `majors-minor-patch`
+
+### `groups.<name>.automerge`
+
+Overrides automerge for the updates of the group, after the top level and every rule (see the top-level automerge).
+
+- **Type:** boolean
+
+### `groups.<name>.automergeStrategy`
+
+Overrides automergeStrategy for the updates of the group, after the top level and every rule (see the top-level automergeStrategy).
+
+- **Type:** string
+- **Values:** `auto`, `merge`, `squash`, `rebase`
+
+### `groups.<name>.automergeType`
+
+Overrides automergeType for the updates of the group, after the top level and every rule (see the top-level automergeType).
+
+- **Type:** string
+- **Values:** `pr`, `branch`
+
+### `groups.<name>.draftPR`
+
+Overrides draftPR for the updates of the group, after the top level and every rule (see the top-level draftPR).
+
+- **Type:** boolean
+
+### `groups.<name>.prCreation`
+
+Overrides prCreation for the updates of the group, after the top level and every rule (see the top-level prCreation).
+
+- **Type:** string
+- **Values:** `immediate`, `not-pending`, `status-success`, `approval`
+
+### `groups.<name>.labels`
+
+Overrides labels for the updates of the group, after the top level and every rule (see the top-level labels).
+
+- **Type:** list of strings
+
+### `groups.<name>.reviewers`
+
+Overrides reviewers for the updates of the group, after the top level and every rule (see the top-level reviewers).
+
+- **Type:** list of strings
+
+### `groups.<name>.assignees`
+
+Overrides assignees for the updates of the group, after the top level and every rule (see the top-level assignees).
+
+- **Type:** list of strings
+
+### `groups.<name>.prTitle`
+
+Overrides prTitle for the updates of the group, after the top level and every rule (see the top-level prTitle).
+
+- **Type:** string
+
+### `groups.<name>.prHeader`
+
+Overrides prHeader for the updates of the group, after the top level and every rule (see the top-level prHeader).
+
+- **Type:** string
+
+### `groups.<name>.prFooter`
+
+Overrides prFooter for the updates of the group, after the top level and every rule (see the top-level prFooter).
+
+- **Type:** string
+
+### `groups.<name>.dashboardApproval`
+
+Overrides dashboardApproval for the updates of the group, after the top level and every rule (see the top-level dashboardApproval).
+
+- **Type:** boolean
 
 ## `lockFileMaintenance`
 

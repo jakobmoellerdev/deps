@@ -31,7 +31,7 @@ Renovate's options and their `.deps.yaml` equivalents. `deps migrate`, `deps ini
 | `versioning` | `rules[].versioning` (`semver`, `loose`, `maven`, `ivy`, `ruby`, `nuget`, `hex`, `nixpkgs`, `regex:…`, plus deps' `tag`, `go`, `docker`) |
 | `extractVersion` | `rules[].extractVersion`, marker `extractVersion=` (RE2 with a `version` group, same syntax) |
 | `replacementName`, `replacementVersion` | same names in `rules`; `replacementNameTemplate` only in the prefix form `{{{replace '<prefix>' '<new prefix>' packageName}}}`, which becomes `rules[].replacementPrefix` and `replacementName` |
-| `groupName` | `rules[].group` (`groupSlug` is derived: `slug(group)`) |
+| `groupName` | `rules[].group` (`groupSlug` is derived: `slug(group)`); settings shared by the group's rules can go into `groups.<name>` once |
 | `schedule` | `schedule` / `rules[].schedule`: Renovate's time windows as written (`before 6am on monday`, `every weekend`, `after 10pm and before 5am every weekday`, `on the first day of the month`, crons with minute `*` like `* 0-5 * * 1`), evaluated against the run time; or crons of the workflow's `on.schedule` triggers (see [behavior differences](../migrating-from-renovate.md#behavior-differences)) |
 | `timezone` | `timezone` (IANA name; applies to time windows, not to cron triggers) |
 | `updateNotScheduled` | `updateNotScheduled` |

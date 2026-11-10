@@ -149,6 +149,7 @@ var scopes = map[reflect.Type]string{
 	reflect.TypeFor[PostUpgradeTasks](): "rules[].postUpgradeTasks",
 	reflect.TypeFor[Custom]():           "custom[]",
 	reflect.TypeFor[CustomDatasource](): "customDatasources.<name>",
+	reflect.TypeFor[GroupSettings]():    "groups.<name>",
 }
 
 func (d *decoder) add(line, col int, field, format string, a ...any) {
@@ -308,7 +309,7 @@ func (d *decoder) unknownKey(k *yaml.Node, t reflect.Type, parent string, fields
 		msg += " (moved to " + to + ")"
 	} else if h := renovateHint(k.Value, scope); h != "" {
 		msg += " (" + h + ")"
-	} else if t == reflect.TypeFor[Config]() && slices.ContainsFunc(d.structFields(reflect.TypeFor[Rule]()), func(f structField) bool { return f.name == k.Value }) {
+	} else if (t == reflect.TypeFor[Config]() || t == reflect.TypeFor[GroupSettings]()) && slices.ContainsFunc(d.structFields(reflect.TypeFor[Rule]()), func(f structField) bool { return f.name == k.Value }) {
 		msg += " (" + k.Value + " is a key of rules[] entries)"
 	} else if s := renamedKeys[k.Value]; t == reflect.TypeFor[Rule]() && s != "" {
 		msg += " (did you mean " + s + "?)"

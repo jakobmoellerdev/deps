@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json/v2"
+	"maps"
 	"reflect"
 	"regexp"
 	"slices"
@@ -60,11 +61,11 @@ func TestSchema(t *testing.T) {
 		t.Errorf("$schema %q $id %q type %q", s.Schema, s.ID, s.Type)
 	}
 	rule, custom, actions, customDS, lfm := s.Defs["Rule"], s.Defs["Custom"], s.Defs["Actions"], s.Defs["CustomDatasource"], s.Defs["LockFileMaintenance"]
-	git, dashboard, gomod, composer := s.Defs["Git"], s.Defs["Dashboard"], s.Defs["Gomod"], s.Defs["Composer"]
-	if rule == nil || custom == nil || actions == nil || customDS == nil || lfm == nil || git == nil || dashboard == nil || gomod == nil || composer == nil {
+	git, dashboard, gomod, composer, group := s.Defs["Git"], s.Defs["Dashboard"], s.Defs["Gomod"], s.Defs["Composer"], s.Defs["GroupSettings"]
+	if rule == nil || custom == nil || actions == nil || customDS == nil || lfm == nil || git == nil || dashboard == nil || gomod == nil || composer == nil || group == nil {
 		t.Fatalf("$defs = %v", s.Defs)
 	}
-	for name, n := range map[string]*schemaNode{"root": &s, "Rule": rule, "Custom": custom, "Actions": actions, "CustomDatasource": customDS, "LockFileMaintenance": lfm, "Git": git, "Dashboard": dashboard, "Gomod": gomod, "Composer": composer} {
+	for name, n := range map[string]*schemaNode{"root": &s, "Rule": rule, "Custom": custom, "Actions": actions, "CustomDatasource": customDS, "LockFileMaintenance": lfm, "Git": git, "Dashboard": dashboard, "Gomod": gomod, "Composer": composer, "GroupSettings": group} {
 		if n.AdditionalProperties != false {
 			t.Errorf("%s: additionalProperties must be false", name)
 		}
@@ -120,6 +121,8 @@ func TestSchema(t *testing.T) {
 		{"rules.automergeType", rule.Properties["automergeType"], config.AutomergeTypes},
 		{"separate", s.Properties["separate"], config.Separations},
 		{"rules.separate", rule.Properties["separate"], config.Separations},
+		{"groups.automergeType", group.Properties["automergeType"], config.AutomergeTypes},
+		{"groups.prCreation", group.Properties["prCreation"], config.PRCreations},
 	}
 	for _, e := range enums {
 		if got := strs(e.got.Enum); !slices.Equal(got, e.want) {
@@ -161,7 +164,7 @@ func TestSchema(t *testing.T) {
 	}
 	if want := []string{"version", "pin", "rangeStrategy", "schedule", "timezone", "branchPrefix", "baseBranches", "additionalBranchPrefix", "useBaseBranchConfig", "rebaseWhen", "builtins", "git", "prConcurrentLimit", "prHourlyLimit", "actions", "terraform", "gomod", "gitlabci", "composer", "minimumReleaseAge", "minimumReleaseAgeBehaviour", "abandonmentThreshold", "ignorePaths",
 		"separate", "updateNotScheduled", "automerge", "automergeStrategy", "automergeType", "draftPR", "prCreation", "prNotPendingHours", "labels", "reviewers", "assignees", "prTitle", "prHeader", "prFooter", "rebaseLabel", "stopUpdatingLabel",
-		"dashboard", "dashboardApproval", "extends", "rules", "custom", "customDatasources", "registryAliases", "lockFileMaintenance"}; len(s.Properties) != len(want) {
+		"dashboard", "dashboardApproval", "extends", "rules", "custom", "customDatasources", "groups", "registryAliases", "lockFileMaintenance"}; len(s.Properties) != len(want) {
 		t.Errorf("root properties = %d, want %v", len(s.Properties), want)
 	} else {
 		for _, k := range want {
@@ -176,6 +179,20 @@ func TestSchema(t *testing.T) {
 	}
 	if !slices.Equal(customDS.Required, []string{"url"}) || customDS.Properties["format"].Default != "json" || customDS.Properties["versions"].Default != customds.DefaultVersions {
 		t.Errorf("CustomDatasource required %v, defaults %v %v", customDS.Required, customDS.Properties["format"].Default, customDS.Properties["versions"].Default)
+	}
+	// groups.<name> takes the settings but the pre-policy keys, with no defaults of its own.
+	if gs := s.Properties["groups"]; gs == nil {
+		t.Error("root lacks groups")
+	} else if ap, _ := gs.AdditionalProperties.(map[string]any); gs.Type != "object" || ap["$ref"] != "#/$defs/GroupSettings" {
+		t.Errorf("groups = %+v", gs)
+	}
+	if len(group.Properties) != len(config.GroupKeys) || group.Properties["pin"] != nil || group.Properties["rangeStrategy"] != nil || group.Properties["schedule"] == nil {
+		t.Errorf("GroupSettings properties = %v, want %v", slices.Sorted(maps.Keys(group.Properties)), config.GroupKeys)
+	}
+	for k, p := range group.Properties {
+		if p.Default != nil {
+			t.Errorf("groups.<name>.%s has default %v", k, p.Default)
+		}
 	}
 	if s.Properties["rules"].Items.Ref != "#/$defs/Rule" || s.Properties["custom"].Items.Ref != "#/$defs/Custom" || s.Properties["actions"].Ref != "#/$defs/Actions" ||
 		s.Properties["lockFileMaintenance"].Ref != "#/$defs/LockFileMaintenance" || s.Properties["git"].Ref != "#/$defs/Git" || s.Properties["dashboard"].Ref != "#/$defs/Dashboard" ||

@@ -3,6 +3,7 @@ package config
 import (
 	"cmp"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"strings"
@@ -67,14 +68,35 @@ func yamlKey(f reflect.StructField) string {
 }
 
 // Lint reports the parts of a validated configuration that cannot have an effect, without
-// looking at the repository: rules that set no apply field, and match fields no dep can
-// satisfy together (a dep type no listed manager produces, a datasource no listed manager or
-// dep type uses). Rules that match no dep of the repository are a run-time finding
-// (UnusedRules).
+// looking at the repository: rules that set no apply field, match fields no dep can satisfy
+// together (a dep type no listed manager produces, a datasource no listed manager or dep type
+// uses), and groups entries no policy group has (no rule sets the group, and no built-in group
+// rule applying has the name). Rules that match no dep of the repository are a run-time
+// finding (UnusedRules).
 func (c *Config) Lint() []Warning {
 	ws := make([]Warning, 0, len(c.Rules))
 	for i := range c.Rules {
 		ws = append(ws, c.Rules[i].lint(fmt.Sprintf("rules[%d]", i))...)
+	}
+	return append(ws, c.lintGroups()...)
+}
+
+// lintGroups reports the groups entries whose name is no group a policy can have.
+func (c *Config) lintGroups() []Warning {
+	var ws []Warning
+	for _, name := range slices.Sorted(maps.Keys(c.Groups)) {
+		builtin := BuiltinGroup(name)
+		if name == "" || (builtin && c.MonoreposEnabled()) || slices.ContainsFunc(c.Rules, func(r Rule) bool { return r.Group == name }) {
+			continue
+		}
+		msg := fmt.Sprintf("no rule sets group %q, so its settings apply to nothing", name)
+		switch {
+		case builtin:
+			msg = fmt.Sprintf("no rule sets group %q and the built-in groups are off (builtins.monorepos: false), so its settings apply to nothing", name)
+		case slices.ContainsFunc(c.Rules, func(r Rule) bool { return r.SecurityGroup == name }):
+			msg += " (a securityGroup names no groups entry: security updates follow the entry of their dep's group)"
+		}
+		ws = append(ws, Warning{"groups." + name, msg})
 	}
 	return ws
 }

@@ -206,7 +206,7 @@ func writeTrace(w io.Writer, cfg *config.Config, t engine.Trace) {
 			label = "rules"
 		}
 		desc := describeRule(cfg.Rules[r])
-		if from := ruleSource(&cfg.Rules[r]); from != "" {
+		if from := sourceOf(&cfg.Rules[r]); from != "" {
 			desc += " (" + from + ")"
 		}
 		line(label, "#%d %s", r, desc)
@@ -217,10 +217,30 @@ func writeTrace(w io.Writer, cfg *config.Config, t engine.Trace) {
 			label = "rules"
 		}
 		applies := "applies to " + string(kr.kind)
-		if from := ruleSource(&cfg.Rules[kr.rule]); from != "" {
+		if from := sourceOf(&cfg.Rules[kr.rule]); from != "" {
 			applies += ", " + from
 		}
 		line(label, "#%d %s (%s)", kr.rule, describeRule(cfg.Rules[kr.rule]), applies)
+	}
+	// The groups entries applied after the rules: the pre-policy's, then those of the per-type
+	// policies, once per group.
+	var groups []string
+	addGroup := func(p *config.Policy) {
+		if p.GroupSettings && !slices.Contains(groups, p.Group) {
+			groups = append(groups, p.Group)
+		}
+	}
+	addGroup(&t.Policy)
+	for _, tu := range t.Updates {
+		addGroup(tu.Policy)
+	}
+	for _, name := range groups {
+		g := cfg.Groups[name]
+		desc := describeGroup(g)
+		if from := sourceOf(g); from != "" {
+			desc += " (" + from + ")"
+		}
+		line("group", "%s settings: %s", name, desc)
 	}
 	line("policy", "%s", describePolicy(t.Policy))
 	for _, kp := range kindPolicies {
@@ -257,14 +277,26 @@ func writeTrace(w io.Writer, cfg *config.Config, t engine.Trace) {
 	}
 }
 
-// ruleSource renders the file and line a rule is written in ("from .deps.yaml:12", or the
-// extends entry of another repository's file), "" when it is unknown.
-func ruleSource(r *config.Rule) string {
-	file, line := r.Source()
+// sourceOf renders the file and line a rule or groups entry is written in ("from
+// .deps.yaml:12", or the extends entry of another repository's file), "" when it is unknown.
+func sourceOf(s interface{ Source() (string, int) }) string {
+	file, line := s.Source()
 	if file == "" {
 		return ""
 	}
 	return fmt.Sprintf("from %s:%d", file, line)
+}
+
+// describeGroup lists the keys a groups entry sets, in declaration order ("nothing" when it
+// sets none).
+func describeGroup(g *config.GroupSettings) string {
+	var set []string
+	walkRuleFields(reflect.ValueOf(g).Elem(), func(k string, v reflect.Value) {
+		if s, ok := describeRuleValue(k, v); ok {
+			set = append(set, k+"="+s)
+		}
+	})
+	return cmp.Or(strings.Join(set, " "), "nothing")
 }
 
 // describeRule lists the fields a rule sets in two groups, in declaration order: the match

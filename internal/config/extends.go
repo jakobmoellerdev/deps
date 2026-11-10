@@ -402,7 +402,7 @@ func mapValue(n *yaml.Node, key string) *mapEntry {
 // extended files first; mapKeys are merged by key, later files replacing entries.
 var (
 	listKeys = []string{"rules", "custom"}
-	mapKeys  = []string{"customDatasources", "registryAliases"}
+	mapKeys  = []string{"customDatasources", "registryAliases", "groups"}
 )
 
 // merge combines the layers into one document: a later file's top-level keys replace an
@@ -475,7 +475,8 @@ func (c *Config) Document() *yaml.Node {
 
 // KeyFile returns the file the top-level key of the configuration comes from: the config
 // file (Path), the name of an extended file (Extend.String()), or "" when no file sets it. Of
-// the keys several files merge (rules, custom, customDatasources, registryAliases), it is the last such file.
+// the keys several files merge (rules, custom, customDatasources, registryAliases, groups), it
+// is the last such file.
 func (c *Config) KeyFile(key string) string {
 	for _, ly := range slices.Backward(c.layers) {
 		if mapValue(ly.root, key) != nil {

@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"fmt"
 	"maps"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -714,6 +715,223 @@ func appendNew(l []string, s string) []string {
 		return l
 	}
 	return append(l, s)
+}
+
+// get returns the value of key k of m.
+func (m omap) get(k string) (any, bool) {
+	for _, f := range m {
+		if f.k == k {
+			return f.v, true
+		}
+	}
+	return nil, false
+}
+
+// groupOf returns the group a translated rule sets, "" for none.
+func groupOf(it item) string {
+	v, _ := it.body.get("group")
+	s, _ := v.(string)
+	return s
+}
+
+// hoistGroupSettings moves the settings the rules of a group share into groups.<group>: a key
+// (config.GroupKeys) every rule setting the group, at least two, sets to one value. groups
+// entries apply after every rule (config.Policy), so a key moves only when that changes no
+// policy (hoistable); groups of built-in names are left alone, as built-in group rules give
+// them deps no rule names. It returns the groups mapping, in the order the groups first
+// appear, nil when nothing moved; the moved keys are removed from rules.
+func hoistGroupSettings(rules []item) omap {
+	var names []string
+	count := map[string]int{}
+	for _, it := range rules {
+		g := groupOf(it)
+		if g == "" {
+			continue
+		}
+		if count[g] == 0 {
+			names = append(names, g)
+		}
+		count[g]++
+	}
+	moved := map[string]omap{}
+	for _, k := range effectOrder {
+		if !slices.Contains(config.GroupKeys, k) {
+			continue
+		}
+		shared := map[string]any{}
+		for _, g := range names {
+			if count[g] < 2 || config.BuiltinGroup(g) {
+				continue
+			}
+			if v, ok := sharedValue(rules, g, k); ok {
+				shared[g] = v
+			}
+		}
+		// Dropping a group can make another one unhoistable; the greatest set that holds is
+		// the same in any order.
+		for changed := true; changed; {
+			changed = false
+			for g, v := range shared {
+				if !hoistable(rules, g, k, v, shared) {
+					delete(shared, g)
+					changed = true
+				}
+			}
+		}
+		for g, v := range shared {
+			moved[g] = append(moved[g], field{k, v})
+		}
+	}
+	var out omap
+	for _, g := range names {
+		if len(moved[g]) == 0 {
+			continue
+		}
+		out.set(g, moved[g])
+		for i, it := range rules {
+			if groupOf(it) == g {
+				rules[i].body = slices.DeleteFunc(slices.Clone(it.body), func(f field) bool {
+					_, ok := moved[g].get(f.k)
+					return ok
+				})
+			}
+		}
+	}
+	return out
+}
+
+// sharedValue returns the value every rule setting group g sets key k to; false when one
+// does not set it, two differ, or (for labels) one adds labels after setting them.
+func sharedValue(rules []item, g, k string) (any, bool) {
+	var shared any
+	found := false
+	for _, it := range rules {
+		if groupOf(it) != g {
+			continue
+		}
+		v, ok := it.body.get(k)
+		if _, adds := it.body.get("addLabels"); !ok || (k == "labels" && adds) || (found && !reflect.DeepEqual(v, shared)) {
+			return nil, false
+		}
+		shared, found = v, true
+	}
+	return shared, found
+}
+
+// hoistable reports whether moving key k (value v) from the rules of group g into groups.<g>
+// keeps every policy, given that the groups in shared move it too. A dep whose policy has
+// group g got it from a rule of g, which set v: it keeps v unless a later rule matching it
+// sets k to another value (or adds labels), which groups.<g> would now override. A dep a rule
+// of g matched keeps its value unless a later rule moves it to a group that does not move k
+// and does not set it itself, as groups.<g> no longer applies to it. Rules that cannot match
+// the same dep as an earlier rule of g (disjoint) do neither.
+func hoistable(rules []item, g, k string, v any, shared map[string]any) bool {
+	for j, it := range rules {
+		w, sets := it.body.get(k)
+		var conflict bool
+		switch h := groupOf(it); {
+		case h == g:
+			continue
+		case h != "":
+			_, moves := shared[h]
+			conflict = !moves && !sets
+		default:
+			_, adds := it.body.get("addLabels")
+			conflict = (sets && !reflect.DeepEqual(w, v)) || (adds && k == "labels")
+		}
+		if conflict && slices.ContainsFunc(rules[:j], func(e item) bool { return groupOf(e) == g && !disjoint(e.body, it.body) }) {
+			return false
+		}
+	}
+	return true
+}
+
+// disjoint reports whether no update can match both translated rules a and b: a match field
+// both set without a common value (managers, depTypes, datasources, updateTypes), or names no
+// name matches in both (namesDisjoint). False when it cannot tell.
+func disjoint(a, b omap) bool {
+	for _, k := range []string{"managers", "depTypes", "datasources", "updateTypes"} {
+		x, okA := strList(a, k)
+		y, okB := strList(b, k)
+		if k == "datasources" {
+			x, y = canonicalDatasources(x), canonicalDatasources(y)
+		}
+		if okA && okB && !slices.ContainsFunc(x, func(s string) bool { return slices.Contains(y, s) }) {
+			return true
+		}
+	}
+	x, okA := strList(a, "names")
+	y, okB := strList(b, "names")
+	return okA && okB && namesDisjoint(x, y)
+}
+
+// strList returns the string list of key k of m.
+func strList(m omap, k string) ([]string, bool) {
+	v, ok := m.get(k)
+	if !ok {
+		return nil, false
+	}
+	if l, ok := v.([]string); ok {
+		return l, true
+	}
+	return strs(v)
+}
+
+func canonicalDatasources(l []string) []string {
+	out := make([]string, len(l))
+	for i, ds := range l {
+		out[i] = config.CanonicalDatasource(ds)
+	}
+	return out
+}
+
+// namesDisjoint reports whether no name matches both names lists (rules[].names): each list
+// has entries other than exclusions, which only narrow a list, and every such entry of one
+// is disjoint from every one of the other. Two literal names are when they differ (names
+// compare case-insensitively), a literal name and a glob when the glob does not match it, and
+// two globs when neither literal prefix (up to the first metacharacter) starts the other.
+// Regexes are never known to be disjoint.
+func namesDisjoint(x, y []string) bool {
+	positive := func(l []string) []string {
+		return slices.DeleteFunc(slices.Clone(l), func(e string) bool { return strings.HasPrefix(e, "!") })
+	}
+	px, py := positive(x), positive(y)
+	if len(px) == 0 || len(py) == 0 {
+		return false
+	}
+	for _, a := range px {
+		for _, b := range py {
+			if !globsDisjoint(a, b) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// globsDisjoint reports whether no name matches both names entries a and b (namesDisjoint).
+func globsDisjoint(a, b string) bool {
+	if _, _, re := pattern.Regex(a); re {
+		return false
+	}
+	if _, _, re := pattern.Regex(b); re {
+		return false
+	}
+	const meta = `*?[]{}\`
+	litA, litB := !strings.ContainsAny(a, meta), !strings.ContainsAny(b, meta)
+	switch {
+	case litA && litB:
+		return !strings.EqualFold(a, b)
+	case litA || litB:
+		lit, glob := a, b
+		if litB {
+			lit, glob = b, a
+		}
+		l, err := pattern.Compile([]string{glob})
+		return err == nil && !l.Match(lit)
+	}
+	pa, pb := strings.ToLower(a[:strings.IndexAny(a, meta)]), strings.ToLower(b[:strings.IndexAny(b, meta)])
+	return !strings.HasPrefix(pa, pb) && !strings.HasPrefix(pb, pa)
 }
 
 // exclusions computes the rules for managers Renovate does not run (enabledManagers,

@@ -387,6 +387,51 @@ func TestWriteTrace(t *testing.T) {
 	}
 }
 
+// The groups entries applied to the pre-policy and per-type policies are listed once each,
+// after the rules, with the keys they set and where they are written.
+func TestWriteTraceGroupSettings(t *testing.T) {
+	cfg, err := config.Parse([]byte(`rules:
+  - managers: [gomod]
+    group: go
+    automerge: false
+  - managers: [gomod]
+    updateTypes: [major]
+    group: go-major
+groups:
+  go:
+    schedule: ['0 5 * * 1']
+    automerge: true
+  go-major:
+    labels: [major]
+`), "deps.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := dep.Dep{Manager: "gomod", DepType: "direct", Datasource: "go", Versioning: "go", File: "go.mod", Line: 3, Name: "example.com/m", Version: "v1.0.0"}
+	pre, minor, major := cfg.Policy(d), cfg.PolicyFor(d, dep.Minor), cfg.PolicyFor(d, dep.Major)
+	var b strings.Builder
+	writeTrace(&b, cfg, engine.Trace{Dep: d, Rules: pre.Rules, Policy: pre, Updates: []engine.TraceUpdate{
+		{Policy: &minor, Update: dep.Update{Dep: d, Type: dep.Minor, NewVersion: "v1.1.0"}},
+		{Policy: &major, Update: dep.Update{Dep: d, Type: dep.Major, NewVersion: "v2.0.0"}},
+	}})
+	want := `example.com/m  go.mod:3  (gomod, direct, go, go)
+  current   v1.0.0
+  rules     #0 match: managers=[gomod]; apply: automerge=false group=go (from deps.yaml:2)
+            #1 match: managers=[gomod] updateTypes=[major]; apply: group=go-major (applies to major, from deps.yaml:5)
+  group     go settings: schedule=[0 5 * * 1] automerge=true (from deps.yaml:9)
+  group     go-major settings: labels=[major] (from deps.yaml:12)
+  policy    pin=keep allow=- allowedUpdateTypes=major,minor,patch,digest,pin group=go schedule=0 5 * * 1 minAge=- automerge=auto
+            major: pin=keep allow=- allowedUpdateTypes=major,minor,patch,digest,pin group=go-major schedule=always minAge=-
+  candidates 0
+  rejected  none
+  result    update v1.0.0 -> v1.1.0 (minor)
+  result    update v1.0.0 -> v2.0.0 (major)
+`
+	if b.String() != want {
+		t.Errorf("got:\n%s\nwant:\n%s", b.String(), want)
+	}
+}
+
 func TestDescribeDashboardApproval(t *testing.T) {
 	yes := true
 	if got := describeRule(config.Rule{DashboardApproval: &yes}); got != "match: all; apply: dashboardApproval=true" {

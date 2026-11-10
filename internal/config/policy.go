@@ -37,6 +37,7 @@ type Policy struct {
 	// and must not be modified.
 	AllowedUpdateTypes map[dep.UpdateType]bool
 	Group              string        // "" = own PR
+	GroupSettings      bool          // the groups entry of Group applied after the rules
 	SecurityGroup      string        // group of the dep's security updates, "" = own PR each
 	Schedule           *schedule.Set // nil = always
 	Rules              []int         // indices of the matching user rules, in order
@@ -154,7 +155,8 @@ func UnversionedPin(d dep.Dep) bool {
 // Policy is the pre-policy of d: the policy before the type of an update is known. It
 // evaluates the built-in monorepo and Ruby group rules (unless monorepos is false), then the
 // user rules without updateTypes top-to-bottom; each set apply field of a matching rule
-// overwrites the policy (allowedUpdateTypes is replaced, not merged). Indirect Go requirements
+// overwrites the policy (allowedUpdateTypes is replaced, not merged); last, the groups entry of
+// the resulting group, if any, overwrites what it sets (GroupSettings). Indirect Go requirements
 // and pip-compile pins, go directives, npm peerDependencies and engines, actions and pre-commit
 // hook repositories pinned to a bare SHA (UnversionedPin), git submodules and Azure Pipelines
 // tasks are ignored unless a
@@ -434,6 +436,13 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Polic
 		if r.PostUpgradeTasks != nil {
 			p.Tasks = dep.Tasks{Commands: r.PostUpgradeTasks.Commands, Update: r.PostUpgradeTasks.ExecutionMode == ExecutionUpdate, Files: r.PostUpgradeTasks.Files}
 		}
+	}
+	// The settings of the group are those of its PR: they apply after every rule. securityGroup
+	// names no groups entry; security updates follow the policy of their group as they follow
+	// rule settings (dep.Update, engine applyPolicy).
+	if g := c.Groups[p.Group]; g != nil && p.Group != "" {
+		p.apply(&g.Settings)
+		p.GroupSettings = true
 	}
 	return p
 }

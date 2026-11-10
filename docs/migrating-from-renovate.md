@@ -39,6 +39,7 @@ Both use one translator, so a migrated file behaves exactly like compatibility m
   The title is `prTitle` if set (it may reference `{{commitMessage}}` and the parts), else the first line of `commitMessage` (default: the five parts joined by spaces). A top-level action or topic yields to the pin and digest defaults, as Renovate's update-type config overrides it; a rule's own does not. Semantic titles are lowercased like Renovate's (lowercase `semanticCommitType`, `commitMessageLowerCase` not `never`), but only their literal text: dependency and group names keep their case. deps writes versions as they are (`1.2.3`, where Renovate's `prettyNewVersion` reads `v1.2.3` and majors `v2`), and its `prTitle` is also the commit subject; security PRs keep ` [security]`. Any part with an expression the converter lacks (`{{#if}}`, `{{newMajor}}`, …) is reported with `deps keeps its built-in PR titles`, and that scope keeps deps' titles. `semanticCommits: enabled` or `auto` alone changes nothing: deps always writes conventional commits.
 - Replacements: Renovate only replaces packages through `replacements:*` presets and rules. With `replacements:all` (part of `config:recommended`) the translation keeps deps' built-in list (`builtins.replacements: true`) and adds rules `{updateTypes: [replacement], ignore: true}` for the built-in presets `replacements:all` does not extend (`clang-format-to-maintenance-fork`, `corentinmusard-otel-cicd-action-to-dash0hq`). Without it, it writes `builtins.replacements: false`, and each extended `replacements:<name>` becomes rules with that preset's `replacementName`/`replacementVersion`/`replacementPrefix`. `packageRules[].replacementName`/`replacementVersion`, the prefix form of `replacementNameTemplate` (`replacementPrefix`) and `matchUpdateTypes: [replacement]` translate directly; the top-level `replacement` block becomes a rule with `updateTypes: [replacement]`.
 - `vulnerabilityAlerts.groupName` becomes a trailing rule `{securityGroup: <groupName>}` without matchers (Renovate forces `vulnerabilityAlerts` over every package rule), unless security updates are off.
+- Settings every rule of a `groupName` repeats (at least two rules, also the two a `github-actions` matcher expands to) move into [`groups.<name>`](reference/configuration.md#groups) when every one of them sets the same value and the move changes no dep's policy: group settings apply after every rule, so a key stays on the rules when a later rule could give the group's deps another value or move them into a group that does not set it.
 
 ### What compatibility mode cannot translate
 
@@ -181,7 +182,7 @@ How the pieces map:
 | `prConcurrentLimit: 0`, `prHourlyLimit: 0`, `updateNotScheduled`, `minimumReleaseAge: 28 days`, `automerge: false`, `automergeType: pr` | same keys |
 | `separateMinorPatch`, `separateMultipleMajor` | `separate: majors-minor-patch` |
 | Renovate's default `minimumReleaseAgeBehaviour: timestamp-required` (Renovate 42+) | `minimumReleaseAgeBehaviour: timestamp-required`, set explicitly since deps defaults to `timestamp-optional` |
-| `schedule: ['* * * * 0']` (14 rules) | `schedule: ['0 0 * * 0']`, plus the crons `0 0 * * *` and `0 0 * * 0` in the [workflow](#workflow-for-ocm) |
+| `schedule: ['* * * * 0']` (14 rules) | `schedule: ['0 0 * * 0']`, on the rules, and once per group in `groups` for the groups of packageRules 10, 11, 14-17 and 23; plus the crons `0 0 * * *` and `0 0 * * 0` in the [workflow](#workflow-for-ocm) |
 | 0: `matchFileNames: [chart/**]`, group "Kubernetes Controller chart" | `paths` + `group` |
 | 1: Garden Linux FIPS `allowedVersions: '/^\\d+\\.\\d+$/'`, `versioning: loose` | `allow: '/^\d+\.\d+$/'`, `versioning: loose` |
 | 2: `matchUpdateTypes: [minor, patch]`, `automerge: true` | `updateTypes: [minor, patch]`, `automerge: true` |
@@ -224,7 +225,7 @@ name: deps
 on:
   schedule:
     - cron: "0 0 * * *" # daily (renovate.yml's cron): updates without a schedule
-    - cron: "0 0 * * 0" # weekly: rules with schedule ['0 0 * * 0'] (Renovate's '* * * * 0')
+    - cron: "0 0 * * 0" # weekly: rules and groups with schedule ['0 0 * * 0'] (Renovate's '* * * * 0')
   push:
     branches: [main] # rebase and refresh open PRs; opens only unscheduled ones
   workflow_dispatch: # in schedule for every group (renovate.yml's ignoreSchedule)

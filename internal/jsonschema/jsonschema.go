@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"iter"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -96,6 +97,14 @@ func (p *Properties) Set(key string, s *Schema) {
 
 // Value returns the schema of property key, or nil.
 func (p *Properties) Value(key string) *Schema { return p.values[key] }
+
+// Delete removes property key, if present.
+func (p *Properties) Delete(key string) {
+	if _, ok := p.values[key]; ok {
+		delete(p.values, key)
+		p.keys = slices.DeleteFunc(p.keys, func(k string) bool { return k == key })
+	}
+}
 
 // All yields the properties in insertion order.
 func (p *Properties) All() iter.Seq2[string, *Schema] {
