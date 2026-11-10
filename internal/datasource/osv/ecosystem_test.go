@@ -14,7 +14,11 @@ const (
 	juliaHTTP = `{"id":"JLSEC-2025-1","summary":"CR/LF injection in URIs.jl (also affects HTTP.jl)",
 		"affected":[{"package":{"name":"HTTP","ecosystem":"Julia"},"ranges":[{"type":"SEMVER","events":[{"introduced":"0"},{"fixed":"1.10.17"}]}]},
 		            {"package":{"name":"URIs","ecosystem":"Julia"},"ranges":[{"type":"SEMVER","events":[{"introduced":"0"},{"fixed":"1.6.0"}]}]}]}`
+	// Scored with CVSS v4 only, so deps.dev publishes no base score; the record's own
+	// severity is the rating deps shows.
 	swiftNIO = `{"id":"GHSA-r3rc-9hpw-54v9","summary":"swift-nio vulnerable to HTTP request smuggling","aliases":["CVE-2025-123"],
+		"severity":[{"type":"CVSS_V4","score":"CVSS:4.0/AV:N/AC:H/AT:P/PR:N/UI:N/VC:L/VI:H/VA:L/SC:N/SI:N/SA:N"}],
+		"database_specific":{"severity":"HIGH"},
 		"affected":[{"package":{"name":"github.com/apple/swift-nio","ecosystem":"SwiftURL"},"ranges":[{"type":"SEMVER","events":[{"introduced":"1.0.0"},{"fixed":"2.100.0"}]}]}]}`
 )
 
@@ -70,7 +74,7 @@ func TestAdvisoriesSwift(t *testing.T) {
 	}
 	adv := dep.Advisory{
 		ID: "GHSA-r3rc-9hpw-54v9", Summary: "swift-nio vulnerable to HTTP request smuggling",
-		Aliases: []string{"CVE-2025-123"}, URL: "https://osv.dev/vulnerability/GHSA-r3rc-9hpw-54v9",
+		Aliases: []string{"CVE-2025-123"}, URL: "https://osv.dev/vulnerability/GHSA-r3rc-9hpw-54v9", Rating: "high",
 	}
 	want := [][]datasource.Vuln{
 		{{Advisory: adv, Fixed: []string{"2.100.0"}}},
@@ -79,6 +83,9 @@ func TestAdvisoriesSwift(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got  %+v\nwant %+v", got, want)
+	}
+	if risk := adv.Risk(); risk != "severity high" { // CVSS v4 only: no base score, the rating stands in
+		t.Errorf("risk = %q", risk)
 	}
 	if len(f.batches) != 1 || len(f.batches[0]) != 2 { // the two versions, deduped
 		t.Errorf("batches = %+v", f.batches)

@@ -635,11 +635,17 @@ type affected struct {
 }
 
 type vuln struct {
-	ID         string   `json:"id"`
-	Summary    string   `json:"summary"`
-	Details    string   `json:"details"`
-	Aliases    []string `json:"aliases"`
-	Withdrawn  string   `json:"withdrawn"`
+	ID        string   `json:"id"`
+	Summary   string   `json:"summary"`
+	Details   string   `json:"details"`
+	Aliases   []string `json:"aliases"`
+	Withdrawn string   `json:"withdrawn"`
+	// DatabaseSpecific.Severity is the advisory's own rating ("CRITICAL", "HIGH",
+	// "MODERATE", "LOW"), which GitHub-reviewed records carry. It is the severity of
+	// advisories scored with CVSS v4 only, for which deps.dev publishes no v3 base score.
+	DatabaseSpecific struct {
+		Severity string `json:"severity"`
+	} `json:"database_specific"`
 	References []struct {
 		Type string `json:"type"`
 		URL  string `json:"url"`
@@ -797,7 +803,7 @@ func (v *vuln) entries(p pkg) []affected {
 func (v *vuln) advisory() dep.Advisory {
 	a := dep.Advisory{
 		ID: v.ID, Summary: v.Summary, Aliases: slices.Clone(v.Aliases),
-		URL: "https://osv.dev/vulnerability/" + url.PathEscape(v.ID),
+		URL: "https://osv.dev/vulnerability/" + url.PathEscape(v.ID), Rating: rating(v.DatabaseSpecific.Severity),
 	}
 	if a.Summary == "" {
 		line, _, _ := strings.Cut(strings.TrimSpace(v.Details), "\n")
@@ -813,6 +819,22 @@ func (v *vuln) advisory() dep.Advisory {
 		}
 	}
 	return a
+}
+
+// rating maps an OSV record's own severity to the ratings dep.Advisory uses; GitHub writes
+// "MODERATE" where CVSS says "medium". An unknown value is dropped.
+func rating(s string) string {
+	switch strings.ToUpper(s) {
+	case "CRITICAL":
+		return "critical"
+	case "HIGH":
+		return "high"
+	case "MODERATE", "MEDIUM":
+		return "medium"
+	case "LOW":
+		return "low"
+	}
+	return ""
 }
 
 // fixedEvents calls f for every fixed event of the SEMVER/ECOSYSTEM ranges in entries.

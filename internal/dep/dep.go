@@ -198,12 +198,17 @@ type Advisory struct {
 	// lists them; the CVE aliases key the EPSS and KEV lookups.
 	Aliases []string
 	CVSS    float64 // CVSS v3 base score (0.1–10), 0 = unknown
-	EPSS    float64 // probability of exploitation within 30 days (0–1), 0 = unknown
-	KEV     bool    // listed in CISA's Known Exploited Vulnerabilities catalog
+	// Rating is the advisory's own qualitative severity ("critical", "high", "medium",
+	// "low"), used when no CVSS v3 score is known: advisories scored with CVSS v4 only have
+	// no v3 base score, but GitHub-reviewed OSV records still carry the rating.
+	Rating string
+	EPSS   float64 // probability of exploitation within 30 days (0–1), 0 = unknown
+	KEV    bool    // listed in CISA's Known Exploited Vulnerabilities catalog
 }
 
-// Severity is the CVSS v3 qualitative rating of the score ("critical", "high", "medium",
-// "low"), "" when the score is unknown.
+// Severity is the qualitative rating of the advisory ("critical", "high", "medium", "low"):
+// of the CVSS v3 base score when it is known, else the advisory's own rating. "" when neither
+// is known.
 func (a Advisory) Severity() string {
 	switch {
 	case a.CVSS >= 9:
@@ -215,15 +220,19 @@ func (a Advisory) Severity() string {
 	case a.CVSS > 0:
 		return "low"
 	}
-	return ""
+	return a.Rating
 }
 
 // Risk renders the risk data as one phrase ("CVSS 9.8 critical, EPSS 94%, CISA KEV"), "" when
 // no source knew anything about the advisory.
 func (a Advisory) Risk() string {
 	var parts []string
-	if s := a.Severity(); s != "" {
+	switch s := a.Severity(); {
+	case s == "":
+	case a.CVSS > 0:
 		parts = append(parts, fmt.Sprintf("CVSS %s %s", strconv.FormatFloat(a.CVSS, 'f', -1, 64), s))
+	default:
+		parts = append(parts, "severity "+s)
 	}
 	if a.EPSS > 0 {
 		parts = append(parts, "EPSS "+epssPercent(a.EPSS))
@@ -247,21 +256,36 @@ func epssPercent(p float64) string {
 	}
 }
 
-// Worst summarizes advs for a one-line report: the highest CVSS rating among them and whether
-// CISA lists any of them as known exploited ("critical, known exploited"); "" when no risk
-// data is known.
+// severityRank orders the qualitative ratings; an unknown or empty rating ranks lowest.
+func severityRank(s string) int {
+	switch s {
+	case "critical":
+		return 4
+	case "high":
+		return 3
+	case "medium":
+		return 2
+	case "low":
+		return 1
+	}
+	return 0
+}
+
+// Worst summarizes advs for a one-line report: the highest severity among them (from the CVSS
+// v3 score or the advisory's own rating) and whether CISA lists any of them as known exploited
+// ("critical, known exploited"); "" when no risk data is known.
 func Worst(advs []Advisory) string {
-	var top Advisory
+	top := ""
 	kev := false
 	for _, a := range advs {
-		if a.CVSS > top.CVSS {
-			top = a
+		if s := a.Severity(); severityRank(s) > severityRank(top) {
+			top = s
 		}
 		kev = kev || a.KEV
 	}
 	var parts []string
-	if s := top.Severity(); s != "" {
-		parts = append(parts, s)
+	if top != "" {
+		parts = append(parts, top)
 	}
 	if kev {
 		parts = append(parts, "known exploited")
