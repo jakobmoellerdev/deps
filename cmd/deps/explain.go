@@ -83,7 +83,7 @@ func explain(ctx context.Context, cmd *cli.Command, o *rootOpts, base string, gl
 func explainRepositories(ctx context.Context, cmd *cli.Command, o *rootOpts, base string, globs, entries []string) error {
 	stderr := cmd.Root().ErrWriter
 	client := newHTTPClient()
-	src, err := newRemoteSource(ctx, o, entries, platform.Overrides{}, envToken(), client)
+	src, err := newRemoteSource(ctx, o, entries, envToken(), client)
 	if err != nil {
 		return err
 	}

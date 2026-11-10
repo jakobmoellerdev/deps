@@ -37,7 +37,7 @@ func newConfigCheck(o *rootOpts) *cli.Command {
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return configCheck(ctx, cmd, o)
 		},
-		Flags: scanFlags(o, scanOffline),
+		Flags: append(scanFlags(o, scanOffline), repositoriesFlag(&o.repositories, "check the config of")),
 	}
 }
 
@@ -62,6 +62,15 @@ func loadOffline(ctx context.Context, o *rootOpts) (*config.Config, error) {
 // configCheck loads (and so validates) the config, with the files it extends, and prints its
 // lint warnings; a config error is returned as is (exit 2).
 func configCheck(ctx context.Context, cmd *cli.Command, o *rootOpts) error {
+	if entries := repositoryEntries(cmd, o.repositories); len(entries) > 0 {
+		return offlineRepositories(ctx, cmd, o, entries, func(ro *rootOpts, name string) error { return configCheckDir(ctx, cmd, ro, name) })
+	}
+	return configCheckDir(ctx, cmd, o, o.dir)
+}
+
+// configCheckDir checks the config of o.dir, named display in the message about a missing
+// config file (the repository for a clone of --repositories).
+func configCheckDir(ctx context.Context, cmd *cli.Command, o *rootOpts, display string) error {
 	cfg, err := loadOffline(ctx, o)
 	if err != nil {
 		return err
@@ -69,10 +78,33 @@ func configCheck(ctx context.Context, cmd *cli.Command, o *rootOpts) error {
 	printLint(cmd.Root().ErrWriter, cfg)
 	out := cmd.Root().Writer
 	if cfg.Path() == "" {
-		fmt.Fprintf(out, "no .deps.yaml or .deps.yml in %s: the built-in defaults apply\n", o.dir)
+		fmt.Fprintf(out, "no .deps.yaml or .deps.yml in %s: the built-in defaults apply\n", display)
 		return nil
 	}
 	fmt.Fprintf(out, "%s: ok\n", cfg.Path())
+	return nil
+}
+
+// offlineRepositories clones every repository of entries in turn and runs fn on a copy of o
+// pointing at the clone, for the commands that read only the config (config check, config
+// show). A failing repository does not stop the others.
+func offlineRepositories(ctx context.Context, cmd *cli.Command, o *rootOpts, entries []string, fn func(*rootOpts, string) error) error {
+	stderr := cmd.Root().ErrWriter
+	src, err := newRemoteSource(ctx, o, entries, envToken(), newHTTPClient())
+	if err != nil {
+		return err
+	}
+	_, failed, err := src.eachRepository(ctx, o, stderr, nil, func(dir, name string, _ platform.Info) error {
+		ro := *o
+		ro.dir = dir
+		return fn(&ro, name)
+	})
+	if err != nil {
+		return err
+	}
+	if failed > 0 {
+		return errReported
+	}
 	return nil
 }
 
@@ -115,11 +147,20 @@ func newConfigShow(o *rootOpts) *cli.Command {
 			&cli.BoolFlag{Name: "sources", Destination: &so.sources, Usage: "annotate each value with where it comes from: default, file, env or flag"},
 			&cli.StringFlag{Name: "author-name", Destination: &so.author.authorName, Usage: "commit author name, as for run (when not set: $DEPS_GIT_AUTHOR, then git.author of the config, then " + defaultAuthorName + ")"},
 			&cli.StringFlag{Name: "author-email", Destination: &so.author.authorEmail, Usage: "commit author email, as for run (when not set: $DEPS_GIT_AUTHOR, then git.author of the config, then " + defaultAuthorEmail + ")"},
+			repositoriesFlag(&o.repositories, "show the config of"),
 		),
 	}
 }
 
 func configShow(ctx context.Context, cmd *cli.Command, o *rootOpts, so *showOpts) error {
+	if entries := repositoryEntries(cmd, o.repositories); len(entries) > 0 {
+		return offlineRepositories(ctx, cmd, o, entries, func(ro *rootOpts, _ string) error { return configShowDir(ctx, cmd, ro, so) })
+	}
+	return configShowDir(ctx, cmd, o, so)
+}
+
+// configShowDir prints the effective config of o.dir.
+func configShowDir(ctx context.Context, cmd *cli.Command, o *rootOpts, so *showOpts) error {
 	cfg, err := loadOffline(ctx, o)
 	if err != nil {
 		return err

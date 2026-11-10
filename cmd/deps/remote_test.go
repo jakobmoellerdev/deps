@@ -154,3 +154,106 @@ func TestRunRejectsRefAndURLEntries(t *testing.T) {
 		}
 	}
 }
+
+// apply --repositories keeps each clone under --into with the updates written.
+func TestApplyRepositoriesInto(t *testing.T) {
+	cleanEnv(t)
+	f := newFakeNet(t)
+	giteaEnv(t)
+	t.Setenv("DEPS_TOKEN", "tok")
+	forge(t, map[string]map[string]string{"o/r": {".github/workflows/ci.yml": workflow}, "o/s": {".github/workflows/ci.yml": workflow}})
+	f.mux.HandleFunc("GET git.test/api/v1/orgs/o/repos", func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, `[{"full_name":"o/r"},{"full_name":"o/s"}]`)
+	})
+	into := filepath.Join(t.TempDir(), "work")
+
+	_, stderr, code := execute(t, "apply", "--dir", t.TempDir(), "--repositories", "o/*", "--into", into)
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	for _, repo := range []string{"o/r", "o/s"} {
+		p := filepath.Join(into, filepath.FromSlash(repo), ".github", "workflows", "ci.yml")
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("%s: %v", repo, err)
+		}
+		if strings.Contains(string(b), "@v6.0.0\n") {
+			t.Errorf("%s: not updated:\n%s", repo, b)
+		}
+		if _, err := os.Stat(filepath.Join(into, filepath.FromSlash(repo), ".git")); err != nil {
+			t.Errorf("%s: clone not kept: %v", repo, err)
+		}
+	}
+	if !strings.Contains(stderr, "checkout "+filepath.Join(into, "o", "r")+"\n") {
+		t.Errorf("stderr lacks the checkout line:\n%s", stderr)
+	}
+}
+
+// --into and --repositories need each other.
+func TestApplyIntoUsage(t *testing.T) {
+	cleanEnv(t)
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"apply", "--repositories", "o/r"}, "--repositories needs --into"},
+		{[]string{"apply", "--into", "x"}, "--into needs --repositories"},
+	} {
+		_, stderr, code := execute(t, tc.args...)
+		if code != 2 || !strings.Contains(stderr, tc.want) {
+			t.Errorf("%v: exit %d\n%s", tc.args, code, stderr)
+		}
+	}
+}
+
+// config check and config show read a clone of --repositories.
+func TestConfigRepositories(t *testing.T) {
+	cleanEnv(t)
+	newFakeNet(t)
+	giteaEnv(t)
+	t.Setenv("DEPS_TOKEN", "tok")
+	forge(t, map[string]map[string]string{"o/r": {".deps.yaml": "pin: digest\n"}})
+
+	stdout, stderr, code := execute(t, "config", "check", "--dir", t.TempDir(), "--repositories", "o/r")
+	if code != 0 || !strings.Contains(stdout, ".deps.yaml: ok\n") || !strings.Contains(stderr, "repository o/r\n") {
+		t.Fatalf("check: exit %d\n%s%s", code, stdout, stderr)
+	}
+	stdout, stderr, code = execute(t, "config", "show", "--dir", t.TempDir(), "--repositories", "o/r")
+	if code != 0 || !strings.Contains(stdout, "pin: digest") {
+		t.Errorf("show: exit %d\n%s%s", code, stdout, stderr)
+	}
+}
+
+// preview --repositories --pr clones the pull request's head ref and its base branch.
+func TestPreviewPullRequest(t *testing.T) {
+	cleanEnv(t)
+	f := newFakeNet(t)
+	giteaEnv(t)
+	t.Setenv("DEPS_TOKEN", "tok")
+	root := forge(t, map[string]map[string]string{"o/r": {".github/workflows/ci.yml": workflow}})
+	// The pull request adds a second workflow, under refs/pull/7/head.
+	work := t.TempDir()
+	git(t, "", "clone", "-q", filepath.Join(root, "o", "r.git"), work)
+	writeFiles(t, work, map[string]string{".github/workflows/pr.yml": workflow})
+	git(t, work, "add", "-A")
+	git(t, work, "commit", "-qm", "pr")
+	git(t, work, "push", "-q", "origin", "HEAD:refs/pull/7/head")
+	f.mux.HandleFunc("GET git.test/api/v1/repos/o/r/pulls/7", func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, `{"number":7,"title":"t","head":{"ref":"feature","sha":"deadbeef"},"base":{"ref":"main"},"state":"open"}`)
+	})
+
+	stdout, stderr, code := execute(t, "preview", "--dir", t.TempDir(), "--repositories", "o/r", "--pr", "7")
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	if !strings.Contains(stderr, "pull request o/r#7  feature -> main\n") {
+		t.Errorf("stderr:\n%s", stderr)
+	}
+	// Both sides carry the same dependency, so the pull request changes no update PR.
+	// The head clone has the file the pull request adds, the base clone does not, so the
+	// update PR of the pull request's side differs.
+	if !strings.Contains(stderr, ".github/workflows/pr.yml") || !strings.Contains(stderr, "changed deps/actions-checkout-major") {
+		t.Errorf("stderr:\n%s", stderr)
+	}
+	_ = stdout
+}

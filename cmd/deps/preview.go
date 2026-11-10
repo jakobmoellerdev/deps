@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"maps"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -26,23 +27,93 @@ import (
 
 func newPreview(o *rootOpts) *cli.Command {
 	var base, baseBranch string
+	var pr int
 	return &cli.Command{
 		Name:  "preview",
 		Usage: "Compare the PRs a pull request's checkout would get with those of the base branch",
 		Metadata: map[string]any{docgen.MetaExample: "  # in a pull_request job with the PR checked out in pr/ and the base branch in base/\n" +
-			"  deps preview --dir pr --base-dir base"},
+			"  deps preview --dir pr --base-dir base\n" +
+			"  # without checkouts: deps clones the pull request and its base itself\n" +
+			"  deps preview --repositories my-org/app --pr 42"},
 		ArgValidator: noArgs,
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			if base == "" {
+			entries := repositoryEntries(cmd, o.repositories)
+			switch {
+			case len(entries) > 0 && base != "":
+				return &usageError{errors.New("--repositories and --base-dir are mutually exclusive: deps clones both sides itself")}
+			case len(entries) > 0 && pr == 0:
+				return &usageError{errors.New("--repositories needs --pr <number>: the pull request to preview")}
+			case len(entries) > 0:
+				return previewRemote(ctx, cmd, o, entries, pr)
+			case pr != 0:
+				return &usageError{errors.New("--pr needs --repositories")}
+			case base == "":
 				return &usageError{errors.New("--base-dir is required")}
 			}
 			return preview(ctx, cmd, o, base, cmp.Or(baseBranch, pullRequestBase(os.Getenv)))
 		},
 		Flags: append(scanFlags(o, scanSession),
-			&cli.StringFlag{Name: "base-dir", Destination: &base, Usage: "checkout of the base branch to compare with (required)"},
+			&cli.StringFlag{Name: "base-dir", Destination: &base, Usage: "checkout of the base branch to compare with (required without --repositories)"},
 			&cli.StringFlag{Name: "base", Destination: &baseBranch, Usage: "base branch the pull request targets, resolved as run resolves it: its rules[].baseBranches match, and with useBaseBranchConfig on the default branch the config of both checkouts is merged over the default branch's (default: $GITHUB_BASE_REF, then $CI_MERGE_REQUEST_TARGET_BRANCH_NAME)"},
+			repositoriesFlag(&o.repositories, "preview a pull request of"),
+			&cli.IntFlag{Name: "pr", Destination: &pr, Usage: "number of the pull request (GitLab: merge request) to preview in the repository of --repositories; deps clones its head and its base branch itself"},
 		),
 	}
+}
+
+// previewRemote previews pull request number of the single repository of entries: it reads
+// the pull request from the forge, clones its head ref and its base branch into temporary
+// directories, and compares them as preview does for two checkouts.
+func previewRemote(ctx context.Context, cmd *cli.Command, o *rootOpts, entries []string, number int) error {
+	stderr := cmd.Root().ErrWriter
+	token, client := envToken(), newHTTPClient()
+	src, err := newRemoteSource(ctx, o, entries, token, client)
+	if err != nil {
+		return err
+	}
+	targets, err := src.targets(ctx)
+	if err != nil {
+		return err
+	}
+	if len(targets) != 1 {
+		return &usageError{fmt.Errorf("--pr needs exactly one repository, got %d", len(targets))}
+	}
+	t := targets[0]
+	if t.Info.APIURL == "" {
+		return fmt.Errorf("--pr: no forge API for %s: give the repository as owner/name on a known forge", t.URL)
+	}
+	pr, err := platform.NewClient(t.Info, token, client).GetPR(ctx, number)
+	if err != nil {
+		return fmt.Errorf("pull request %d of %s: %w", number, t.Name, err)
+	}
+	branch := pr.Base
+	if branch == "" {
+		return fmt.Errorf("pull request %d of %s: the forge does not report its base branch", number, t.Name)
+	}
+	fmt.Fprintf(stderr, "pull request %s#%d  %s -> %s\n", t.Name, number, cmp.Or(pr.Head, pr.HeadSHA), branch)
+	work, err := os.MkdirTemp("", "deps-preview-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(work)
+	header := gitAuthHeader(token)
+	headRef := fmt.Sprintf("refs/pull/%d/head", number)
+	if t.Info.Kind == platform.GitLab {
+		headRef = fmt.Sprintf("refs/merge-requests/%d/head", number)
+	}
+	dirs := map[string]string{}
+	for name, ref := range map[string]string{"head": headRef, "base": branch} {
+		dir := filepath.Join(work, name)
+		ct := t
+		ct.Ref = ref
+		if err := cloneRepository(ctx, ct, header, dir); err != nil {
+			return fmt.Errorf("clone %s (%s): %w", name, ref, err)
+		}
+		dirs[name] = filepath.Join(dir, filepath.FromSlash(t.Path))
+	}
+	ro := *o
+	ro.dir = dirs["head"]
+	return preview(ctx, cmd, &ro, dirs["base"], branch)
 }
 
 // previewPR is one PR of either side, keyed by branch.

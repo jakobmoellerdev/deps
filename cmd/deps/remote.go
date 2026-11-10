@@ -135,12 +135,15 @@ type remoteSource struct {
 	info   platform.Info
 	token  string
 	client *http.Client
+	// into is where kept clones are made (<into>/<owner>/<name>, apply --into); "" makes a
+	// temporary clone that is removed again after the repository.
+	into string
 }
 
 // newRemoteSource parses entries and detects the forge of the owner/name entries among them:
 // the CI environment, the overrides ov, else the origin remote of --dir. Entries that are git
 // URLs carry their own forge and need none of them.
-func newRemoteSource(ctx context.Context, o *rootOpts, entries []string, ov platform.Overrides, token string, client *http.Client) (*remoteSource, error) {
+func newRemoteSource(ctx context.Context, o *rootOpts, entries []string, token string, client *http.Client) (*remoteSource, error) {
 	specs, err := parseRepoSpecs(entries)
 	if err != nil {
 		return nil, err
@@ -161,7 +164,7 @@ func newRemoteSource(ctx context.Context, o *rootOpts, entries []string, ov plat
 	if remoteErr != nil {
 		remote = "" // the forge must come from the CI environment or the overrides
 	}
-	if src.info, err = platform.Detect(ctx, os.Getenv, remote, ov, client); err != nil {
+	if src.info, err = platform.Detect(ctx, os.Getenv, remote, platform.Overrides{}, client); err != nil {
 		if remote == "" {
 			return nil, fmt.Errorf("--repositories: no forge in the CI environment and no origin remote in %s to detect it from (give a git URL entry instead): %w", dir, err)
 		}
@@ -221,10 +224,12 @@ func (src *remoteSource) targets(ctx context.Context) ([]repoTarget, error) {
 	return out, nil
 }
 
-// eachRepository clones every repository of the source in turn into a temporary directory,
-// removed again right after it, and calls fn with the directory to scan. A failing repository
-// is reported and recorded in multi (when not nil) and does not stop the others; a canceled
-// context does. It returns the repositories handled and how many of them failed.
+// eachRepository clones every repository of the source in turn and calls fn with the
+// directory to scan. Without an --into directory the clone is temporary and removed right
+// after the repository; with one it is kept at <into>/<owner>/<name> and stays after the
+// command, so its changes can be inspected. A failing repository is reported and recorded in
+// multi (when not nil) and does not stop the others; a canceled context does. It returns the
+// repositories handled and how many of them failed.
 func (src *remoteSource) eachRepository(ctx context.Context, o *rootOpts, stderr io.Writer, multi *multiRun, fn func(dir, name string, info platform.Info) error) (total, failed int, err error) {
 	targets, err := src.targets(ctx)
 	if err != nil {
@@ -237,21 +242,32 @@ func (src *remoteSource) eachRepository(ctx context.Context, o *rootOpts, stderr
 		}
 		return 0, 0, fmt.Errorf("--repositories: no repository matches %s", strings.Join(names, ", "))
 	}
-	work, err := os.MkdirTemp("", "deps-repositories-*")
-	if err != nil {
-		return 0, 0, err
+	work := src.into
+	if work == "" {
+		if work, err = os.MkdirTemp("", "deps-repositories-*"); err != nil {
+			return 0, 0, err
+		}
+		defer os.RemoveAll(work)
 	}
-	defer os.RemoveAll(work)
 	defer actionsLog.setRepo("")
 	header := gitAuthHeader(src.token)
 	for i, t := range targets {
 		fmt.Fprintf(stderr, "repository %s\n", t.Name)
 		actionsLog.setRepo(t.Name)
 		dir := filepath.Join(work, strconv.Itoa(i))
+		keep := src.into != ""
+		if keep {
+			dir = filepath.Join(work, filepath.FromSlash(t.Name))
+		}
 		err := func() error {
-			defer os.RemoveAll(dir)
+			if !keep {
+				defer os.RemoveAll(dir)
+			}
 			if err := cloneRepository(ctx, t, header, dir); err != nil {
 				return err
+			}
+			if keep {
+				fmt.Fprintf(stderr, "checkout %s\n", dir)
 			}
 			return fn(filepath.Join(dir, filepath.FromSlash(t.Path)), t.Name, t.Info)
 		}()

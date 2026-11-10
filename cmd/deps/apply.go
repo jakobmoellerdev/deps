@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 
 	"github.com/urfave/cli/v3"
 
@@ -41,16 +42,36 @@ import (
 )
 
 func newApply(o *rootOpts) *cli.Command {
+	var into string
 	return &cli.Command{
-		Name:         "apply",
-		Usage:        "Write the updates to the files, including go mod tidy, package-lock.json and Cargo.lock",
-		Metadata:     map[string]any{docgen.MetaExample: "  deps apply && git diff --stat"},
+		Name:  "apply",
+		Usage: "Write the updates to the files, including go mod tidy, package-lock.json and Cargo.lock",
+		Metadata: map[string]any{docgen.MetaExample: "  deps apply && git diff --stat\n" +
+			"  # apply to clones of remote repositories, kept in work/<owner>/<name>\n" +
+			"  deps apply --repositories 'my-org/*' --into work"},
 		ArgValidator: noArgs,
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			return local(ctx, cmd, o, true)
+			return applyCmd(ctx, cmd, o, into)
 		},
-		Flags: append(scanFlags(o, scanResults), allowTasksFlag(o)),
+		Flags: append(scanFlags(o, scanResults), allowTasksFlag(o),
+			repositoriesFlag(&o.repositories, "apply to"),
+			&cli.StringFlag{Name: "into", Destination: &into, Usage: "directory the clones of --repositories are made in, as <into>/<owner>/<name>, and kept after the command, so the changes can be inspected, tested and committed (required with --repositories; each clone directory must not exist or be empty)"},
+		),
 	}
+}
+
+// applyCmd runs apply on the checkout of --dir, or on kept clones of --repositories in into.
+func applyCmd(ctx context.Context, cmd *cli.Command, o *rootOpts, into string) error {
+	entries := repositoryEntries(cmd, o.repositories)
+	switch {
+	case len(entries) == 0 && into != "":
+		return &usageError{errors.New("--into needs --repositories; apply writes into the checkout of --dir")}
+	case len(entries) > 0 && into == "":
+		return &usageError{errors.New("--repositories needs --into: apply writes files, so its clones must be kept somewhere")}
+	case len(entries) > 0:
+		return applyRepositories(ctx, cmd, o, entries, into)
+	}
+	return local(ctx, cmd, o, true)
 }
 
 // postProcessors regenerate go.sum (go mod tidy), package-lock.json (npm), Cargo.lock

@@ -65,10 +65,14 @@ The `postUpgradeTasks` of the config run in `--dir` after the files are written,
 
 The platform is only detected from CI environment variables. Locally, lookups run without a platform token unless one of the token variables is set (see `deps help environment`).
 
+**Remote repositories.** `--repositories` (entries as for `deps plan`, see `deps help plan`) applies to clones deps makes itself; it needs `--into <dir>`, which is where each clone is kept, at `<into>/<owner>/<name>`, after the command. Each clone directory must not exist or be empty. The clones keep their `origin` and the checked-out ref, so `git diff`, `git commit` and a push by hand work in them. Post-processors and, under `--allow-tasks`, post-upgrade tasks run in the clone: that is repository code of a repository you may not have read. A failing repository is reported and does not stop the others (exit 1); `--report` holds the report of every repository with the counts summed over them.
+
 ### deps apply examples
 
 ```sh
 deps apply && git diff --stat
+# apply to clones of remote repositories, kept in work/<owner>/<name>
+deps apply --repositories 'my-org/*' --into work
 ```
 
 ### deps apply flags
@@ -79,8 +83,10 @@ deps apply && git diff --stat
 | `--concurrency` | int | `32` | maximum concurrent network requests and lookups per upstream; npm and OSV get twice as many, container registries half; at least 1 |
 | `--config` | string | `""` | config file, which must exist (when not set: \<dir>/.deps.yaml, then .deps.yml, else built-in defaults); a Renovate file name (renovate.json, .renovaterc, …) turns on --renovate |
 | `--dir` | string | `"."` | repository directory to scan |
+| `--into` | string | `""` | directory the clones of --repositories are made in, as \<into>/\<owner>/\<name>, and kept after the command, so the changes can be inspected, tested and committed (required with --repositories; each clone directory must not exist or be empty) |
 | `--renovate` | bool | `false` | compatibility mode: translate the Renovate config (renovate.json, .github/renovate.json5, …, or --config) instead of reading .deps.yaml; deps migrate writes the same translation |
 | `--report` | string | `""` | also write the result as JSON to this file (see deps help output) |
+| `--repositories` | strings | `[]` | apply to these repositories one after another instead of the checkout in --dir, each cloned into a temporary directory with the token: owner/name, a git URL, or owner/\<glob> (e.g. `my-org/*`, `my-org/svc-*`) for the repositories of an organization or user the token can list (GitLab: group/sub/name, a glob covers subgroups, \*\* any number of path segments), without archived ones and mirrors; an entry may name a directory to scan and the ref to read, \<repo>//\<dir>#\<ref> (repeatable, comma-separated) |
 | `--show-skipped` | bool | `false` | also print skipped dependencies (skip lines) |
 
 ## deps completion
@@ -267,6 +273,7 @@ deps config check --config .github/deps.yaml
 |---|---|---|---|
 | `--config` | string | `""` | config file, which must exist (when not set: \<dir>/.deps.yaml, then .deps.yml, else built-in defaults) |
 | `--dir` | string | `"."` | repository directory to scan |
+| `--repositories` | strings | `[]` | check the config of these repositories one after another instead of the checkout in --dir, each cloned into a temporary directory with the token: owner/name, a git URL, or owner/\<glob> (e.g. `my-org/*`, `my-org/svc-*`) for the repositories of an organization or user the token can list (GitLab: group/sub/name, a glob covers subgroups, \*\* any number of path segments), without archived ones and mirrors; an entry may name a directory to scan and the ref to read, \<repo>//\<dir>#\<ref> (repeatable, comma-separated) |
 
 ## deps config describe
 
@@ -336,6 +343,7 @@ DEPS_GIT_AUTHOR='bot <bot@example.com>' deps config show --sources
 | `--author-name` | string | `""` | commit author name, as for run (when not set: $DEPS_GIT_AUTHOR, then git.author of the config, then deps[bot]) |
 | `--config` | string | `""` | config file, which must exist (when not set: \<dir>/.deps.yaml, then .deps.yml, else built-in defaults) |
 | `--dir` | string | `"."` | repository directory to scan |
+| `--repositories` | strings | `[]` | show the config of these repositories one after another instead of the checkout in --dir, each cloned into a temporary directory with the token: owner/name, a git URL, or owner/\<glob> (e.g. `my-org/*`, `my-org/svc-*`) for the repositories of an organization or user the token can list (GitLab: group/sub/name, a glob covers subgroups, \*\* any number of path segments), without archived ones and mirrors; an entry may name a directory to scan and the ref to read, \<repo>//\<dir>#\<ref> (repeatable, comma-separated) |
 | `--sources` | bool | `false` | annotate each value with where it comes from: default, file, env or flag |
 
 ## deps explain
@@ -532,11 +540,15 @@ check   <url>                        (the check run, GitHub)
 
 Exit codes: 0 with no lookup errors in `--dir` (errors of `--base-dir` are reported but do not fail; lookups that failed on an exhausted rate limit are `warn` lines in either checkout), 1 with lookup errors, 2 for an invalid config in either checkout.
 
+**Without checkouts.** `--repositories <owner/name>` together with `--pr <number>` (GitLab: the merge request number) makes deps read the pull request from the forge and clone both sides itself: its head ref (`refs/pull/<n>/head`, on GitLab `refs/merge-requests/<n>/head`, so pull requests from forks work) and its base branch, into temporary directories that are removed again. The base branch is the one the forge reports for the pull request, and it is resolved as `--base` resolves it. `--repositories` and `--base-dir` are mutually exclusive, `--pr` needs `--repositories`, and exactly one repository must match.
+
 ### deps preview examples
 
 ```sh
 # in a pull_request job with the PR checked out in pr/ and the base branch in base/
 deps preview --dir pr --base-dir base
+# without checkouts: deps clones the pull request and its base itself
+deps preview --repositories my-org/app --pr 42
 ```
 
 ### deps preview flags
@@ -544,11 +556,13 @@ deps preview --dir pr --base-dir base
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--base` | string | `""` | base branch the pull request targets, resolved as run resolves it: its rules[].baseBranches match, and with useBaseBranchConfig on the default branch the config of both checkouts is merged over the default branch's (default: $GITHUB_BASE_REF, then $CI_MERGE_REQUEST_TARGET_BRANCH_NAME) |
-| `--base-dir` | string | `""` | checkout of the base branch to compare with (required) |
+| `--base-dir` | string | `""` | checkout of the base branch to compare with (required without --repositories) |
 | `--concurrency` | int | `32` | maximum concurrent network requests and lookups per upstream; npm and OSV get twice as many, container registries half; at least 1 |
 | `--config` | string | `""` | config file, which must exist (when not set: \<dir>/.deps.yaml, then .deps.yml, else built-in defaults); a Renovate file name (renovate.json, .renovaterc, …) turns on --renovate |
 | `--dir` | string | `"."` | repository directory to scan |
+| `--pr` | int | `0` | number of the pull request (GitLab: merge request) to preview in the repository of --repositories; deps clones its head and its base branch itself |
 | `--renovate` | bool | `false` | compatibility mode: translate the Renovate config (renovate.json, .github/renovate.json5, …, or --config) instead of reading .deps.yaml; deps migrate writes the same translation |
+| `--repositories` | strings | `[]` | preview a pull request of these repositories one after another instead of the checkout in --dir, each cloned into a temporary directory with the token: owner/name, a git URL, or owner/\<glob> (e.g. `my-org/*`, `my-org/svc-*`) for the repositories of an organization or user the token can list (GitLab: group/sub/name, a glob covers subgroups, \*\* any number of path segments), without archived ones and mirrors; an entry may name a directory to scan and the ref to read, \<repo>//\<dir>#\<ref> (repeatable, comma-separated) |
 
 ## deps run
 
@@ -764,7 +778,7 @@ Every flag reads its value from `DEPS_<FLAG>` (the flag name in upper case, `-` 
 | `DEPS_GIT_AUTHOR` | `run` | commit author `Name <email>`; between the `--author-*` flags and the config key `git.author`; ignored for platform commits |
 | `DEPS_ALLOW_TASKS` | `apply`, `run` | default of `--allow-tasks`: the `postUpgradeTasks` commands that may run (repository code), one pattern per line, `*` matching any text without `;`, `&`, `|`, backticks, `$(` or line breaks (`go generate ./...`, `make *`; `*` alone allows everything). Commands get the environment without `DEPS_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN`, `GITLAB_TOKEN`, `DEPS_GITHUB_COM_TOKEN`, `DEPS_GITLAB_TOKEN`, `CI_JOB_TOKEN`, `DEPS_SIGNING_KEY`, and without `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES` and `GIT_CEILING_DIRECTORIES`, so their git uses the repository they run in |
 | `DEPS_PLATFORM_COMMIT` | `run` | `auto`, `enabled` or `disabled`; overrides the config key `git.platformCommit` (commits through the GitHub API, see `deps help run`). Renovate's `RENOVATE_PLATFORM_COMMIT` |
-| `DEPS_REPOSITORIES` | `run`, `plan`, `explain` | the `--repositories` variable, entries separated by whitespace or commas: `owner/name` and `owner/<glob>`, for `plan` and `explain` also git URLs and `<repo>//<dir>#<ref>` |
+| `DEPS_REPOSITORIES` | `run`, `plan`, `apply`, `explain`, `preview`, `config check`, `config show` | the `--repositories` variable, entries separated by whitespace or commas: `owner/name` and `owner/<glob>`, for `plan` and `explain` also git URLs and `<repo>//<dir>#<ref>` |
 | `GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH` | `run` | run trigger and its payload (cron of `schedule` events); set by GitHub, Gitea and Forgejo runners |
 | `RUNNER_DEBUG` | all | `1` (an Actions re-run with debug logging) makes `debug` the default `--log-level`; the flag and its variable (listed below) still win |
 | `NO_COLOR`, `TERM=dumb`, `CLICOLOR_FORCE`, `FORCE_COLOR` | all | with `--color auto`: `NO_COLOR` (any value) or `TERM=dumb` turn colors off on a terminal; `CLICOLOR_FORCE` or `FORCE_COLOR` (any value but `0` or `false`) turn them on, also when piped and over `NO_COLOR`. `--color always`/`never` ignore them |
@@ -818,7 +832,7 @@ Every flag reads its value from `DEPS_<FLAG>` (the flag name in upper case, `-` 
 | `DEPS_AUTHOR_EMAIL` | `config show`, `run` | default of `--author-email`: commit author email, as for run (when not set: $DEPS_GIT_AUTHOR, then git.author of the config, then deps-bot@noreply.invalid) |
 | `DEPS_AUTHOR_NAME` | `config show`, `run` | default of `--author-name`: commit author name, as for run (when not set: $DEPS_GIT_AUTHOR, then git.author of the config, then deps[bot]) |
 | `DEPS_BASE` | `explain`, `preview`, `run` | default of `--base`: explain base branch <base> as run resolves it: from the tip of origin's branch (a temporary work tree unless the checkout is at it), its rules[].baseBranches matching it, with useBaseBranchConfig its config merged over the checkout's |
-| `DEPS_BASE_DIR` | `preview` | default of `--base-dir`: checkout of the base branch to compare with (required) |
+| `DEPS_BASE_DIR` | `preview` | default of `--base-dir`: checkout of the base branch to compare with (required without --repositories) |
 | `DEPS_COLOR` | all | default of `--color`: color stderr and the plan diff on stdout: auto (on a terminal, unless $NO_COLOR is set or $TERM is dumb; $CLICOLOR_FORCE or $FORCE_COLOR force it on stderr only), always, never |
 | `DEPS_CONCURRENCY` | `apply`, `explain`, `migrate`, `plan`, `preview`, `run`, `submit` | default of `--concurrency`: maximum concurrent network requests and lookups per upstream; npm and OSV get twice as many, container registries half; at least 1 |
 | `DEPS_CONFIG` | `apply`, `config check`, `config show`, `explain`, `init`, `migrate`, `plan`, `preview`, `run`, `submit` | default of `--config`: config file, which must exist (when not set: <dir>/.deps.yaml, then .deps.yml, else built-in defaults); a Renovate file name (renovate.json, .renovaterc, …) turns on --renovate |
@@ -827,11 +841,13 @@ Every flag reads its value from `DEPS_<FLAG>` (the flag name in upper case, `-` 
 | `DEPS_DRY_RUN` | `run`, `submit` | default of `--dry-run`: report what would change without pushing or calling write APIs (no PR, merge or issue writes); works without a token |
 | `DEPS_FORCE` | `init`, `migrate` | default of `--force`: overwrite an existing config file |
 | `DEPS_FROM_RENOVATE` | `init` | default of `--from-renovate`: translate this Renovate config (JSON, e.g. renovate.json) into the new file |
+| `DEPS_INTO` | `apply` | default of `--into`: directory the clones of --repositories are made in, as <into>/<owner>/<name>, and kept after the command, so the changes can be inspected, tested and committed (required with --repositories; each clone directory must not exist or be empty) |
 | `DEPS_LOG_FORMAT` | all | default of `--log-format`: log format: auto (actions on a GitHub/Gitea Actions runner, pretty on a terminal, else text), pretty, text, json, actions (pretty records without elapsed time, colored, plus workflow commands: annotations, log groups) |
 | `DEPS_LOG_LEVEL` | all | default of `--log-level`: log level: debug, info, warn, error (when not set: debug with $RUNNER_DEBUG=1, else warn) |
 | `DEPS_MAX_NEW_PRS` | `run` | default of `--max-new-prs`: maximum number of pull requests to create per run (0 = unlimited) |
 | `DEPS_OUTPUT` | `migrate` | default of `--output`: file to write (when not set: <dir>/.deps.yaml; - writes to stdout) |
 | `DEPS_PLATFORM` | `run` | default of `--platform`: forge type: auto\|github\|gitea\|forgejo\|gitlab (auto: from the CI environment, else the origin remote) |
+| `DEPS_PR` | `preview` | default of `--pr`: number of the pull request (GitLab: merge request) to preview in the repository of --repositories; deps clones its head and its base branch itself |
 | `DEPS_RENOVATE` | `apply`, `explain`, `plan`, `preview`, `run`, `submit` | default of `--renovate`: compatibility mode: translate the Renovate config (renovate.json, .github/renovate.json5, …, or --config) instead of reading .deps.yaml; deps migrate writes the same translation |
 | `DEPS_REPO` | `run` | default of `--repo`: repository owner/name, or the GitLab project path (default: detected) |
 | `DEPS_REPORT` | `apply`, `plan`, `run` | default of `--report`: also write the result as JSON to this file (see deps help output) |

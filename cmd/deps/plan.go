@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -111,17 +112,39 @@ func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error
 }
 
 // planRepositories plans each repository of --repositories in turn, sharing the datasources
-// between them, and writes one report over all of them. A failing repository does not stop
-// the others.
+// between them, and writes one report over all of them.
 func planRepositories(ctx context.Context, cmd *cli.Command, o *rootOpts, entries []string) error {
-	start := time.Now()
-	stderr := cmd.Root().ErrWriter
-	client := newHTTPClient()
-	src, err := newRemoteSource(ctx, o, entries, platform.Overrides{}, envToken(), client)
+	return repositoriesCommand(ctx, cmd, o, entries, false, "")
+}
+
+// applyRepositories applies to a kept clone of each repository of --repositories under into
+// (<into>/<owner>/<name>), so the changed files, their lockfiles and the output of the
+// post-upgrade tasks stay for inspection.
+func applyRepositories(ctx context.Context, cmd *cli.Command, o *rootOpts, entries []string, into string) error {
+	abs, err := filepath.Abs(into)
 	if err != nil {
 		return err
 	}
-	multi := newMultiRun("plan")
+	return repositoriesCommand(ctx, cmd, o, entries, true, abs)
+}
+
+// repositoriesCommand plans (write=false) or applies (write=true) every repository of
+// entries in turn, sharing the datasources between them, and writes one report over all of
+// them. A failing repository does not stop the others.
+func repositoriesCommand(ctx context.Context, cmd *cli.Command, o *rootOpts, entries []string, write bool, into string) error {
+	start := time.Now()
+	stderr := cmd.Root().ErrWriter
+	client := newHTTPClient()
+	src, err := newRemoteSource(ctx, o, entries, envToken(), client)
+	if err != nil {
+		return err
+	}
+	src.into = into
+	command := "plan"
+	if write {
+		command = "apply"
+	}
+	multi := newMultiRun(command)
 	var sessions repoSessions
 	defer sessions.close()
 	total, failed, err := src.eachRepository(ctx, o, stderr, multi, func(dir, name string, info platform.Info) error {
@@ -129,7 +152,7 @@ func planRepositories(ctx context.Context, cmd *cli.Command, o *rootOpts, entrie
 		if err != nil {
 			return err
 		}
-		return planSession(ctx, cmd, o, s, false, multi, name, time.Now())
+		return planSession(ctx, cmd, o, s, write, multi, name, time.Now())
 	})
 	if err != nil {
 		return err
