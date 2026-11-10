@@ -13,8 +13,12 @@ import (
 
 // ecoRedHat is the ecosystem Red Hat Enterprise Linux advisories are queried under: OSV lists
 // them under per-stream ecosystems ("Red Hat:enterprise_linux:9::appstream") that a query
-// cannot name, so the stream is selected locally.
-const ecoRedHat = "Red Hat"
+// cannot name, so the stream is selected locally. SUSE Linux Enterprise is the same shape
+// ("SUSE:Linux Enterprise Server 15 SP5-LTSS"; a query naming the product returns nothing).
+const (
+	ecoRedHat = "Red Hat"
+	ecoSUSE   = "SUSE"
+)
 
 // debianSuites maps Debian codenames to their OSV ecosystem. Aliases (stable, testing,
 // unstable, sid) are left out: they move to another release over time.
@@ -42,7 +46,9 @@ var (
 	alpineBranch = regexp.MustCompile(`^v\d+\.\d+$`)
 	rhelSegment  = regexp.MustCompile(`^(?:rhel|ubi)(\d+)$`)
 	majorSegment = regexp.MustCompile(`^(\d+)(?:\.\d+)?$`)
-	leapSegment  = regexp.MustCompile(`^15\.\d+$`)
+	leapSegment  = regexp.MustCompile(`^\d+\.\d+$`)
+	eulerSegment = regexp.MustCompile(`(?i)^openeuler-(\d+\.\d+(?:-[\w.-]+)?)$`)
+	sleSegment   = regexp.MustCompile(`(?i)^(\d+(?:\.\d+)?)(?:-(sp\d+))?$`)
 )
 
 // distroTarget returns the target of a deb, apk or rpm dep whose registry URL names a
@@ -68,7 +74,7 @@ func distroTarget(d dep.Dep) *target {
 			var stream string
 			if eco, stream = rpmEcosystem(u); stream != "" {
 				t := newTarget(query{Package: pkg{Name: d.Name, Ecosystem: eco}, Version: v})
-				t.distro, t.stream = true, stream
+				t.distro, t.stream, t.scheme = true, stream, "rpm"
 				return t
 			}
 		}
@@ -126,14 +132,19 @@ func apkEcosystem(u *url.URL) string {
 
 // rpmEcosystem maps the path of an rpm repository URL, on any mirror, to Rocky Linux:<major>
 // (`/rocky/9/BaseOS/…`, `/rocky/9.4/…`), AlmaLinux:<major> (`/almalinux/9/…`),
-// openSUSE:Leap <x.y> (`/leap/15.6/…`) or Red Hat (`/rhel9/…`, `/ubi9/…`). For Red Hat it also
-// returns the ecosystem prefix of the release's streams ("Red Hat:enterprise_linux:9:").
+// openSUSE:Leap <x.y> (`/leap/15.6/…`), openSUSE:Tumbleweed (`/tumbleweed/…`), Azure
+// Linux:<major> (`/azurelinux/3.0/…`, `/cbl-mariner/2.0/…`), openEuler:<release>
+// (`/openEuler-24.03-LTS-SP1/…`), Mageia:<major> (`/mageia/distrib/9/…`) or Red Hat
+// (`/rhel9/…`, `/ubi9/…`) and SUSE (`/SUSE/Updates/SLE-Server/15-SP5/…`). For Red Hat and
+// SUSE it also returns the ecosystem prefix of the release's streams ("Red
+// Hat:enterprise_linux:9:", "SUSE:Linux Enterprise Server 15 SP5").
 func rpmEcosystem(u *url.URL) (eco, stream string) {
-	segs := strings.Split(strings.ToLower(u.Path), "/")
-	for i, s := range segs {
+	segs := strings.Split(u.Path, "/")
+	lower := strings.Split(strings.ToLower(u.Path), "/")
+	for i, s := range lower {
 		next := ""
-		if i+1 < len(segs) {
-			next = segs[i+1]
+		if i+1 < len(lower) {
+			next = lower[i+1]
 		}
 		switch s {
 		case "rocky", "almalinux":
@@ -147,9 +158,37 @@ func rpmEcosystem(u *url.URL) (eco, stream string) {
 			if leapSegment.MatchString(next) {
 				return "openSUSE:Leap " + next, ""
 			}
+		case "tumbleweed":
+			return "openSUSE:Tumbleweed", ""
+		case "azurelinux", "cbl-mariner":
+			// The repositories are versioned "3.0"/"2.0", the ecosystems by major ("Azure Linux:3").
+			if m := majorSegment.FindStringSubmatch(next); m != nil {
+				return "Azure Linux:" + m[1], ""
+			}
+		case "distrib":
+			// Mageia mirrors: /mageia/distrib/9/x86_64/media/core/updates/.
+			if i > 0 && lower[i-1] == "mageia" {
+				if m := majorSegment.FindStringSubmatch(next); m != nil {
+					return "Mageia:" + m[1], ""
+				}
+			}
 		default:
 			if m := rhelSegment.FindStringSubmatch(s); m != nil {
 				return ecoRedHat, ecoRedHat + ":enterprise_linux:" + m[1] + ":"
+			}
+			if m := eulerSegment.FindStringSubmatch(segs[i]); m != nil {
+				return "openEuler:" + m[1], ""
+			}
+			// updates.suse.com: /SUSE/Updates/SLE-Server/15-SP5/x86_64/update/,
+			// /SUSE/Updates/SLE-Module-Basesystem/15-SP6/…, /SUSE/Updates/SLE-Micro/5.5/….
+			if p := sleProduct(s); p != "" {
+				if m := sleSegment.FindStringSubmatch(next); m != nil {
+					stream := ecoSUSE + ":" + p + " " + m[1]
+					if m[2] != "" {
+						stream += " " + strings.ToUpper(m[2])
+					}
+					return ecoSUSE, stream
+				}
 			}
 		}
 	}
@@ -167,13 +206,36 @@ func (v *vuln) streamEntries(name, stream string) []affected {
 	return out
 }
 
-// rpmAffected evaluates the ECOSYSTEM ranges of entries against the dep version with RPM
-// ordering, following the OSV spec's evaluation algorithm. OSV matches a "Red Hat" query
-// against every release, so a release stream's ranges are checked here.
-func (t *target) rpmAffected(entries []affected) bool {
-	s, _ := versioning.Get("rpm")
+// sleProduct maps a SUSE Linux Enterprise repository segment to the product name OSV writes
+// its ecosystems with ("sle-server" → "Linux Enterprise Server", "sle-module-package-hub" →
+// "Linux Enterprise Module for Package Hub"), "" when the segment names no SLE product.
+func sleProduct(seg string) string {
+	switch {
+	case seg == "sle-server":
+		return "Linux Enterprise Server"
+	case seg == "sle-micro":
+		return "Linux Enterprise Micro"
+	case strings.HasPrefix(seg, "sle-module-"):
+		words := strings.Split(strings.TrimPrefix(seg, "sle-module-"), "-")
+		for i, w := range words {
+			if w != "" {
+				words[i] = strings.ToUpper(w[:1]) + w[1:]
+			}
+		}
+		return "Linux Enterprise Module for " + strings.Join(words, " ")
+	}
+	return ""
+}
+
+// schemeAffected evaluates the ECOSYSTEM and SEMVER ranges of entries against the dep version
+// with the target's versioning scheme (t.scheme), following the OSV spec's evaluation
+// algorithm. It is used where OSV does not evaluate the version server-side: a "Red Hat" or
+// "SUSE" query matches every release (so a release stream's ranges are checked here, with RPM
+// ordering), and Julia and SwiftURL queries return every advisory of the package.
+func (t *target) schemeAffected(entries []affected) bool {
+	s, ok := versioning.Get(t.scheme)
 	v := t.qs[0].Version
-	if !s.Valid(v) {
+	if !ok || !s.Valid(v) {
 		return false
 	}
 	at := func(bound string, ok func(int) bool) bool {
@@ -181,7 +243,7 @@ func (t *target) rpmAffected(entries []affected) bool {
 	}
 	for _, a := range entries {
 		for _, r := range a.Ranges {
-			if r.Type != "ECOSYSTEM" {
+			if r.Type != "ECOSYSTEM" && r.Type != "SEMVER" {
 				continue
 			}
 			in := false

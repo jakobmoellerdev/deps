@@ -377,6 +377,9 @@ func report(w io.Writer, t terminal, showSkipped bool, res *engine.Result, errs 
 				ids[i] = a.ID
 			}
 			sec = "  security: " + strings.Join(ids, ",")
+			if risk := dep.Worst(u.Advisories); risk != "" {
+				sec += " (" + risk + ")"
+			}
 		}
 		hint := ""
 		if u.Lockfile {

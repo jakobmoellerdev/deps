@@ -2,6 +2,9 @@
 package dep
 
 import (
+	"fmt"
+	"math"
+	"strconv"
 	"strings"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/prtemplate"
@@ -185,8 +188,86 @@ func ExpandVersion(tmpl, version string) string {
 	return strings.ReplaceAll(tmpl, "{{version}}", version)
 }
 
-// Advisory is a security advisory fixed by an update.
-type Advisory struct{ ID, Summary, URL string }
+// Advisory is a security advisory fixed by an update. Besides the advisory itself it carries
+// the risk data the triage sources add (see internal/datasource/triage): the CVSS base score,
+// the EPSS probability of exploitation and whether CISA lists the vulnerability as known
+// exploited.
+type Advisory struct {
+	ID, Summary, URL string
+	// Aliases are the other IDs of the same vulnerability (CVE-…, GHSA-…), as the advisory
+	// lists them; the CVE aliases key the EPSS and KEV lookups.
+	Aliases []string
+	CVSS    float64 // CVSS v3 base score (0.1–10), 0 = unknown
+	EPSS    float64 // probability of exploitation within 30 days (0–1), 0 = unknown
+	KEV     bool    // listed in CISA's Known Exploited Vulnerabilities catalog
+}
+
+// Severity is the CVSS v3 qualitative rating of the score ("critical", "high", "medium",
+// "low"), "" when the score is unknown.
+func (a Advisory) Severity() string {
+	switch {
+	case a.CVSS >= 9:
+		return "critical"
+	case a.CVSS >= 7:
+		return "high"
+	case a.CVSS >= 4:
+		return "medium"
+	case a.CVSS > 0:
+		return "low"
+	}
+	return ""
+}
+
+// Risk renders the risk data as one phrase ("CVSS 9.8 critical, EPSS 94%, CISA KEV"), "" when
+// no source knew anything about the advisory.
+func (a Advisory) Risk() string {
+	var parts []string
+	if s := a.Severity(); s != "" {
+		parts = append(parts, fmt.Sprintf("CVSS %s %s", strconv.FormatFloat(a.CVSS, 'f', -1, 64), s))
+	}
+	if a.EPSS > 0 {
+		parts = append(parts, "EPSS "+epssPercent(a.EPSS))
+	}
+	if a.KEV {
+		parts = append(parts, "CISA KEV")
+	}
+	return strings.Join(parts, ", ")
+}
+
+// epssPercent renders an EPSS probability as a percentage, with a decimal below 1% and "<0.1%"
+// for the smallest scores, which most advisories have.
+func epssPercent(p float64) string {
+	switch pct := p * 100; {
+	case pct < 0.1:
+		return "<0.1%"
+	case pct < 10:
+		return strconv.FormatFloat(math.Round(pct*10)/10, 'f', -1, 64) + "%"
+	default:
+		return strconv.Itoa(int(math.Round(pct))) + "%"
+	}
+}
+
+// Worst summarizes advs for a one-line report: the highest CVSS rating among them and whether
+// CISA lists any of them as known exploited ("critical, known exploited"); "" when no risk
+// data is known.
+func Worst(advs []Advisory) string {
+	var top Advisory
+	kev := false
+	for _, a := range advs {
+		if a.CVSS > top.CVSS {
+			top = a
+		}
+		kev = kev || a.KEV
+	}
+	var parts []string
+	if s := top.Severity(); s != "" {
+		parts = append(parts, s)
+	}
+	if kev {
+		parts = append(parts, "known exploited")
+	}
+	return strings.Join(parts, ", ")
+}
 
 // Update is a proposed change to one Dep.
 type Update struct {

@@ -308,7 +308,7 @@ func writeTrace(w io.Writer, cfg *config.Config, t engine.Trace) {
 		}
 		line("result", "update %s -> %s (%s%s)", from, to, u.Type, bucket)
 		for _, a := range u.Advisories {
-			line("security", "%s", strings.Join(nonEmpty(a.ID, a.Summary, a.URL), "  "))
+			line("security", "%s", strings.Join(nonEmpty(a.ID, a.Summary, a.Risk(), a.URL), "  "))
 		}
 	}
 }

@@ -165,8 +165,8 @@ func (a *annotator) security(u dep.Update) {
 	ids := make([]string, len(u.Advisories))
 	for i, adv := range u.Advisories {
 		ids[i] = adv.ID
-		if adv.Summary != "" {
-			ids[i] += " (" + adv.Summary + ")"
+		if detail := strings.TrimSpace(strings.Join(nonEmpty(adv.Summary, adv.Risk()), "; ")); detail != "" {
+			ids[i] += " (" + detail + ")"
 		}
 	}
 	a.command("notice", a.path(a.dir, u.Dep.File), u.Dep.Line, 0, fmt.Sprintf("security update %s %s -> %s: %s", u.Dep.Name, from, to, strings.Join(ids, ", ")))

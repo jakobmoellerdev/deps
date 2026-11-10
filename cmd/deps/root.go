@@ -69,6 +69,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/rustversion"
 	sbtds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/sbt"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/tfregistry"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/triage"
 	vcpkgds "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/vcpkg"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/githubapi"
@@ -420,7 +421,8 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 	auth = httpx.NewAuth(info, token, os.Getenv, append(gitLabAuth(env.GitLabURL, os.Getenv), httpx.WithSecretHook(actionsLog.mask), ghToken())...)
 	gh := githubapi.New(client, auth, sem)
 	slog.DebugContext(ctx, "config loaded", "root", root, "rules", len(cfg.Rules), "ignorePaths", len(cfg.IgnorePaths), "pin", cfg.Pin)
-	osvSource := osv.New(client, limits.OSV)
+	// Advisories carry the risk data of deps.dev (CVSS), FIRST (EPSS) and CISA (KEV).
+	osvSource := triage.New(osv.New(client, limits.OSV), client, limits.OSV)
 	var security engine.SecuritySource
 	if cfg.SecurityEnabled() {
 		security = osvSource

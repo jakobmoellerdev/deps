@@ -257,6 +257,7 @@ rules:
 
 Renovate's `timezone`. An [IANA time zone](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) name such as `Europe/Berlin` or `America/New_York`; the time zone database is built into deps. It applies to the time windows of every schedule (top level, `rules[].schedule`, `lockFileMaintenance.schedule`), including daylight saving time; cron triggers are matched as text and are unaffected. `Local` is rejected, unknown names fail with `timezone: unknown IANA time zone "Europe/Berln"`. Summaries and `deps explain` print a schedule with windows outside UTC with its zone, e.g. `before 6am on monday (Europe/Berlin)`.
 
+
 ## Config.branchPrefix
 
 Branches are `<prefix><additionalBranchPrefix><slug(name)>[-<bucket>]` for the updates of one dependency, across managers and files, `<prefix><additionalBranchPrefix>group/<slug(group)>[-<bucket>]` for [groups](#rulesgroup) and, for [security groups](#rulessecuritygroup), `<prefix><additionalBranchPrefix>group/<slug(securityGroup)>[-<bucket>]-security`; lock file maintenance uses `<prefix>lock-file-maintenance`. With several [base branches](#basebranches) the base follows the prefix (`<prefix><base>/…`). deps never touches branches and PRs outside the prefix.
@@ -345,10 +346,11 @@ builtins:
 
 ## Builtins.security
 
-deps queries [OSV](https://osv.dev) for Go modules, npm packages, crates.io crates, PyPI packages, Maven artifacts and GitHub Actions. A vulnerable dep is moved to the smallest compatible release at or above the minimum fixed version.
+deps queries [OSV](https://osv.dev) for Go modules, npm packages, crates.io crates, PyPI packages, Maven artifacts, RubyGems, Packagist, NuGet, Pub, Hex, Julia and Swift packages, GitHub Actions, Terraform providers and CLIs, and Debian, Ubuntu, Alpine, Wolfi, Chainguard, Rocky, AlmaLinux, openSUSE, Azure Linux, openEuler, Mageia, Red Hat and SUSE packages. A vulnerable dep is moved to the smallest compatible release at or above the minimum fixed version.
 
 - The go.mod `toolchain` directive is checked against the Go standard library (`stdlib`) and the go command (`toolchain`), so `toolchain go1.22.0` gets a security update to the smallest Go release of its line that fixes its advisories (`1.22.2` for GO-2024-2687). The `go` directive is checked too once a rule un-ignores it (it is ignored by default); a 2-part `go 1.22` admits every 1.22.x toolchain, so only an advisory without a fix in 1.22 moves it.
-- Container images, Terraform providers and modules, and Helm charts get no security updates: OSV has no ecosystem for them. The queries per ecosystem are listed under [Security advisories (OSV)](managers.md#security-advisories-osv).
+- Container images, Terraform modules and Helm charts get no security updates: OSV has no ecosystem for them. The queries per ecosystem are listed under [Security advisories (OSV)](managers.md#security-advisories-osv).
+- Every advisory is annotated with its CVSS v3 base score ([deps.dev](https://deps.dev)), the EPSS probability that it is exploited within 30 days ([FIRST](https://www.first.org/epss/)) and whether [CISA](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) lists it as known exploited. The data is shown with the advisory (`CVSS 9.8 critical, EPSS 94%, CISA KEV`) and changes no decision; a failing lookup leaves it out.
 - Security updates bypass `allow`, `allowedUpdateTypes`, schedules, `minimumReleaseAge` and rules with `updateTypes`. They never bypass a pre-policy `ignore`, except the default ignore of pip_requirements `indirect` pins (the transitive pins of pip-compile/`uv pip compile` output, which Renovate's vulnerability alerts enable too): those get security updates, and only those, unless a rule ignores them.
 - They always use commit type `fix`, get a `[security]` title suffix, and are not put into a `group`. A rule's [`securityGroup`](#rulessecuritygroup) opts in to batching them into a PR of their own.
 - A failed OSV lookup is reported as an error (`security advisories: <err>`). Advisories that cannot be fetched while others can are logged as a warning and left out.

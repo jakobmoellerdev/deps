@@ -38,6 +38,15 @@ func TestDistroTarget(t *testing.T) {
 		{"rhel", "rpm", "https://cdn.redhat.com/content/dist/rhel9/9/x86_64/baseos/os", "Red Hat", "Red Hat:enterprise_linux:9:"},
 		{"ubi", "rpm", "https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi8/8/x86_64/appstream/os", "Red Hat", "Red Hat:enterprise_linux:8:"},
 		{"fedora", "rpm", "https://dl.fedoraproject.org/pub/fedora/linux/releases/41/Everything/x86_64/os/", "", ""},
+		{"leap 16", "rpm", "https://download.opensuse.org/update/leap/16.0/oss/", "openSUSE:Leap 16.0", ""},
+		{"tumbleweed", "rpm", "https://download.opensuse.org/tumbleweed/repo/oss/", "openSUSE:Tumbleweed", ""},
+		{"azure linux", "rpm", "https://packages.microsoft.com/azurelinux/3.0/prod/base/x86_64/", "Azure Linux:3", ""},
+		{"cbl-mariner", "rpm", "https://packages.microsoft.com/cbl-mariner/2.0/prod/base/x86_64/", "Azure Linux:2", ""},
+		{"openeuler", "rpm", "https://repo.openeuler.org/openEuler-24.03-LTS-SP1/OS/x86_64/", "openEuler:24.03-LTS-SP1", ""},
+		{"mageia", "rpm", "https://mirror.init7.net/mageia/distrib/9/x86_64/media/core/updates/", "Mageia:9", ""},
+		{"sles server", "rpm", "https://updates.suse.com/SUSE/Updates/SLE-Server/12-SP5/x86_64/update/", "SUSE", "SUSE:Linux Enterprise Server 12 SP5"},
+		{"sles module", "rpm", "https://updates.suse.com/SUSE/Updates/SLE-Module-Basesystem/15-SP6/x86_64/update/", "SUSE", "SUSE:Linux Enterprise Module for Basesystem 15 SP6"},
+		{"sle micro", "rpm", "https://updates.suse.com/SUSE/Updates/SLE-Micro/5.5/x86_64/update/", "SUSE", "SUSE:Linux Enterprise Micro 5.5"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -152,8 +161,9 @@ func TestRPMAffected(t *testing.T) {
 	}
 	for _, tt := range tests {
 		tg := newTarget(query{Package: pkg{Name: "p", Ecosystem: ecoRedHat}, Version: tt.version})
-		if got := tg.rpmAffected(entries(tt.events...)); got != tt.want {
-			t.Errorf("rpmAffected(%s, %v) = %v, want %v", tt.version, tt.events, got, tt.want)
+		tg.scheme = "rpm"
+		if got := tg.schemeAffected(entries(tt.events...)); got != tt.want {
+			t.Errorf("schemeAffected(%s, %v) = %v, want %v", tt.version, tt.events, got, tt.want)
 		}
 	}
 }

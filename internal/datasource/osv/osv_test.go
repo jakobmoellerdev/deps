@@ -177,8 +177,8 @@ func TestAdvisoriesGo(t *testing.T) {
 	}
 	want := [][]datasource.Vuln{
 		{
-			{Advisory: dep.Advisory{ID: "GO-2024-2687", Summary: "summary of GO-2024-2687", URL: "https://example.com/GO-2024-2687"}, Fixed: []string{"v0.23.0"}},
-			{Advisory: dep.Advisory{ID: "GO-2024-3333", Summary: "summary of GO-2024-3333", URL: "https://example.com/GO-2024-3333"}, Fixed: []string{"v0.33.0", "v1.2.0"}},
+			{Advisory: dep.Advisory{ID: "GO-2024-2687", Summary: "summary of GO-2024-2687", URL: "https://example.com/GO-2024-2687", Aliases: []string{"CVE-2023-45288", "GHSA-4v7x-pqxf-cx7m"}}, Fixed: []string{"v0.23.0"}},
+			{Advisory: dep.Advisory{ID: "GO-2024-3333", Summary: "summary of GO-2024-3333", URL: "https://example.com/GO-2024-3333", Aliases: []string{}}, Fixed: []string{"v0.33.0", "v1.2.0"}},
 		},
 		{{Advisory: dep.Advisory{ID: "GO-SUB", Summary: "first line", URL: "https://osv.dev/vulnerability/GO-SUB"}, Fixed: []string{"v1.0.1"}}},
 		nil,
@@ -241,20 +241,20 @@ func TestAdvisoriesGoToolchain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	adv := func(id, summary string) dep.Advisory {
-		return dep.Advisory{ID: id, Summary: summary, URL: "https://osv.dev/vulnerability/" + id}
+	adv := func(id, summary string, aliases ...string) dep.Advisory {
+		return dep.Advisory{ID: id, Summary: summary, URL: "https://osv.dev/vulnerability/" + id, Aliases: aliases}
 	}
 	x509 := adv("GO-2024-2598", "Verify panics on certificates with an unknown public key algorithm in crypto/x509")
 	want := [][]datasource.Vuln{
 		{
 			{Advisory: x509, Fixed: []string{"1.21.8", "1.22.1"}},
-			{Advisory: adv("GO-2024-2687", "HTTP/2 CONTINUATION flood in net/http"), Fixed: []string{"1.21.9", "1.22.2"}},
+			{Advisory: adv("GO-2024-2687", "HTTP/2 CONTINUATION flood in net/http", "CVE-2023-45288", "GHSA-4v7x-pqxf-cx7m"), Fixed: []string{"1.21.9", "1.22.2"}},
 			{Advisory: adv("GO-2024-2825", "Arbitrary code execution during build on Darwin in cmd/go"), Fixed: []string{"1.21.10", "1.22.3"}},
 			{Advisory: adv("GO-2026-6179", "s"), Fixed: []string{"1.25.13"}},
 		},
 		{
 			{Advisory: x509, Fixed: []string{"1.21", "1.22"}},
-			{Advisory: adv("GO-2024-2687", "HTTP/2 CONTINUATION flood in net/http"), Fixed: []string{"1.21", "1.22"}},
+			{Advisory: adv("GO-2024-2687", "HTTP/2 CONTINUATION flood in net/http", "CVE-2023-45288", "GHSA-4v7x-pqxf-cx7m"), Fixed: []string{"1.21", "1.22"}},
 			{Advisory: adv("GO-2024-2825", "Arbitrary code execution during build on Darwin in cmd/go"), Fixed: []string{"1.21", "1.22"}},
 			{Advisory: adv("GO-2026-6179", "s"), Fixed: []string{"1.25"}},
 		},
@@ -645,7 +645,7 @@ func TestAdvisoriesNpm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lodash := []datasource.Vuln{{Advisory: dep.Advisory{ID: "GHSA-35jh-r3h4-6jhm", Summary: "Command injection", URL: "https://osv.dev/vulnerability/GHSA-35jh-r3h4-6jhm"}, Fixed: []string{"4.17.21"}}}
+	lodash := []datasource.Vuln{{Advisory: dep.Advisory{ID: "GHSA-35jh-r3h4-6jhm", Summary: "Command injection", URL: "https://osv.dev/vulnerability/GHSA-35jh-r3h4-6jhm", Aliases: []string{"CVE-ALIAS"}}, Fixed: []string{"4.17.21"}}}
 	want := [][]datasource.Vuln{lodash, nil, lodash, lodash, nil}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got  %+v\nwant %+v", got, want)
@@ -677,7 +677,7 @@ func TestAdvisoriesCrates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	adv := dep.Advisory{ID: "RUSTSEC-2020-0071", Summary: "Potential segfault in the time crate", URL: "https://osv.dev/vulnerability/RUSTSEC-2020-0071"}
+	adv := dep.Advisory{ID: "RUSTSEC-2020-0071", Summary: "Potential segfault in the time crate", URL: "https://osv.dev/vulnerability/RUSTSEC-2020-0071", Aliases: []string{"GHSA-wcg3-cvx6-7396"}}
 	want := [][]datasource.Vuln{{{Advisory: adv, Fixed: []string{"0.2.23"}}}, {{Advisory: adv, Fixed: []string{"0.2"}}}, nil, {{Advisory: adv, Fixed: []string{"0.2.23"}}}, nil}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got  %+v\nwant %+v", got, want)
@@ -705,7 +705,7 @@ func TestAdvisoriesPyPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	django := []datasource.Vuln{{Advisory: dep.Advisory{ID: "GHSA-qrw5-5h28-6cmg", Summary: "Denial of service", URL: "https://osv.dev/vulnerability/GHSA-qrw5-5h28-6cmg"}, Fixed: []string{"4.2.2"}}}
+	django := []datasource.Vuln{{Advisory: dep.Advisory{ID: "GHSA-qrw5-5h28-6cmg", Summary: "Denial of service", URL: "https://osv.dev/vulnerability/GHSA-qrw5-5h28-6cmg", Aliases: []string{"PYSEC-2023-100"}}, Fixed: []string{"4.2.2"}}}
 	want := [][]datasource.Vuln{django, nil, django}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got  %+v\nwant %+v", got, want)
@@ -775,7 +775,7 @@ func TestAdvisoriesRubyGems(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rack := []datasource.Vuln{{Advisory: dep.Advisory{ID: "GHSA-22f2-v57c-j9cx", Summary: "Rack has possible DoS Vulnerability with Range Header", URL: "https://osv.dev/vulnerability/GHSA-22f2-v57c-j9cx"}, Fixed: []string{"2.0.9.4", "2.2.8.1"}}}
+	rack := []datasource.Vuln{{Advisory: dep.Advisory{ID: "GHSA-22f2-v57c-j9cx", Summary: "Rack has possible DoS Vulnerability with Range Header", URL: "https://osv.dev/vulnerability/GHSA-22f2-v57c-j9cx", Aliases: []string{"CVE-2024-26146"}}, Fixed: []string{"2.0.9.4", "2.2.8.1"}}}
 	if want := [][]datasource.Vuln{rack, rack, nil, nil}; !reflect.DeepEqual(got, want) {
 		t.Errorf("got  %+v\nwant %+v", got, want)
 	}
@@ -805,7 +805,7 @@ func TestAdvisoriesPackagist(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	guzzle := []datasource.Vuln{{Advisory: dep.Advisory{ID: "GHSA-25mq-v84q-4j7r", Summary: "CURLOPT_HTTPAUTH option not cleared on change of origin", URL: "https://osv.dev/vulnerability/GHSA-25mq-v84q-4j7r"}, Fixed: []string{"6.5.8", "7.4.5"}}}
+	guzzle := []datasource.Vuln{{Advisory: dep.Advisory{ID: "GHSA-25mq-v84q-4j7r", Summary: "CURLOPT_HTTPAUTH option not cleared on change of origin", URL: "https://osv.dev/vulnerability/GHSA-25mq-v84q-4j7r", Aliases: []string{"CVE-2022-31090"}}, Fixed: []string{"6.5.8", "7.4.5"}}}
 	if want := [][]datasource.Vuln{guzzle, guzzle, nil, nil}; !reflect.DeepEqual(got, want) {
 		t.Errorf("got  %+v\nwant %+v", got, want)
 	}
@@ -830,7 +830,7 @@ func TestAdvisoriesPub(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vuln := []datasource.Vuln{{Advisory: dep.Advisory{ID: "GHSA-4rgh-jx4f-qfcq", Summary: "http before 0.13.3 vulnerable to header injection", URL: "https://osv.dev/vulnerability/GHSA-4rgh-jx4f-qfcq"}, Fixed: []string{"0.13.3"}}}
+	vuln := []datasource.Vuln{{Advisory: dep.Advisory{ID: "GHSA-4rgh-jx4f-qfcq", Summary: "http before 0.13.3 vulnerable to header injection", URL: "https://osv.dev/vulnerability/GHSA-4rgh-jx4f-qfcq", Aliases: []string{"CVE-2020-35669"}}, Fixed: []string{"0.13.3"}}}
 	if want := [][]datasource.Vuln{vuln, vuln, nil}; !reflect.DeepEqual(got, want) {
 		t.Errorf("got  %+v\nwant %+v", got, want)
 	}
@@ -856,7 +856,7 @@ func TestAdvisoriesNuGet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	nj := []datasource.Vuln{{Advisory: dep.Advisory{ID: "GHSA-5crp-9r3c-p9vr", Summary: "Improper Handling of Exceptional Conditions in Newtonsoft.Json", URL: "https://osv.dev/vulnerability/GHSA-5crp-9r3c-p9vr"}, Fixed: []string{"13.0.1"}}}
+	nj := []datasource.Vuln{{Advisory: dep.Advisory{ID: "GHSA-5crp-9r3c-p9vr", Summary: "Improper Handling of Exceptional Conditions in Newtonsoft.Json", URL: "https://osv.dev/vulnerability/GHSA-5crp-9r3c-p9vr", Aliases: []string{"CVE-2024-21907"}}, Fixed: []string{"13.0.1"}}}
 	if want := [][]datasource.Vuln{nj, nil, nil}; !reflect.DeepEqual(got, want) {
 		t.Errorf("got  %+v\nwant %+v", got, want)
 	}
@@ -886,7 +886,7 @@ func TestAdvisoriesHex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plug := []datasource.Vuln{{Advisory: dep.Advisory{ID: "GHSA-2q6v-32mr-8p8x", Summary: "Null Byte Injection in Plug.Static", URL: "https://osv.dev/vulnerability/GHSA-2q6v-32mr-8p8x"}, Fixed: []string{"1.0.4", "1.1.7", "1.2.3", "1.3.2"}}}
+	plug := []datasource.Vuln{{Advisory: dep.Advisory{ID: "GHSA-2q6v-32mr-8p8x", Summary: "Null Byte Injection in Plug.Static", URL: "https://osv.dev/vulnerability/GHSA-2q6v-32mr-8p8x", Aliases: []string{"CVE-2017-1000052"}}, Fixed: []string{"1.0.4", "1.1.7", "1.2.3", "1.3.2"}}}
 	if want := [][]datasource.Vuln{plug, plug, nil, nil}; !reflect.DeepEqual(got, want) {
 		t.Errorf("got  %+v\nwant %+v", got, want)
 	}
@@ -924,8 +924,8 @@ func TestAdvisoriesTerraform(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	aws := []datasource.Vuln{{Advisory: dep.Advisory{ID: "GHSA-r48h-jr2j-9g78", Summary: " HashiCorp Terraform Amazon Web Services (AWS) uses an insecure PRNG ", URL: "https://osv.dev/vulnerability/GHSA-r48h-jr2j-9g78"}, Fixed: []string{"1.14.0"}}}
-	tfAdv := dep.Advisory{ID: "GO-2023-2055", Summary: "Terraform allows arbitrary file write during the `init` operation in github.com/hashicorp/terraform", URL: "https://osv.dev/vulnerability/GO-2023-2055"}
+	aws := []datasource.Vuln{{Advisory: dep.Advisory{ID: "GHSA-r48h-jr2j-9g78", Summary: " HashiCorp Terraform Amazon Web Services (AWS) uses an insecure PRNG ", URL: "https://osv.dev/vulnerability/GHSA-r48h-jr2j-9g78", Aliases: []string{"CVE-2018-9057"}}, Fixed: []string{"1.14.0"}}}
+	tfAdv := dep.Advisory{ID: "GO-2023-2055", Summary: "Terraform allows arbitrary file write during the `init` operation in github.com/hashicorp/terraform", URL: "https://osv.dev/vulnerability/GO-2023-2055", Aliases: []string{"CVE-2023-4782", "GHSA-h626-pv66-hhm7"}}
 	want := [][]datasource.Vuln{aws, aws, nil, nil,
 		{{Advisory: tfAdv, Fixed: []string{"1.5.7"}}},
 		{{Advisory: tfAdv, Fixed: []string{"v1.5.7"}}},

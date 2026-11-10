@@ -297,7 +297,11 @@ func updateType(u dep.Update, st logx.Style) string {
 	for i, a := range u.Advisories {
 		ids[i] = a.ID
 	}
-	return t + ", " + st.Paint(logx.BoldRed, "security: "+strings.Join(ids, ","))
+	sec := "security: " + strings.Join(ids, ",")
+	if risk := dep.Worst(u.Advisories); risk != "" {
+		sec += " (" + risk + ")"
+	}
+	return t + ", " + st.Paint(logx.BoldRed, sec)
 }
 
 // groupNotes are the PR facts of a group besides its updates: status, automerge, schedule.

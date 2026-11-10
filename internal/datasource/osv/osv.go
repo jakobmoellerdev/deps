@@ -127,6 +127,8 @@ const (
 	ecoNuGet   = "NuGet"
 	ecoPub     = "Pub"
 	ecoHex     = "Hex"
+	ecoJulia   = "Julia"
+	ecoSwift   = "SwiftURL"
 )
 
 // Source queries OSV. Advisory documents are fetched once per ID per run.
@@ -171,7 +173,12 @@ type target struct {
 	tag    versioning.Tag // GitHub Actions: the dep version; crates.io, Go toolchains: the precision of fixes
 	cmp    [3]int         // GitHub Actions: tag padded for range evaluation
 	distro bool           // deb, apk, rpm: a distribution release's ecosystem
-	stream string         // Red Hat: the ecosystem prefix of the release's streams, ranges evaluated locally
+	// scheme is the versioning scheme the ranges are evaluated with locally, "" = OSV
+	// matched the version server-side (Julia and SwiftURL: "semver"; Red Hat and SUSE: "rpm").
+	scheme string
+	// stream is the ecosystem prefix of a release's streams (Red Hat, SUSE), whose entries
+	// a query naming only the parent ecosystem returns for every release.
+	stream string
 }
 
 func newTarget(qs ...query) *target {
@@ -299,6 +306,19 @@ func targetOf(d dep.Dep) *target {
 		}
 		return newTarget(query{Package: pkg{Name: d.Name, Ecosystem: ecoHex}, Version: v})
 	}
+	if d.Datasource == "julia-registry" { // Julia packages, and custom deps of the datasource
+		v := cmp.Or(d.Locked, d.Version)
+		if d.Name == "" || v == "" {
+			return nil
+		}
+		t := newTarget(query{Package: pkg{Name: d.Name, Ecosystem: ecoJulia}})
+		t.scheme = "semver" // OSV does not evaluate Julia ranges server-side
+		t.qs[0].Version = v
+		return t
+	}
+	if t := swiftTarget(d); t != nil {
+		return t
+	}
 	if d.Datasource == "deb" || d.Datasource == "apk" || d.Datasource == "rpm" {
 		return distroTarget(d)
 	}
@@ -366,6 +386,34 @@ func targetOf(d dep.Dep) *target {
 		return t
 	}
 	return nil
+}
+
+// swiftTarget returns the target of a Swift package manifest dependency (the swift and
+// xcodegen managers' `.package(url:)` entries and the mint manager's tools, all git-tags deps
+// of a repository): OSV's "SwiftURL" ecosystem names a package by its repository URL without
+// the scheme ("github.com/apple/swift-nio"). The version is the one Package.resolved pins
+// (dep.Dep.Locked), else the requirement's version, without the "v" SwiftPM drops anyway. OSV
+// does not evaluate SwiftURL ranges server-side (a version-less and a versioned query return
+// the same advisories, verified 2026-11-10), so they are evaluated locally with semver.
+func swiftTarget(d dep.Dep) *target {
+	switch d.Manager {
+	case "swift", "xcodegen", "mint":
+	default:
+		return nil
+	}
+	u, err := url.Parse(d.Source)
+	if err != nil || u.Hostname() == "" {
+		return nil
+	}
+	path := strings.TrimSuffix(strings.Trim(u.Path, "/"), ".git")
+	name := strings.ToLower(u.Hostname()) + "/" + path
+	v := strings.TrimPrefix(cmp.Or(d.Locked, d.Version), "v")
+	if !strings.Contains(path, "/") || v == "" {
+		return nil
+	}
+	t := newTarget(query{Package: pkg{Name: name, Ecosystem: ecoSwift}, Version: v})
+	t.scheme = "semver"
+	return t
 }
 
 // terraformTarget returns the target of a Terraform provider of the public registries or of
@@ -659,6 +707,8 @@ func match(t *target, ids []string, docs map[string]*vuln) []datasource.Vuln {
 		native = "GO-"
 	case ecoCrates:
 		native = "RUSTSEC-"
+	case ecoJulia:
+		native = "JLSEC-"
 	}
 	slices.SortFunc(cands, func(a, b *vuln) int {
 		if an, bn := strings.HasPrefix(a.ID, native), strings.HasPrefix(b.ID, native); an != bn {
@@ -684,14 +734,11 @@ func match(t *target, ids []string, docs map[string]*vuln) []datasource.Vuln {
 				entries = append(entries, v.entries(q.Package)...)
 			}
 		}
+		if t.scheme != "" && !t.schemeAffected(entries) {
+			continue
+		}
 		var fixed []string
-		switch {
-		case t.stream != "":
-			if !t.rpmAffected(entries) {
-				continue
-			}
-			fixed = distroFixed(entries)
-		case t.distro:
+		if t.distro {
 			fixed = distroFixed(entries)
 		}
 		switch eco {
@@ -707,7 +754,7 @@ func match(t *target, ids []string, docs map[string]*vuln) []datasource.Vuln {
 			if len(t.tag.Parts) > 0 {
 				fixed = t.actionsFixed(entries) // partial requirement: at its precision
 			}
-		case ecoMaven, ecoRuby, ecoPHP, ecoNuGet, ecoPub, ecoHex:
+		case ecoMaven, ecoRuby, ecoPHP, ecoNuGet, ecoPub, ecoHex, ecoJulia, ecoSwift:
 			fixed = mavenFixed(entries)
 		case ecoGo:
 			if len(t.tag.Parts) > 0 {
@@ -734,7 +781,8 @@ func (v *vuln) entries(p pkg) []affected {
 		case a.Package.Ecosystem != p.Ecosystem:
 		case a.Package.Name == p.Name, p.Ecosystem == ecoPyPI && pyreq.Normalize(a.Package.Name) == p.Name,
 			p.Ecosystem == ecoPHP && strings.EqualFold(a.Package.Name, p.Name),
-			p.Ecosystem == ecoNuGet && strings.EqualFold(a.Package.Name, p.Name):
+			p.Ecosystem == ecoNuGet && strings.EqualFold(a.Package.Name, p.Name),
+			p.Ecosystem == ecoSwift && strings.EqualFold(a.Package.Name, p.Name):
 			exact = append(exact, a)
 		case p.Ecosystem == ecoGo && strings.HasPrefix(a.Package.Name, p.Name+"/"):
 			sub = append(sub, a)
@@ -747,7 +795,10 @@ func (v *vuln) entries(p pkg) []affected {
 }
 
 func (v *vuln) advisory() dep.Advisory {
-	a := dep.Advisory{ID: v.ID, Summary: v.Summary, URL: "https://osv.dev/vulnerability/" + url.PathEscape(v.ID)}
+	a := dep.Advisory{
+		ID: v.ID, Summary: v.Summary, Aliases: slices.Clone(v.Aliases),
+		URL: "https://osv.dev/vulnerability/" + url.PathEscape(v.ID),
+	}
 	if a.Summary == "" {
 		line, _, _ := strings.Cut(strings.TrimSpace(v.Details), "\n")
 		if len(line) > 120 {

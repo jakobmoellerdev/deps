@@ -1409,7 +1409,11 @@ func prBody(ctx context.Context, o Options, grp engine.Group, fp, input string) 
 			if a.URL != "" {
 				id = "[" + a.ID + "](" + a.URL + ")"
 			}
-			fmt.Fprintf(&b, "- %s: %s\n", id, a.Summary)
+			line := "- " + id + ": " + a.Summary
+			if risk := a.Risk(); risk != "" {
+				line += " (" + risk + ")"
+			}
+			b.WriteString(line + "\n")
 		}
 	}
 	warned := map[string]bool{}
