@@ -11,7 +11,6 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
-	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/prtemplate"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/schedule"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
@@ -44,12 +43,10 @@ type Policy struct {
 	Monorepo           string        // built-in monorepo that set the initial Group, "" = none
 	Toolchain          string        // built-in toolchain group (RubyGroup) that set the initial Group, "" = none
 	Registry           string        // built-in registry group (VcpkgGroup) that set the initial Group, "" = none
-	CommitType         string        // conventional commit type: fix for production deps, chore otherwise
-	CommitScope        string        // conventional commit scope, "" = none
-	// Templates are the prTitle, prHeader and prFooter templates; nil members use the defaults.
-	Templates prtemplate.Set
-	Kind      dep.UpdateType // update type of a PolicyFor result, "" for Policy
-	MinAge    time.Duration  // minimum release age of new versions, 0 = off
+	// PRSettings are the PR settings its updates carry.
+	dep.PRSettings
+	Kind   dep.UpdateType // update type of a PolicyFor result, "" for Policy
+	MinAge time.Duration  // minimum release age of new versions, 0 = off
 	// TimestampRequired (minimumReleaseAgeBehaviour timestamp-required): with a MinAge, a
 	// version whose release time is unknown is held back.
 	TimestampRequired bool
@@ -63,21 +60,6 @@ type Policy struct {
 	// "" = the current one.
 	ReplacementName, ReplacementVersion string
 	Replacement                         string // built-in replacement that set ReplacementName, "" = none or a rule
-	Automerge                           bool   // automerge the update's PR or branch
-	// AutomergeStrategy is the merge method of an automerged PR (AutomergeStrategies).
-	AutomergeStrategy string
-	// AutomergeType is how the update is automerged (AutomergeTypes).
-	AutomergeType string
-	// DashboardApproval holds back the update's new PR until it is approved on the dashboard.
-	DashboardApproval bool
-	// DraftPR opens the update's new PR as a draft; PRCreation is when it is opened
-	// (PRCreations).
-	DraftPR    bool
-	PRCreation string
-	// Labels, Reviewers and Assignees go on the update's new PR.
-	Labels, Reviewers, Assignees []string
-	// Tasks are the postUpgradeTasks of the last matching rule that sets them.
-	Tasks dep.Tasks
 	// PR buckets of separate: majors apart from minor/patch, one per major, minor apart from patch.
 	SeparateMajorMinor, SeparateMultipleMajor, SeparateMinorPatch bool
 	// AdditionalBranchPrefix is the additionalBranchPrefix template (ExpandBranchPrefix).

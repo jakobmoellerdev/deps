@@ -936,9 +936,8 @@ func readLocks(root string, managers []manager.Manager, found [][]string, ex []e
 
 // maintenanceUpdates returns one lock file maintenance update (lockFileMaintenance) per lock
 // root of each manager.LockMaintainer, over the files it extracted without error. It carries
-// the lockFileMaintenance schedule and the top-level automerge settings, PR templates and
-// PR metadata (config.DefaultPolicy; the title stays fixed, see GroupUpdates); rules do not
-// apply.
+// the lockFileMaintenance schedule and the PR settings of the top level
+// (config.DefaultPolicy; the title stays fixed, see GroupUpdates); rules do not apply.
 func maintenanceUpdates(cfg *config.Config, root string, managers []manager.Manager, found [][]string, ex []extracted) []dep.Update {
 	var out []dep.Update
 	p := cfg.DefaultPolicy()
@@ -956,19 +955,10 @@ func maintenanceUpdates(cfg *config.Config, root string, managers []manager.Mana
 		}
 		for _, lr := range lm.LockRoots(root, files) {
 			out = append(out, dep.Update{
-				Dep:               dep.Dep{Manager: m.Name(), File: lr.Manifest, Name: lr.Lockfile},
-				Type:              dep.LockFileMaintenance,
-				Schedule:          cfg.LockFileMaintenanceSchedule(),
-				Automerge:         p.Automerge,
-				AutomergeStrategy: p.AutomergeStrategy,
-				AutomergeType:     p.AutomergeType,
-				DashboardApproval: p.DashboardApproval,
-				DraftPR:           p.DraftPR,
-				PRCreation:        p.PRCreation,
-				Templates:         p.Templates,
-				Labels:            p.Labels,
-				Reviewers:         p.Reviewers,
-				Assignees:         p.Assignees,
+				Dep:        dep.Dep{Manager: m.Name(), File: lr.Manifest, Name: lr.Lockfile},
+				Type:       dep.LockFileMaintenance,
+				Schedule:   cfg.LockFileMaintenanceSchedule(),
+				PRSettings: p.PRSettings,
 			})
 		}
 	}
@@ -1670,21 +1660,17 @@ func (r *resolver) resolve(t *Trace, vulns func() []Vuln) ([]dep.Update, error) 
 	return ups, nil
 }
 
-// applyPolicy sets the fields of up that come from kp, the policy of its type: commit,
-// grouping and automerge settings. Security updates follow it too, apart from schedule, group
-// and dashboard approval: they take the security group instead. unifyShared applies it again
-// to an update it lowers.
+// applyPolicy sets the fields of up that come from kp, the policy of its type: PR, grouping
+// and schedule settings. Security updates follow it too, apart from schedule, group and
+// dashboard approval: they take the security group instead and never wait for approval.
+// unifyShared applies it again to an update it lowers.
 func applyPolicy(up *dep.Update, kp *config.Policy) {
-	up.CommitType, up.CommitScope, up.Templates = kp.CommitType, kp.CommitScope, kp.Templates
-	up.Automerge, up.AutomergeStrategy, up.AutomergeType = kp.Automerge, kp.AutomergeStrategy, kp.AutomergeType
-	up.DraftPR, up.PRCreation = kp.DraftPR, kp.PRCreation
-	up.Labels, up.Reviewers, up.Assignees = kp.Labels, kp.Reviewers, kp.Assignees
-	up.Tasks = kp.Tasks
+	up.PRSettings = kp.PRSettings
 	up.BranchTopicPrefix = config.ExpandBranchPrefix(kp.AdditionalBranchPrefix, up.Dep)
 	if len(up.Advisories) == 0 {
-		up.Group, up.Schedule, up.DashboardApproval, up.SecurityGroup = kp.Group, kp.Schedule, kp.DashboardApproval, ""
+		up.Group, up.Schedule, up.SecurityGroup = kp.Group, kp.Schedule, ""
 	} else {
-		up.SecurityGroup = kp.SecurityGroup
+		up.SecurityGroup, up.DashboardApproval = kp.SecurityGroup, false
 	}
 }
 

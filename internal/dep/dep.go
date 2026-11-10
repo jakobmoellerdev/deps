@@ -202,11 +202,8 @@ type Update struct {
 	Schedule      *schedule.Set // nil = always in schedule
 	Advisories    []Advisory    // non-empty = security update
 	NewChecksum   string        // "" unless Dep.ChecksumSource is set and the version changes
-	CommitType    string        // policy conventional-commit type; "" = unset (titles use chore(deps))
-	CommitScope   string        // policy commit scope, "" = no scope; only used when CommitType is set
-	// Templates are the PR title, header and footer templates of the policy (prTitle,
-	// prHeader, prFooter); a group's PR uses its first update's.
-	Templates prtemplate.Set
+	// PRSettings are the PR settings of the update's policy (config.Policy).
+	PRSettings
 	// Bucket is the PR bucket of the update among the dep's updates (the config's
 	// separate): "" for the only bucket or the non-major one, "major", "v<N>" (one per major
 	// with majors), "minor" or "patch" (minor-patch). A non-empty bucket
@@ -216,6 +213,32 @@ type Update struct {
 	// sits between the branch prefix and the topic (dependency name or group/<group>), and
 	// updates with different ones never share a branch. Lock file maintenance ignores it.
 	BranchTopicPrefix string
+	// Lockfile marks a lockfile-only update (rangeStrategy update-lockfile): the range admits
+	// NewVersion, so the manifest stays unchanged and only the lockfile moves from Dep.Locked.
+	Lockfile bool
+	// RangeStrategy is the rangeStrategy the range (Dep.Range) is rewritten under (a
+	// config.RangeStrategies value other than auto, see manager.RangeRewriter); "" = the
+	// manager's default rewrite, and for deps without a range. Managers tell RangeWiden and
+	// RangePin apart; every other value is their default rewrite.
+	RangeStrategy string
+	// Declined holds, for a replacement, the dep's usual updates: `run` proposes them instead
+	// once the replacement's PR was closed without merging. plan and apply ignore them.
+	Declined []Update
+	// Warnings flag the dep as deprecated or abandoned ("deprecated: package deprecated: …",
+	// "abandoned: no release since …"); the PR body lists them.
+	Warnings []string
+}
+
+// PRSettings are the settings of a policy (config.Policy) for the PR of an update, which
+// carries them (Update.PRSettings).
+type PRSettings struct {
+	// CommitType is the conventional-commit type: fix for production deps, chore otherwise;
+	// "" = unset (titles use chore(deps)). CommitScope is the commit scope, "" = none; only
+	// used when CommitType is set.
+	CommitType, CommitScope string
+	// Templates are the PR title, header and footer templates (prTitle, prHeader,
+	// prFooter); nil members use the defaults. A group's PR uses its first update's.
+	Templates prtemplate.Set
 	// Automerge requests automerge of the update's PR with AutomergeStrategy
 	// (config.AutomergeStrategies), or of its branch when AutomergeType is branch
 	// (config.AutomergeTypes); a PR or branch automerges only when all of its updates do.
@@ -231,25 +254,12 @@ type Update struct {
 	// opened; a group waits as long as its most waiting update asks. "" = immediate.
 	DraftPR    bool
 	PRCreation string
-	// Lockfile marks a lockfile-only update (rangeStrategy update-lockfile): the range admits
-	// NewVersion, so the manifest stays unchanged and only the lockfile moves from Dep.Locked.
-	Lockfile bool
-	// RangeStrategy is the rangeStrategy the range (Dep.Range) is rewritten under (a
-	// config.RangeStrategies value other than auto, see manager.RangeRewriter); "" = the
-	// manager's default rewrite, and for deps without a range. Managers tell RangeWiden and
-	// RangePin apart; every other value is their default rewrite.
-	RangeStrategy string
 	// Labels, Reviewers and Assignees go on the PR when it is created; a group's PR gets the
 	// union over its updates.
 	Labels, Reviewers, Assignees []string
-	// Declined holds, for a replacement, the dep's usual updates: `run` proposes them instead
-	// once the replacement's PR was closed without merging. plan and apply ignore them.
-	Declined []Update
-	// Tasks are the postUpgradeTasks run after the update is built (apply, run).
+	// Tasks are the postUpgradeTasks (of the last matching rule that sets them) run after
+	// the update is built (apply, run).
 	Tasks Tasks
-	// Warnings flag the dep as deprecated or abandoned ("deprecated: package deprecated: …",
-	// "abandoned: no release since …"); the PR body lists them.
-	Warnings []string
 }
 
 // Tasks are postUpgradeTasks: shell commands, run once per branch, or with Update once per
