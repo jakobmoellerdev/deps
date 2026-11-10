@@ -74,7 +74,8 @@ func TestAdvisoriesSwift(t *testing.T) {
 	}
 	adv := dep.Advisory{
 		ID: "GHSA-r3rc-9hpw-54v9", Summary: "swift-nio vulnerable to HTTP request smuggling",
-		Aliases: []string{"CVE-2025-123"}, URL: "https://osv.dev/vulnerability/GHSA-r3rc-9hpw-54v9", Rating: "high",
+		Aliases: []string{"CVE-2025-123"}, URL: "https://osv.dev/vulnerability/GHSA-r3rc-9hpw-54v9",
+		CVSS: 8.3, Rating: "high", // scored from the record's own CVSS v4 vector
 	}
 	want := [][]datasource.Vuln{
 		{{Advisory: adv, Fixed: []string{"2.100.0"}}},
@@ -84,7 +85,7 @@ func TestAdvisoriesSwift(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got  %+v\nwant %+v", got, want)
 	}
-	if risk := adv.Risk(); risk != "severity high" { // CVSS v4 only: no base score, the rating stands in
+	if risk := adv.Risk(); risk != "CVSS 8.3 high" {
 		t.Errorf("risk = %q", risk)
 	}
 	if len(f.batches) != 1 || len(f.batches[0]) != 2 { // the two versions, deduped

@@ -103,6 +103,10 @@ import (
 	"strings"
 	"sync"
 
+	cvss30 "github.com/pandatix/go-cvss/30"
+	cvss31 "github.com/pandatix/go-cvss/31"
+	cvss40 "github.com/pandatix/go-cvss/40"
+
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	mavends "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/maven"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -640,9 +644,15 @@ type vuln struct {
 	Details   string   `json:"details"`
 	Aliases   []string `json:"aliases"`
 	Withdrawn string   `json:"withdrawn"`
+	// Severity holds the advisory's CVSS vectors ({"type": "CVSS_V4", "score": "CVSS:4.0/…"}),
+	// which cvssScore turns into a base score.
+	Severity []struct {
+		Type  string `json:"type"`
+		Score string `json:"score"`
+	} `json:"severity"`
 	// DatabaseSpecific.Severity is the advisory's own rating ("CRITICAL", "HIGH",
-	// "MODERATE", "LOW"), which GitHub-reviewed records carry. It is the severity of
-	// advisories scored with CVSS v4 only, for which deps.dev publishes no v3 base score.
+	// "MODERATE", "LOW"), which GitHub-reviewed records carry; it stands in when the record
+	// has no vector deps can score.
 	DatabaseSpecific struct {
 		Severity string `json:"severity"`
 	} `json:"database_specific"`
@@ -803,7 +813,8 @@ func (v *vuln) entries(p pkg) []affected {
 func (v *vuln) advisory() dep.Advisory {
 	a := dep.Advisory{
 		ID: v.ID, Summary: v.Summary, Aliases: slices.Clone(v.Aliases),
-		URL: "https://osv.dev/vulnerability/" + url.PathEscape(v.ID), Rating: rating(v.DatabaseSpecific.Severity),
+		URL:  "https://osv.dev/vulnerability/" + url.PathEscape(v.ID),
+		CVSS: v.cvss(), Rating: rating(v.DatabaseSpecific.Severity),
 	}
 	if a.Summary == "" {
 		line, _, _ := strings.Cut(strings.TrimSpace(v.Details), "\n")
@@ -819,6 +830,36 @@ func (v *vuln) advisory() dep.Advisory {
 		}
 	}
 	return a
+}
+
+// cvss returns the base score of the advisory's own CVSS vector, 0 when it has none that
+// deps can score. A v4 vector wins over v3: it is the newer assessment, and both map to the
+// same qualitative ratings. The score is computed locally (github.com/pandatix/go-cvss), so
+// it needs no lookup and covers the v4-only advisories for which deps.dev publishes none.
+func (v *vuln) cvss() float64 {
+	var v3 float64
+	for _, s := range v.Severity {
+		switch s.Type {
+		case "CVSS_V4":
+			if c, err := cvss40.ParseVector(s.Score); err == nil {
+				return c.Score()
+			}
+		case "CVSS_V3":
+			if v3 != 0 {
+				continue
+			}
+			if strings.HasPrefix(s.Score, "CVSS:3.0") {
+				if c, err := cvss30.ParseVector(s.Score); err == nil {
+					v3 = c.BaseScore()
+				}
+				continue
+			}
+			if c, err := cvss31.ParseVector(s.Score); err == nil {
+				v3 = c.BaseScore()
+			}
+		}
+	}
+	return v3
 }
 
 // rating maps an OSV record's own severity to the ratings dep.Advisory uses; GitHub writes

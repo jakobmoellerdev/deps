@@ -197,10 +197,11 @@ type Advisory struct {
 	// Aliases are the other IDs of the same vulnerability (CVE-…, GHSA-…), as the advisory
 	// lists them; the CVE aliases key the EPSS and KEV lookups.
 	Aliases []string
-	CVSS    float64 // CVSS v3 base score (0.1–10), 0 = unknown
+	// CVSS is the base score (0.1–10) of the advisory's own CVSS vector (v4 when it has one,
+	// else v3), or deps.dev's v3 score when the record carries no vector; 0 = unknown.
+	CVSS float64
 	// Rating is the advisory's own qualitative severity ("critical", "high", "medium",
-	// "low"), used when no CVSS v3 score is known: advisories scored with CVSS v4 only have
-	// no v3 base score, but GitHub-reviewed OSV records still carry the rating.
+	// "low"), used when no score is known at all.
 	Rating string
 	EPSS   float64 // probability of exploitation within 30 days (0–1), 0 = unknown
 	KEV    bool    // listed in CISA's Known Exploited Vulnerabilities catalog

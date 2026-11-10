@@ -119,7 +119,9 @@ func (s *Source) scoreAll(ctx context.Context, ids []string, index map[string][]
 				return
 			}
 			for _, a := range index[id] {
-				a.CVSS = adv.CVSS3Score
+				if a.CVSS == 0 { // the record's own vector, when it has one, already scored it
+					a.CVSS = adv.CVSS3Score
+				}
 				for _, alias := range adv.Aliases {
 					if !slices.Contains(a.Aliases, alias) && alias != a.ID {
 						a.Aliases = append(a.Aliases, alias)
