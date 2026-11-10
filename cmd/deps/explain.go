@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -267,104 +268,17 @@ func ruleSource(r *config.Rule) string {
 // fields ("match: all" when none is set), then the apply fields.
 func describeRule(r config.Rule) string {
 	var match, apply []string
-	f := &match
-	add := func(k, v string) { *f = append(*f, k+"="+v) }
-	list := func(k string, vs []string, sep string) {
-		if vs != nil {
-			add(k, "["+strings.Join(vs, sep)+"]")
+	walkRuleFields(reflect.ValueOf(r), func(k string, v reflect.Value) {
+		s, ok := describeRuleValue(k, v)
+		if !ok {
+			return
 		}
-	}
-	list("managers", r.Managers, " ")
-	list("names", r.Names, " ")
-	list("depTypes", r.DepTypes, " ")
-	list("paths", r.Paths, " ")
-	list("datasources", r.Datasources, " ")
-	list("baseBranches", r.BaseBranches, " ")
-	if r.CurrentVersion != "" {
-		add("currentVersion", r.CurrentVersion)
-	}
-	if r.CurrentAge != "" {
-		add("currentAge", "'"+r.CurrentAge+"'")
-	}
-	list("updateTypes", r.UpdateTypes, " ")
-	f = &apply
-	if r.Ignore != nil {
-		add("ignore", strconv.FormatBool(*r.Ignore))
-	}
-	if r.Pin != "" {
-		add("pin", r.Pin)
-	}
-	if r.Allow != "" {
-		allow := r.Allow
-		if a, err := config.ParseAllowed(allow); err == nil { // validated by config.Load
-			allow = a.String()
+		if slices.Contains(config.RuleMatchFields, k) {
+			match = append(match, k+"="+s)
+		} else {
+			apply = append(apply, k+"="+s)
 		}
-		add("allow", allow)
-	}
-	list("allowedUpdateTypes", r.AllowedUpdateTypes, " ")
-	if r.RangeStrategy != "" {
-		add("rangeStrategy", r.RangeStrategy)
-	}
-	if r.Versioning != "" {
-		add("versioning", r.Versioning)
-	}
-	if r.ReplacementName != "" {
-		add("replacementName", r.ReplacementName)
-	}
-	if r.ReplacementVersion != "" {
-		add("replacementVersion", r.ReplacementVersion)
-	}
-	if r.ReplacementPrefix != "" {
-		add("replacementPrefix", r.ReplacementPrefix)
-	}
-	for _, b := range []struct {
-		k string
-		v *bool
-	}{{"separateMajorMinor", r.SeparateMajorMinor}, {"separateMultipleMajor", r.SeparateMultipleMajor}, {"separateMinorPatch", r.SeparateMinorPatch}, {"dashboardApproval", r.DashboardApproval}} {
-		if b.v != nil {
-			add(b.k, strconv.FormatBool(*b.v))
-		}
-	}
-	if r.Group != "" {
-		add("group", r.Group)
-	}
-	if r.SecurityGroup != "" {
-		add("securityGroup", r.SecurityGroup)
-	}
-	if r.CommitType != "" {
-		add("commitType", r.CommitType)
-	}
-	if r.CommitScope != nil {
-		add("commitScope", strconv.Quote(*r.CommitScope))
-	}
-	list("schedule", r.Schedule, "; ")
-	if r.AdditionalBranchPrefix != nil {
-		add("additionalBranchPrefix", strconv.Quote(*r.AdditionalBranchPrefix))
-	}
-	if r.MinimumReleaseAge != "" {
-		add("minimumReleaseAge", r.MinimumReleaseAge)
-	}
-	if r.MinimumReleaseAgeBehaviour != "" {
-		add("minimumReleaseAgeBehaviour", r.MinimumReleaseAgeBehaviour)
-	}
-	if r.AbandonmentThreshold != "" {
-		add("abandonmentThreshold", r.AbandonmentThreshold)
-	}
-	if r.Automerge != nil {
-		add("automerge", strconv.FormatBool(*r.Automerge))
-	}
-	if r.AutomergeStrategy != "" {
-		add("automergeStrategy", r.AutomergeStrategy)
-	}
-	if r.AutomergeType != "" {
-		add("automergeType", r.AutomergeType)
-	}
-	if r.DraftPR != nil {
-		add("draftPR", strconv.FormatBool(*r.DraftPR))
-	}
-	if r.PRCreation != "" {
-		add("prCreation", r.PRCreation)
-	}
+	})
 	m := "all"
 	if len(match) > 0 {
 		m = strings.Join(match, " ")
@@ -374,6 +288,83 @@ func describeRule(r config.Rule) string {
 		a = strings.Join(apply, " ")
 	}
 	return "match: " + m + "; apply: " + a
+}
+
+// walkRuleFields calls fn with the yaml key and value of each exported field of struct v in
+// declaration order, descending into anonymous embedded structs (yaml ",inline").
+func walkRuleFields(v reflect.Value, fn func(string, reflect.Value)) {
+	t := v.Type()
+	for i := range t.NumField() {
+		f := t.Field(i)
+		if !f.IsExported() {
+			continue
+		}
+		name, _, _ := strings.Cut(f.Tag.Get("yaml"), ",")
+		if f.Anonymous && name == "" && f.Type.Kind() == reflect.Struct {
+			walkRuleFields(v.Field(i), fn)
+			continue
+		}
+		if name == "" || name == "-" {
+			continue
+		}
+		fn(name, v.Field(i))
+	}
+}
+
+// describeRuleValue renders a rule field's value; ok is false when the field is unset.
+func describeRuleValue(k string, v reflect.Value) (string, bool) {
+	switch k {
+	case "allow":
+		allow := v.String()
+		if allow == "" {
+			return "", false
+		}
+		if a, err := config.ParseAllowed(allow); err == nil { // validated by config.Load
+			allow = a.String()
+		}
+		return allow, true
+	case "currentAge":
+		if v.String() == "" {
+			return "", false
+		}
+		return "'" + v.String() + "'", true
+	}
+	switch val := v.Interface().(type) {
+	case string:
+		return val, val != ""
+	case *string:
+		if val == nil {
+			return "", false
+		}
+		return strconv.Quote(*val), true
+	case *bool:
+		if val == nil {
+			return "", false
+		}
+		return strconv.FormatBool(*val), true
+	case []string:
+		if val == nil {
+			return "", false
+		}
+		sep := " "
+		if k == "schedule" {
+			sep = "; "
+		}
+		return "[" + strings.Join(val, sep) + "]", true
+	case *config.PostUpgradeTasks:
+		if val == nil {
+			return "", false
+		}
+		s := "[" + strings.Join(val.Commands, "; ") + "]"
+		if val.ExecutionMode != "" {
+			s += " executionMode=" + val.ExecutionMode
+		}
+		return s, true
+	}
+	if v.IsZero() {
+		return "", false
+	}
+	return fmt.Sprint(v.Interface()), true
 }
 
 func describePolicy(p config.Policy) string {

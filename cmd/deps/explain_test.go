@@ -331,7 +331,7 @@ func TestWriteTrace(t *testing.T) {
 			},
 			want: `x  f:4  (-, -, -, loose)
   current   1877.25
-  rules     #4 match: all; apply: allow=/^\d+\.\d+$/ versioning=loose separateMultipleMajor=true
+  rules     #4 match: all; apply: separateMultipleMajor=true allow=/^\d+\.\d+$/ versioning=loose
   policy    pin=keep allow=- allowedUpdateTypes=major,minor group=- schedule=always minAge=- versioning=loose
   candidates 4
   rejected  none
@@ -394,5 +394,19 @@ func TestDescribeDashboardApproval(t *testing.T) {
 	}
 	if got := describePolicy(config.Policy{DashboardApproval: true}); !strings.HasSuffix(got, " dashboardApproval=true") {
 		t.Errorf("policy = %q", got)
+	}
+}
+
+func TestDescribeRuleAllApplyFields(t *testing.T) {
+	scope := "api"
+	got := describeRule(config.Rule{
+		Names:            []string{"github.com/pkg/errors"},
+		CommitScope:      &scope,
+		Labels:           []string{"x", "y"},
+		PostUpgradeTasks: &config.PostUpgradeTasks{Commands: []string{"go generate ./...", "make"}, ExecutionMode: "update"},
+	})
+	want := `match: names=[github.com/pkg/errors]; apply: labels=[x y] commitScope="api" postUpgradeTasks=[go generate ./...; make] executionMode=update`
+	if got != want {
+		t.Errorf("describeRule = %q, want %q", got, want)
 	}
 }
