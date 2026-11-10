@@ -1148,7 +1148,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.8.0   # or ./ inside this repo
+      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.9.0   # or ./ inside this repo
 ```
 
 If the job token cannot push or open PRs, or cannot read private action repos, store a PAT as a secret. Pass it to both `actions/checkout` (`token:`) and the action (`token:`).
@@ -1157,7 +1157,7 @@ Lockfile regeneration needs the package manager: the binary on `PATH`, else `npx
 
 ### GitHub workflow
 
-GitHub workflows cannot `uses:` an action hosted on Gitea. Either use the public GitHub mirror, `uses: jakobmoellerdev/deps@v0.8.0` (on github.com runners the defaults download from the mirror's releases), or download the binary directly (no Go needed):
+GitHub workflows cannot `uses:` an action hosted on Gitea. Either use the public GitHub mirror, `uses: jakobmoellerdev/deps@v0.9.0` (on github.com runners the defaults download from the mirror's releases), or download the binary directly (no Go needed):
 
 ```yaml
 on:
