@@ -80,6 +80,8 @@ type Policy struct {
 	Tasks dep.Tasks
 	// PR buckets (separateMajorMinor, separateMultipleMajor, separateMinorPatch).
 	SeparateMajorMinor, SeparateMultipleMajor, SeparateMinorPatch bool
+	// AdditionalBranchPrefix is the additionalBranchPrefix template (ExpandBranchPrefix).
+	AdditionalBranchPrefix string
 }
 
 // production reports whether d is a production dep, which gets the fix commit type by
@@ -299,29 +301,30 @@ func (c *Config) UnusedRules(deps []dep.Dep) []int {
 
 func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Policy {
 	p := Policy{
-		Pin:                   c.Pin,
-		RangeStrategy:         cmp.Or(c.RangeStrategy, RangeAuto),
-		AllowedUpdateTypes:    allUpdates,
-		Schedule:              c.schedule,
-		MinAge:                c.minAge,
-		AbandonAfter:          c.abandon,
-		TimestampRequired:     c.MinimumReleaseAgeBehaviour == TimestampRequired,
-		CommitType:            CommitChore,
-		CommitScope:           DefaultScope,
-		Templates:             c.templates,
-		Kind:                  kind,
-		SeparateMajorMinor:    c.SeparateMajorMinor == nil || *c.SeparateMajorMinor,
-		SeparateMultipleMajor: c.SeparateMultipleMajor != nil && *c.SeparateMultipleMajor,
-		SeparateMinorPatch:    c.SeparateMinorPatch != nil && *c.SeparateMinorPatch,
-		Automerge:             c.Automerge,
-		AutomergeStrategy:     cmp.Or(c.AutomergeStrategy, StrategyAuto),
-		AutomergeType:         cmp.Or(c.AutomergeType, AutomergeTypePR),
-		DashboardApproval:     c.DashboardApproval,
-		DraftPR:               c.DraftPR,
-		PRCreation:            cmp.Or(c.PRCreation, PRCreationImmediate),
-		Labels:                c.Labels,
-		Reviewers:             c.Reviewers,
-		Assignees:             c.Assignees,
+		Pin:                    c.Pin,
+		RangeStrategy:          cmp.Or(c.RangeStrategy, RangeAuto),
+		AllowedUpdateTypes:     allUpdates,
+		Schedule:               c.schedule,
+		MinAge:                 c.minAge,
+		AbandonAfter:           c.abandon,
+		TimestampRequired:      c.MinimumReleaseAgeBehaviour == TimestampRequired,
+		CommitType:             CommitChore,
+		CommitScope:            DefaultScope,
+		Templates:              c.templates,
+		Kind:                   kind,
+		SeparateMajorMinor:     c.SeparateMajorMinor == nil || *c.SeparateMajorMinor,
+		SeparateMultipleMajor:  c.SeparateMultipleMajor != nil && *c.SeparateMultipleMajor,
+		SeparateMinorPatch:     c.SeparateMinorPatch != nil && *c.SeparateMinorPatch,
+		AdditionalBranchPrefix: c.AdditionalBranchPrefix,
+		Automerge:              c.Automerge,
+		AutomergeStrategy:      cmp.Or(c.AutomergeStrategy, StrategyAuto),
+		AutomergeType:          cmp.Or(c.AutomergeType, AutomergeTypePR),
+		DashboardApproval:      c.DashboardApproval,
+		DraftPR:                c.DraftPR,
+		PRCreation:             cmp.Or(c.PRCreation, PRCreationImmediate),
+		Labels:                 c.Labels,
+		Reviewers:              c.Reviewers,
+		Assignees:              c.Assignees,
 	}
 	if production(d) {
 		p.CommitType = CommitFix
@@ -430,6 +433,9 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Polic
 		}
 		if r.SeparateMinorPatch != nil {
 			p.SeparateMinorPatch = *r.SeparateMinorPatch
+		}
+		if r.AdditionalBranchPrefix != nil {
+			p.AdditionalBranchPrefix = *r.AdditionalBranchPrefix
 		}
 		if r.Automerge != nil {
 			p.Automerge = *r.Automerge

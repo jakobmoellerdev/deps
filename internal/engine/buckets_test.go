@@ -219,7 +219,7 @@ rules:
 		branches = append(branches, g.Branch+" "+g.Title)
 	}
 	if want := []string{
-		"renovate/docker/ghcr.io-gardenlinux-gardenlinux-fips-minor chore(deps): update ghcr.io/gardenlinux/gardenlinux/fips to 1877.28",
+		"renovate/ghcr.io-gardenlinux-gardenlinux-fips-minor chore(deps): update ghcr.io/gardenlinux/gardenlinux/fips to 1877.28",
 		"renovate/group/ocm-cosign-patch chore(deps): update OCM cosign (2 dependencies)",
 	}; !slices.Equal(branches, want) {
 		t.Errorf("groups =\n%s\nwant\n%s", strings.Join(branches, "\n"), strings.Join(want, "\n"))
@@ -300,9 +300,9 @@ func TestGroupBucketSuffixes(t *testing.T) {
 		got = append(got, g.Branch+" "+g.Title)
 	}
 	want := []string{
-		"deps/gomod/example.com-a chore(deps): update example.com/A to v1.4.0",
-		"deps/gomod/example.com-a-major fix(deps): update example.com/A to v3.0.0 [security]",
-		"deps/gomod/example.com-a-v2 chore(deps): update example.com/A to v2.0.0",
+		"deps/example.com-a chore(deps): update example.com/A to v1.4.0",
+		"deps/example.com-a-major fix(deps): update example.com/A to v3.0.0 [security]",
+		"deps/example.com-a-v2 chore(deps): update example.com/A to v2.0.0",
 		"deps/group/go-deps-minor chore(deps): update example.com/b to v1.1.0",
 		"deps/group/go-deps-patch chore(deps): update example.com/b to v1.0.1",
 	}

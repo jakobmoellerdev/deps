@@ -50,7 +50,7 @@ type Git interface {
 type Options struct {
 	AuthorName, AuthorEmail string
 	BranchPrefix            string // managed branch prefix, ending in '/'; "" = config.DefaultBranchPrefix
-	// MultiBase makes update branches carry their base: <BranchPrefix><base>/<manager>/<name>
+	// MultiBase makes update branches carry their base: <BranchPrefix><base>/<name>
 	// (BasePrefix). It is implied by more than one Base; config.MultiBase sets it also for a
 	// single base found by a regex.
 	MultiBase  bool

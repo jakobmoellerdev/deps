@@ -295,10 +295,10 @@ func TestGroupUpdates(t *testing.T) {
 		{Dep: d("a/c"), Type: dep.Major, NewVersion: "v2"},
 	}, "")
 	want := []struct{ branch, title string }{
-		{"deps/github-actions/github-codeql-action-init", "chore(deps): pin Github/CodeQL-Action/init to abcdef0"},
-		{"deps/github-actions/a-b", "chore(deps): update a/b digest to 1234567"},
-		{"deps/github-actions/a-c", "chore(deps): update a/c to v2"},
-		{"deps/github-actions/actions-checkout", "chore(deps): update actions/checkout"},
+		{"deps/github-codeql-action-init", "chore(deps): pin Github/CodeQL-Action/init to abcdef0"},
+		{"deps/a-b", "chore(deps): update a/b digest to 1234567"},
+		{"deps/a-c", "chore(deps): update a/c to v2"},
+		{"deps/actions-checkout", "chore(deps): update actions/checkout"},
 	}
 	if len(groups) != len(want) {
 		t.Fatalf("got %d groups", len(groups))
@@ -312,7 +312,7 @@ func TestGroupUpdates(t *testing.T) {
 
 func TestGroupBranchSlug(t *testing.T) {
 	groups := GroupUpdates([]dep.Update{{Dep: dep.Dep{Manager: "gomod", Name: "--Example.com//Foo__Bar--"}, Type: dep.Minor, NewVersion: "v1.1.0"}}, "")
-	if len(groups) != 1 || groups[0].Branch != "deps/gomod/example.com-foo__bar" {
+	if len(groups) != 1 || groups[0].Branch != "deps/example.com-foo__bar" {
 		t.Fatalf("groups = %+v", groups)
 	}
 }

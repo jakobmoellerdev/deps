@@ -39,7 +39,7 @@ func TestRunUseBaseBranchConfig(t *testing.T) {
 	}{
 		{
 			name: "none", mode: "none", release: releaseGroupConfig,
-			want:     []string{"base    release/1.x\n", "pr      would-create  deps/release/1.x/github-actions/actions-checkout-major"},
+			want:     []string{"base    release/1.x\n", "pr      would-create  deps/release/1.x/actions-checkout-major"},
 			unwanted: []string{"config .deps.yaml", "group/release-checkout"},
 		},
 		{
@@ -47,11 +47,11 @@ func TestRunUseBaseBranchConfig(t *testing.T) {
 			want: []string{
 				"base    main\n",
 				"base    release/1.x  config .deps.yaml + release/1.x:.deps.yaml\n",
-				"pr      would-create  deps/main/github-actions/actions-checkout-major",
+				"pr      would-create  deps/main/actions-checkout-major",
 				"pr      would-create  deps/release/1.x/group/release-checkout-major",
 				"the base branch's config sets a key that spans the run", "key=branchPrefix",
 			},
-			unwanted: []string{"other/", "deps/release/1.x/github-actions/"},
+			unwanted: []string{"other/", "deps/release/1.x/actions-checkout"},
 		},
 		{
 			name: "merge, same run-wide value", mode: "merge", release: "baseBranches: [$default, release/1.x]\nuseBaseBranchConfig: merge\n",
@@ -64,7 +64,7 @@ func TestRunUseBaseBranchConfig(t *testing.T) {
 		},
 		{
 			name: "merge-if-present without the file", mode: "merge-if-present",
-			want:     []string{"base    release/1.x\n", "pr      would-create  deps/release/1.x/github-actions/actions-checkout-major"},
+			want:     []string{"base    release/1.x\n", "pr      would-create  deps/release/1.x/actions-checkout-major"},
 			unwanted: []string{"config .deps.yaml"},
 		},
 		{
@@ -124,7 +124,7 @@ func TestRunUseBaseBranchConfigCustomManager(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
-	const branch = "deps/release/1.x/custom/https-github.com-actions-checkout-major"
+	const branch = "deps/release/1.x/https-github.com-actions-checkout-major"
 	if !strings.Contains(stderr, "pr      created  "+branch+"  ") {
 		t.Fatalf("stderr lacks the custom manager's PR:\n%s", stderr)
 	}
@@ -182,7 +182,7 @@ func TestPreviewUseBaseBranchConfig(t *testing.T) {
 		}},
 		{"none", strings.Replace(mainConfig, "merge", "none", 1), []string{
 			"base    release/1.x\n",
-			"removed deps/github-actions/actions-checkout-major",
+			"removed deps/actions-checkout-major",
 		}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -250,7 +250,7 @@ func TestRunUseBaseBranchConfigRenovate(t *testing.T) {
 	}
 	for _, w := range []string{
 		" + release/1.x:renovate.json\n",
-		"pr      would-create  renovate/main/github-actions/actions-checkout-major",
+		"pr      would-create  renovate/main/actions-checkout-major",
 		"pr      would-create  renovate/release/1.x/group/release-checkout-major",
 	} {
 		if !strings.Contains(stderr, w) {

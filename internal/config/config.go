@@ -223,8 +223,11 @@ type Config struct {
 	Schedule      []string `yaml:"schedule" jsonschema_description:"When new update PRs are created: cron triggers of the workflow running deps (minute fixed, e.g. '0 5 * * 1'), matched against the cron that started the run, and time windows evaluated against the run time in timezone: Renovate's text ('before 6am on monday', 'every weekend') or crons with minute * ('* 0-5 * * 1'). Empty means every run."`
 	Timezone      string   `yaml:"timezone" jsonschema_description:"IANA time zone (e.g. Europe/Berlin) of the schedule time windows; default UTC. Cron triggers are unaffected."`
 	Security      *bool    `yaml:"security" jsonschema:"default=true" jsonschema_description:"Look up OSV advisories and propose security updates that bypass allow, allowedUpdateTypes and schedule."`
-	BranchPrefix  string   `yaml:"branchPrefix" jsonschema:"default=deps/" jsonschema_description:"Prefix of update branches (<prefix><manager>/<name>, <prefix>group/<group>); must end with '/'. Only branches and PRs under it are managed."`
-	BaseBranches  []string `yaml:"baseBranches" jsonschema_description:"Base branches deps run proposes updates against, each resolved from its own tip: branch names, $default (the repository's default branch) and RE2 regexes '/<RE2>/' (flag i allowed) matching branches on origin. With more than one entry, or a regex, update branches carry their base (<prefix><base>/<manager>/<name>) and PRs, cleanup and the dashboard are kept per base. Empty means the default branch; run --base overrides it."`
+	BranchPrefix  string   `yaml:"branchPrefix" jsonschema:"default=deps/" jsonschema_description:"Prefix of update branches (<prefix><additionalBranchPrefix><name>, <prefix><additionalBranchPrefix>group/<group>); must end with '/'. Only branches and PRs under it are managed."`
+	BaseBranches  []string `yaml:"baseBranches" jsonschema_description:"Base branches deps run proposes updates against, each resolved from its own tip: branch names, $default (the repository's default branch) and RE2 regexes '/<RE2>/' (flag i allowed) matching branches on origin. With more than one entry, or a regex, update branches carry their base (<prefix><base>/<name>) and PRs, cleanup and the dashboard are kept per base. Empty means the default branch; run --base overrides it."`
+	// AdditionalBranchPrefix is Renovate's additionalBranchPrefix, a template over
+	// BranchPrefixVars; rules override it.
+	AdditionalBranchPrefix string `yaml:"additionalBranchPrefix" jsonschema_description:"Text between branchPrefix and the branch topic (the dependency name, or group/<group>), as in Renovate. Literal text plus the templates {{manager}}, {{parentDir}} and {{packageFileDir}} of each update's file; updates whose expanded prefix differs never share a PR, so '{{manager}}/' keeps managers apart. Rules override it."`
 	// UseBaseBranchConfig is Renovate's useBaseBranchConfig.
 	UseBaseBranchConfig string `yaml:"useBaseBranchConfig" jsonschema:"default=none" jsonschema_description:"Config of the base branches run resolves from their own tip (baseBranches, explain --base, preview --base): none (the checkout's config), merge (the config file of the same name on the base branch is merged over the checkout's config as extends merges, the base's keys winning; a base without the file is a config error), merge-if-present (as merge, a base without the file uses the checkout's config). The keys that span the run (baseBranches, useBaseBranchConfig, branchPrefix, the PR limits, git and rebase settings, the dashboard) stay the checkout's."`
 	RebaseWhen          string `yaml:"rebaseWhen" jsonschema:"default=conflicted" jsonschema_description:"When to rebuild an open update PR whose content is unchanged: conflicted (only when not mergeable), behind-base-branch (also when the base branch moved), never (only when its content changes)."`
@@ -515,6 +518,8 @@ type Rule struct {
 	CommitType            string   `yaml:"commitType" jsonschema_description:"Conventional commit type of commit and PR titles; default fix for production deps (gomod direct, npm, cargo, poetry, pub and bundler dependencies, composer require, pep621 project.dependencies, pipenv packages, elm direct and dependencies, julia deps, mix prod, gleam dependencies), chore otherwise. Security updates always use fix."`
 	CommitScope           *string  `yaml:"commitScope" jsonschema_description:"Conventional commit scope; default deps, empty string means no scope ('chore: ...')."`
 	Schedule              []string `yaml:"schedule" jsonschema_description:"Schedule (cron triggers and time windows, like the top-level schedule) overriding the top-level schedule; [] means every run."` // non-nil overrides the top-level schedule; [] = always
+	// AdditionalBranchPrefix overrides the top-level additionalBranchPrefix when set.
+	AdditionalBranchPrefix *string `yaml:"additionalBranchPrefix" jsonschema_description:"Overrides the top-level additionalBranchPrefix for matching deps (with updateTypes: for updates of those types); an empty string removes it."`
 	// MinimumReleaseAge overrides the top-level minimumReleaseAge when set; "0" disables it.
 	MinimumReleaseAge string `yaml:"minimumReleaseAge" jsonschema_description:"Minimum release age overriding the top-level minimumReleaseAge, e.g. '7 days'; '0' or '0 days' disables it for matching deps."`
 	// MinimumReleaseAgeBehaviour overrides the top-level minimumReleaseAgeBehaviour when set.
@@ -994,6 +999,9 @@ func (c *Config) validate() []*Problem {
 			add("branchPrefix", "%s, got %q", msg, c.BranchPrefix)
 		}
 	}
+	if msg := CheckAdditionalBranchPrefix(c.AdditionalBranchPrefix); msg != "" {
+		add("additionalBranchPrefix", "%s, got %q", msg, c.AdditionalBranchPrefix)
+	}
 	c.baseBranches = parseBranchPatterns("baseBranches", c.BaseBranches, false, true, add)
 	if c.UseBaseBranchConfig != "" && !slices.Contains(BaseConfigs, c.UseBaseBranchConfig) {
 		add("useBaseBranchConfig", "%s", oneOf("useBaseBranchConfig", BaseConfigs, c.UseBaseBranchConfig))
@@ -1290,6 +1298,11 @@ func (c *Config) validateRule(i int, add addFunc) {
 	}
 	if r.CommitScope != nil && *r.CommitScope != "" && !commitScopeRe.MatchString(*r.CommitScope) {
 		add(f+".commitScope", "must match %s, got %q", commitScopeRe, *r.CommitScope)
+	}
+	if r.AdditionalBranchPrefix != nil {
+		if msg := CheckAdditionalBranchPrefix(*r.AdditionalBranchPrefix); msg != "" {
+			add(f+".additionalBranchPrefix", "%s, got %q", msg, *r.AdditionalBranchPrefix)
+		}
 	}
 	validateAutomerge(f+".", r.AutomergeStrategy, r.AutomergeType, add)
 	validatePRCreation(f+".", r.PRCreation, add)

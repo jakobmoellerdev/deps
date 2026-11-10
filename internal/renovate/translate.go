@@ -325,7 +325,7 @@ var infoKeys = func() map[string]bool {
 		prNotPendingHours configMigration onboarding onboardingConfig onboardingConfigFileName requireConfig
 		printConfig dependencyDashboardHeader dependencyDashboardFooter dependencyDashboardAutoclose
 		dependencyDashboardOSVVulnerabilitySummary dependencyDashboardCategory customizeDashboard userStrings
-		branchConcurrentLimit commitHourlyLimit branchNameStrict branchTopic hashedBranchLength additionalBranchPrefix
+		branchConcurrentLimit commitHourlyLimit branchNameStrict branchTopic hashedBranchLength
 		groupSlug fetchChangeLogs recreateWhen suppressNotifications ignoreTests internalChecksFilter
 		internalChecksAsSuccess gitNoVerify statusCheckNames cloneSubmodules persistRepoData confidential
 		respectLatest hostRules postUpdateOptions semanticCommits`) {
@@ -356,6 +356,22 @@ type translator struct {
 	remote         map[string]bool // top-level keys set by fetched presets
 	titleTop       map[string]any  // top-level title settings (titleKeys) the repository sets
 	semType        any             // top-level semanticCommitType, nil = unset
+}
+
+// additionalBranchPrefix returns Renovate's additionalBranchPrefix at path when deps can
+// expand it (config.CheckAdditionalBranchPrefix: literal text and the {{manager}},
+// {{parentDir}} and {{packageFileDir}} templates); anything else is dropped with a warning.
+func (t *translator) additionalBranchPrefix(path string, v any) (string, bool) {
+	s, ok := v.(string)
+	if !ok {
+		t.n.warn(path, "must be a string; dropped")
+		return "", false
+	}
+	if msg := config.CheckAdditionalBranchPrefix(s); msg != "" {
+		t.n.warn(path, "dropped: %s", msg)
+		return "", false
+	}
+	return s, true
 }
 
 // builtinOrigin reports whether origin ("<preset> packageRules[i]") is a rule of one of
@@ -453,6 +469,11 @@ func (t *translator) translate(cfg map[string]any) omap {
 	}
 	emit("branchPrefix", prefix)
 	t.n.warn("branchPrefix", "deps run closes open PRs under %s that it does not manage; disable Renovate before the first deps run", prefix)
+	if v, ok := get("additionalBranchPrefix"); ok {
+		if s, ok := t.additionalBranchPrefix("additionalBranchPrefix", v); ok && s != "" {
+			emit("additionalBranchPrefix", s)
+		}
+	}
 	for _, k := range []string{"baseBranchPatterns", "baseBranches"} {
 		if v, ok := get(k); ok {
 			l, ok := strs(v)

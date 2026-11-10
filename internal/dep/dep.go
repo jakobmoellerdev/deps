@@ -212,6 +212,10 @@ type Update struct {
 	// with separateMultipleMajor), "minor" or "patch" (separateMinorPatch). A non-empty bucket
 	// is appended to the branch as "-<bucket>".
 	Bucket string
+	// BranchTopicPrefix is the expanded additionalBranchPrefix of the update's policy: it
+	// sits between the branch prefix and the topic (dependency name or group/<group>), and
+	// updates with different ones never share a branch. Lock file maintenance ignores it.
+	BranchTopicPrefix string
 	// Automerge requests automerge of the update's PR with AutomergeStrategy
 	// (config.AutomergeStrategies), or of its branch when AutomergeType is branch
 	// (config.AutomergeTypes); a PR or branch automerges only when all of its updates do.

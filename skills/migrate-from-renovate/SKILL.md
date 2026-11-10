@@ -86,7 +86,7 @@ Alternatively run straight from the Renovate config with `args: run --renovate`.
 Choose with the user:
 
 - **Trial next to Renovate (recommended for busy repositories):** set `branchPrefix: deps/` and `dependencyDashboardTitle: Dependency Dashboard (deps trial)` in `.deps.yaml`, so deps neither closes Renovate's PRs nor collides with its dashboard. Compare a few scheduled runs, then switch.
-- **Direct takeover:** keep `branchPrefix: renovate/`. Disable Renovate first (its workflow or app). deps does not adopt Renovate's PRs: it opens its own branches (`renovate/<manager>/<slug>`, `renovate/group/<slug>`) and, after a run without lookup errors, closes every open PR under the prefix it does not manage and deletes those branches.
+- **Direct takeover:** keep `branchPrefix: renovate/`. Disable Renovate first (its workflow or app). deps does not adopt Renovate's PRs: it opens its own branches (`renovate/<slug>`, one per dependency name across managers as in Renovate, and `renovate/group/<slug>`; never Renovate's own names) and, after a run without lookup errors, closes every open PR under the prefix it does not manage and deletes those branches.
 
 At cutover: disable Renovate, set the final `branchPrefix`, drop the trial dashboard title, close Renovate's dashboard issue, then delete the Renovate config in a separate commit once deps runs cleanly.
 

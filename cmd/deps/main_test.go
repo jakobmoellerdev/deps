@@ -665,7 +665,7 @@ func TestRunCreatesBranchAndPR(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
-	const branch = "deps/github-actions/actions-checkout-major" // v6 -> v7 is a major: its own bucket
+	const branch = "deps/actions-checkout-major" // v6 -> v7 is a major: its own bucket
 	for _, want := range []string{
 		"pr      created  " + branch + "  chore(deps): update actions/checkout to v7.0.1  https://git.test/o/r/pulls/7\n",
 		"1 created, 0 updated, 0 closed, 0 up-to-date, 0 skipped, 0 automerge, 0 errors\n",
@@ -708,7 +708,7 @@ func TestRunDryRunAndToken(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("dry run exit %d\n%s", code, stderr)
 	}
-	if !strings.Contains(stderr, "pr      would-create  deps/github-actions/actions-checkout-major") ||
+	if !strings.Contains(stderr, "pr      would-create  deps/actions-checkout-major") ||
 		!strings.Contains(stderr, "(dry run: 1 would change, 0 would automerge)") {
 		t.Errorf("stderr:\n%s", stderr)
 	}

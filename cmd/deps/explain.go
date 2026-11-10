@@ -338,6 +338,9 @@ func describeRule(r config.Rule) string {
 		add("commitScope", strconv.Quote(*r.CommitScope))
 	}
 	list("schedule", r.Schedule, "; ")
+	if r.AdditionalBranchPrefix != nil {
+		add("additionalBranchPrefix", strconv.Quote(*r.AdditionalBranchPrefix))
+	}
 	if r.MinimumReleaseAge != "" {
 		add("minimumReleaseAge", r.MinimumReleaseAge)
 	}
@@ -395,6 +398,9 @@ func describePolicy(p config.Policy) string {
 		p.Pin, allow, orDash(strings.Join(updates, ",")), orDash(p.Group), p.Schedule.String(), minAge)
 	if p.SecurityGroup != "" {
 		s += " securityGroup=" + p.SecurityGroup
+	}
+	if p.AdditionalBranchPrefix != "" {
+		s += " additionalBranchPrefix=" + strconv.Quote(p.AdditionalBranchPrefix)
 	}
 	if p.Versioning != "" {
 		s += " versioning=" + p.Versioning

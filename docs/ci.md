@@ -533,7 +533,7 @@ rules:
 
 - deps fetches every other base (shallow in a shallow clone, so the default `fetch-depth: 1` is fine) into a temporary linked work tree and resolves it with the default branch's config; with [`useBaseBranchConfig: merge`](reference/configuration.md#usebasebranchconfig) the base's own `.deps.yaml` is merged over it (the log prints `base    release/v2  config .deps.yaml + release/v2:.deps.yaml`). The token needs write access to those branches like to the default one.
 - `deps explain --base release/v2 '<glob>'` shows how a base resolves, and `deps preview` in a pull request job resolves both checkouts for the pull request's target (`$GITHUB_BASE_REF`).
-- Branches carry the base: `deps/main/gomod/golang.org-x-net`, `deps/release/v2/gomod/golang.org-x-net`. Run CI on `deps/**` pushes as before.
+- Branches carry the base: `deps/main/golang.org-x-net`, `deps/release/v2/golang.org-x-net`. Run CI on `deps/**` pushes as before.
 - Each base has its own PRs and cleanup; the PR limits count all bases together, so raise `--max-new-prs`, `prConcurrentLimit` and `prHourlyLimit` with the number of bases. The dashboard lists each base in its own section.
 - Branch protection of the release branches applies as on the default branch (automerge, [branch automerge](#branch-automerge)).
 
@@ -826,7 +826,7 @@ rules:
 ```
 
 - **Only new PRs.** They are set right after the PR is created; later runs don't change them, so labels, reviewers and assignees someone adds or removes by hand stay. A config change applies to PRs created after it.
-- **Failures.** If a part fails (an unknown user, a team without access), the PR is still created and the run reports the error, e.g. `deps/gomod/x: request reviewers of #12: 422 …`.
+- **Failures.** If a part fails (an unknown user, a team without access), the PR is still created and the run reports the error, e.g. `deps/x: request reviewers of #12: 422 …`.
 - **GitHub.** Labels that don't exist are created by GitHub. Teams are `team:<slug>` of the repository's organization. The token needs `pull-requests: write`.
 - **Gitea and Forgejo.** Labels must exist in the repository or its organization; missing ones are left out with a warning. Reviewers and assignees need write access to the repository.
 - **GitLab.** Labels that don't exist are created in the project. Reviewers and assignees are usernames; GitLab has no team reviewers, so `team:<slug>` fails that part. GitLab Free keeps only one assignee and one reviewer per merge request.
@@ -1169,7 +1169,7 @@ The reset also cleans up:
 
 **Scenario.** Each step runs `deps run --show-skipped` with `DEPS_TOKEN=$(gh auth token)` on a fresh clone of `main` and checks the result through the GitHub API. The script stops at the first mismatch.
 
-1. **First run.** Three PRs are created, on `deps/github-actions/actions-setup-node`, `deps/github-actions/actions-setup-python` and `deps/gomod/github.com-spf13-cobra`. The script checks:
+1. **First run.** Three PRs are created, on `deps/actions-setup-node`, `deps/actions-setup-python` and `deps/github.com-spf13-cobra`. The script checks:
    - the titles;
    - the body: the update table with ages, `### Release notes`, the fingerprint;
    - the digest pin with its `# v7.x.y` comment, and the tidied `go.sum`;

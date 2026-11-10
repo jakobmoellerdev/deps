@@ -54,9 +54,9 @@ func TestSummaryRender(t *testing.T) {
 			s:    summary{Command: "plan", Res: res, Groups: groups, Elapsed: 1500 * time.Millisecond, ShowSkipped: true},
 			text: []string{
 				"\nSummary: 6 dependencies, 3 updates in 3 PRs, 1 held back by minimumReleaseAge, 3 skipped, 0 errors (1.5s)\n",
-				"  PR deps/github-actions/actions-checkout-major  chore(deps): update actions/checkout to v7.0.1  [dashboard approval]\n",
+				"  PR deps/actions-checkout-major  chore(deps): update actions/checkout to v7.0.1  [dashboard approval]\n",
 				"      actions/checkout  .github/workflows/ci.yml:6  v6.0.0 -> v7.0.1  (major)\n",
-				"  PR deps/gomod/github.com-spf13-cobra  chore(deps): update github.com/spf13/cobra to v1.10.2  [automerge]\n",
+				"  PR deps/github.com-spf13-cobra  chore(deps): update github.com/spf13/cobra to v1.10.2  [automerge]\n",
 				"      example.com/vuln  go.mod:6  v1.0.0 -> v1.0.1  (patch, security: GO-2026-1)\n",
 				"  Held back by minimumReleaseAge:\n      github.com/spf13/cobra  go.mod:5  v1.11.0  too new (released 2026-11-03, minimum 3 days)\n",
 				"  Deprecated or abandoned:\n      example.com/vuln  go.mod:6  abandoned: no release since 2020-01-01 (abandonmentThreshold 365 days)\n",
@@ -65,9 +65,9 @@ func TestSummaryRender(t *testing.T) {
 					"       1  local action  (actions in this repository (./…) have no upstream version)\n",
 			},
 			notText:      []string{"example.com/ind1"},
-			markdownHead: "## deps plan\n\n**6 dependencies, 3 updates in 3 PRs, 1 held back by minimumReleaseAge, 3 skipped, 0 errors (1.5s)**\n\n### Pull requests `deps run` would open\n\n#### chore(deps): update actions/checkout to v7.0.1\n\nBranch `deps/github-actions/actions-checkout-major` · dashboard approval\n\n| Dependency | File | From | To | Type |\n|---|---|---|---|---|\n| `actions/checkout` | `.github/workflows/ci.yml:6` | `v6.0.0` | `v7.0.1` | major |\n",
+			markdownHead: "## deps plan\n\n**6 dependencies, 3 updates in 3 PRs, 1 held back by minimumReleaseAge, 3 skipped, 0 errors (1.5s)**\n\n### Pull requests `deps run` would open\n\n#### chore(deps): update actions/checkout to v7.0.1\n\nBranch `deps/actions-checkout-major` · dashboard approval\n\n| Dependency | File | From | To | Type |\n|---|---|---|---|---|\n| `actions/checkout` | `.github/workflows/ci.yml:6` | `v6.0.0` | `v7.0.1` | major |\n",
 			md: []string{
-				"Branch `deps/gomod/github.com-spf13-cobra` · automerge\n",
+				"Branch `deps/github.com-spf13-cobra` · automerge\n",
 				"| `example.com/vuln` | `go.mod:6` | `v1.0.0` | `v1.0.1` | patch, security: GO-2026-1 |\n",
 				"### Held back by minimumReleaseAge\n\n<details><summary>1 release held back (too new, or without a release time under timestamp-required)</summary>\n\n| Dependency | File | Version | Reason |\n|---|---|---|---|\n| `github.com/spf13/cobra` | `go.mod:5` | `v1.11.0` | too new (released 2026-11-03, minimum 3 days) |\n",
 				"| ignored by default (indirect; enable with a rule setting ignore: false) | 2 |  |\n| local action | 1 | actions in this repository (`./…`) have no upstream version |",
@@ -85,7 +85,7 @@ func TestSummaryRender(t *testing.T) {
 			}},
 			text: []string{
 				"PRs: 1 created, 1 skipped: outside schedule, 1 up-to-date, 1 closed,",
-				"  PR deps/github-actions/actions-checkout-major  chore(deps): update actions/checkout to v7.0.1  [created https://x/pulls/7]\n",
+				"  PR deps/actions-checkout-major  chore(deps): update actions/checkout to v7.0.1  [created https://x/pulls/7]\n",
 				"[skipped: outside schedule; waiting for 0 5 * * 1]\n",
 				"[up-to-date https://x/pulls/3; automerge enabled]\n",
 				"  closed  deps/gomod/old  https://x/pulls/2\n",
@@ -96,7 +96,7 @@ func TestSummaryRender(t *testing.T) {
 			md: []string{
 				"## deps run\n",
 				"### Pull requests\n\n",
-				"Branch `deps/github-actions/actions-checkout-major` · created [#7](https://x/pulls/7)\n",
+				"Branch `deps/actions-checkout-major` · created [#7](https://x/pulls/7)\n",
 				"· skipped: outside schedule · waiting for 0 5 * * 1\n",
 				"· up-to-date [#3](https://x/pulls/3) · automerge enabled\n",
 				"### Other pull request actions\n\n| PR | Status | Link |\n|---|---|---|\n| chore(deps): update old | closed | [#2](https://x/pulls/2) |\n| dashboard: Dependency Dashboard | updated | [#1](https://x/issues/1) |\n",

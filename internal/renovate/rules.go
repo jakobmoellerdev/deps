@@ -22,7 +22,7 @@ var updateTypeBlocks = []struct{ key, typ string }{
 // effectOrder is the output order of rule effects (the field order of config.Rule).
 var effectOrder = []string{"ignore", "pin", "allow", "rangeStrategy", "versioning", "extractVersion", "registryUrls", "replacementName",
 	"replacementVersion", "replacementPrefix", "separateMajorMinor",
-	"separateMultipleMajor", "separateMinorPatch", "group", "commitType", "commitScope", "schedule",
+	"separateMultipleMajor", "separateMinorPatch", "group", "commitType", "commitScope", "schedule", "additionalBranchPrefix",
 	"minimumReleaseAge", "minimumReleaseAgeBehaviour", "abandonmentThreshold", "automerge", "automergeStrategy", "automergeType",
 	"labels", "addLabels", "reviewers", "assignees", "prTitle", "prHeader", "prFooter", "postUpgradeTasks", "dashboardApproval",
 	"draftPR", "prCreation"}
@@ -579,6 +579,10 @@ func (t *translator) effects(origin string, r map[string]any) map[string]effect 
 		case "schedule":
 			if s, ok := t.schedule(p, v); ok {
 				set("schedule", s)
+			}
+		case "additionalBranchPrefix":
+			if s, ok := t.additionalBranchPrefix(p, v); ok {
+				set(k, s)
 			}
 		case "minimumReleaseAge":
 			if v == nil {

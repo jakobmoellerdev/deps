@@ -281,9 +281,9 @@ func (c *fakePC) UpdateIssue(_ context.Context, n int, body string) error {
 }
 
 const (
-	branchA = "deps/github-actions/a-x"
+	branchA = "deps/a-x"
 	titleA  = "chore(deps): update a/x to v2"
-	branchB = "deps/github-actions/b-y"
+	branchB = "deps/b-y"
 	email   = "bot@example.invalid"
 )
 
@@ -494,9 +494,9 @@ func TestRun(t *testing.T) {
 			// The failed group's own PR stays open; PRs of no group are still closed.
 			name:       "build error isolates its group and closes obsolete PRs",
 			extra:      []dep.Update{{Dep: dep.Dep{Manager: "github-actions", File: "missing.yml", Line: 1, Name: "c/z", Version: "v1", RefSpan: dep.Span{Start: 0, End: 2}}, Type: dep.Major, NewVersion: "v2"}},
-			pc:         fakePC{open: []platform.PR{{Number: 8, Head: "deps/github-actions/c-z"}, {Number: 9, Head: "deps/gomod/gone"}}},
+			pc:         fakePC{open: []platform.PR{{Number: 8, Head: "deps/c-z"}, {Number: 9, Head: "deps/gomod/gone"}}},
 			wantStatus: map[string]string{branchA: StatusCreated, branchB: StatusCreated, "deps/gomod/gone": StatusClosed},
-			wantErrs:   []string{"deps/github-actions/c-z: missing.yml: "},
+			wantErrs:   []string{"deps/c-z: missing.yml: "},
 			wantPushed: 2, wantCreated: 2, wantClosed: 1,
 		},
 		{
@@ -741,7 +741,7 @@ func TestRunBranchPrefixAndUnlimitedPRs(t *testing.T) {
 	if want := []string{"refs/heads/main", "refs/heads/bot/*"}; !slices.Equal(g.patterns, want) {
 		t.Errorf("LsRemote patterns = %v, want %v", g.patterns, want)
 	}
-	if want := []string{"bot/github-actions/a-x", "bot/github-actions/b-y"}; !slices.Equal(pc.created, want) {
+	if want := []string{"bot/a-x", "bot/b-y"}; !slices.Equal(pc.created, want) {
 		t.Errorf("created = %v, want %v", pc.created, want)
 	}
 	if !slices.Equal(pc.closedNow, []int{9}) || !slices.Equal(g.deleted, []string{"bot/gomod/gone"}) {

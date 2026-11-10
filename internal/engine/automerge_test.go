@@ -63,7 +63,7 @@ rules:
 		}
 	}
 	// tools mixes a major (setup-go) and a patch (cache): not automerged.
-	if want := map[string]bool{"deps/github-actions/actions-checkout": true, "deps/group/tools": false}; len(got) != len(want) || got["deps/github-actions/actions-checkout"] != true || got["deps/group/tools"] != false {
+	if want := map[string]bool{"deps/actions-checkout": true, "deps/group/tools": false}; len(got) != len(want) || got["deps/actions-checkout"] != true || got["deps/group/tools"] != false {
 		t.Errorf("groups automerge = %v, want %v", got, want)
 	}
 

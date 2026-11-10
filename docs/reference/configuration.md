@@ -94,6 +94,7 @@ customDatasources:
 - [`security`](#security)
 - [`branchPrefix`](#branchprefix)
 - [`baseBranches`](#basebranches)
+- [`additionalBranchPrefix`](#additionalbranchprefix)
 - [`useBaseBranchConfig`](#usebasebranchconfig)
 - [`rebaseWhen`](#rebasewhen)
 - [`monorepos`](#monorepos)
@@ -167,6 +168,7 @@ customDatasources:
   - [`rules[].commitType`](#rulescommittype)
   - [`rules[].commitScope`](#rulescommitscope)
   - [`rules[].schedule`](#rulesschedule)
+  - [`rules[].additionalBranchPrefix`](#rulesadditionalbranchprefix)
   - [`rules[].minimumReleaseAge`](#rulesminimumreleaseage)
   - [`rules[].minimumReleaseAgeBehaviour`](#rulesminimumreleaseagebehaviour)
   - [`rules[].abandonmentThreshold`](#rulesabandonmentthreshold)
@@ -424,12 +426,12 @@ security: false
 
 ## `branchPrefix`
 
-Prefix of update branches (\<prefix>\<manager>/\<name>, \<prefix>group/\<group>); must end with `/`. Only branches and PRs under it are managed.
+Prefix of update branches (\<prefix>\<additionalBranchPrefix>\<name>, \<prefix>\<additionalBranchPrefix>group/\<group>); must end with `/`. Only branches and PRs under it are managed.
 
 - **Type:** string
 - **Default:** `deps/`
 
-Branches are `<prefix><manager>/<slug(name)>[-<bucket>]`, `<prefix>group/<slug(group)>[-<bucket>]` and, for [security groups](#rulessecuritygroup), `<prefix>group/<slug(securityGroup)>[-<bucket>]-security`; with several [base branches](#basebranches) the base follows the prefix (`<prefix><base>/…`). deps never touches branches and PRs outside the prefix.
+Branches are `<prefix><additionalBranchPrefix><slug(name)>[-<bucket>]` for the updates of one dependency, across managers and files, `<prefix><additionalBranchPrefix>group/<slug(group)>[-<bucket>]` for [groups](#rulesgroup) and, for [security groups](#rulessecuritygroup), `<prefix><additionalBranchPrefix>group/<slug(securityGroup)>[-<bucket>]-security`; lock file maintenance uses `<prefix>lock-file-maintenance`. With several [base branches](#basebranches) the base follows the prefix (`<prefix><base>/…`). deps never touches branches and PRs outside the prefix.
 
 - It must end with `/`.
 - It must not contain spaces, control characters, any of `~^:?*[\`, `..` or `@{`.
@@ -439,14 +441,14 @@ To take over Renovate's open PRs, set `branchPrefix: renovate/` (see [branch pre
 
 ## `baseBranches`
 
-Base branches deps run proposes updates against, each resolved from its own tip: branch names, $default (the repository's default branch) and RE2 regexes `/<RE2>/` (flag i allowed) matching branches on origin. With more than one entry, or a regex, update branches carry their base (\<prefix>\<base>/\<manager>/\<name>) and PRs, cleanup and the dashboard are kept per base. Empty means the default branch; run --base overrides it.
+Base branches deps run proposes updates against, each resolved from its own tip: branch names, $default (the repository's default branch) and RE2 regexes `/<RE2>/` (flag i allowed) matching branches on origin. With more than one entry, or a regex, update branches carry their base (\<prefix>\<base>/\<name>) and PRs, cleanup and the dashboard are kept per base. Empty means the default branch; run --base overrides it.
 
 - **Type:** list of strings
 
 `deps run` proposes the updates of each base branch on its own: it resolves the dependencies of the branch's tip and opens the PRs against it. Renovate calls this `baseBranchPatterns` (formerly `baseBranches`); Dependabot sets a `target-branch` per update entry.
 
 - **Entries.** A branch name, `$default` (the repository's default branch), or an RE2 regex `/<RE2>/` (flag `i` allowed) matching branch names on origin, in their sorted order. The unfolded list keeps the order of the entries without duplicates. A name origin lacks is skipped with a warning (`base branch not found on origin, skipping it`); when nothing is left, `run` fails with `baseBranches: no branch on origin matches [...]`.
-- **Branch names.** With more than one entry, or a regex entry (it can match more branches later), every update branch carries its base: `<branchPrefix><base>/<manager>/<slug(name)>`, `<branchPrefix><base>/group/<slug(group)>`, e.g. `deps/release/1.x/gomod/golang.org-x-net`. A single named entry keeps the plain names. Switching from one base to several renames the branches: the open PRs of the old names are closed as obsolete in that run.
+- **Branch names.** With more than one entry, or a regex entry (it can match more branches later), every update branch carries its base: `<branchPrefix><base>/<additionalBranchPrefix><slug(name)>`, `<branchPrefix><base>/<additionalBranchPrefix>group/<slug(group)>`, e.g. `deps/release/1.x/golang.org-x-net`. A single named entry keeps the plain names. Switching from one base to several renames the branches: the open PRs of the old names are closed as obsolete in that run.
 - **Checkouts.** The checkout of `--dir` serves the base whose tip it is; every other base is fetched (shallow in a shallow clone) and checked out into a temporary linked work tree, removed when `run` ends. Every base is resolved with the config of the checkout (Renovate's default `useBaseBranchConfig: none`), its rules matching that base with [`rules[].baseBranches`](#rulesbasebranches); with [`useBaseBranchConfig`](#usebasebranchconfig) each base's own config file is merged over it.
 - **Per base:** the PRs of a base are those targeting it, so its obsolete PRs are closed only when its own resolution had no error; branches without a PR are deleted only when no base had one. PRs to branches the run does not handle are left alone.
 - **For the run:** the PR limits ([`prConcurrentLimit`](#prconcurrentlimit), `prHourlyLimit`, `--max-new-prs`) count all bases together, and the [dashboard](#dependencydashboard) is one issue with a section per base.
@@ -458,6 +460,27 @@ rules:
   - baseBranches: ['/^release\//']   # release branches get no majors
     updateTypes: [major]
     ignore: true
+```
+
+## `additionalBranchPrefix`
+
+Text between branchPrefix and the branch topic (the dependency name, or group/\<group>), as in Renovate. Literal text plus the templates {{manager}}, {{parentDir}} and {{packageFileDir}} of each update's file; updates whose expanded prefix differs never share a PR, so `{{manager}}/` keeps managers apart. Rules override it.
+
+- **Type:** string
+
+Renovate's `additionalBranchPrefix`: text between [`branchPrefix`](#branchprefix) and the branch topic. Renovate builds branch names as `{{branchPrefix}}{{additionalBranchPrefix}}{{branchTopic}}`; deps' topics are the dependency name (`slug(name)`) and, for groups, `group/<slug(group)>`, followed by the [bucket](#separatemajorminor) suffix. Without it (the default `""`) the updates of one dependency name share one branch and PR across managers and files, as in Renovate: `anchore/syft` updated as a GitHub action, a Homebrew formula and a [custom](#custom) match gets one PR on `deps/anchore-syft`.
+
+- **Templates.** Literal text plus Renovate's `{{manager}}` (the deps manager), `{{parentDir}}` (the name of the directory of the dependency's file, `""` at the root) and `{{packageFileDir}}` (that directory's path, `""` at the root); the triple-brace forms (`{{{manager}}}`) are the same. Any other template is a config error naming these three. The expanded text is cleaned as Renovate cleans branch names: whitespace is dropped, characters git rejects become `-`, repeated `/` and `-` collapse, and no component starts with `-` or `.`, so `{{parentDir}}-` of a file at the root expands to nothing.
+- **Sharing.** Updates whose expanded prefix differs never share a branch or PR, also in a [group](#rulesgroup): `{{manager}}/` keeps managers apart (`deps/github-actions/anchore-syft`, `deps/homebrew/anchore-syft`; groups `deps/github-actions/group/tools`), `{{parentDir}}-` splits a monorepo by directory (`deps/web-react`). Lock file maintenance ignores it.
+- **Members' settings.** When one dependency is updated by several managers or files, their settings combine as in a [group](#rulesgroup): the PR automerges only when every member does (with the first member's `automergeStrategy`), is a draft or needs [dashboard approval](#dashboardapproval) when any member asks, waits for the most waiting [`prCreation`](#prcreation), is created only when every member is in [schedule](#schedule), and gets the labels, reviewers and assignees of all members; the commit type is `fix` when any member's is, the scope and [PR templates](#prtitle) are the first member's. The title is `update <name> to <v>` when every member moves to the same version; versions differing only by a leading `v` (an action's `v0.7.0`, a formula's `0.7.0`) count as the same, and the title shows the first member's form.
+- **Rules** override it for matching deps (with `updateTypes`: for those updates); `""` removes it.
+- **Upgrading from deps 0.7 and earlier.** Those versions named branches `<prefix><manager>/<slug(name)>`, one per manager. The first run with the new names opens the PRs under them and closes the per-manager PRs as obsolete (with their branches), as for any branch no update wants. `additionalBranchPrefix: '{{manager}}/'` keeps the old single-dependency names (groups then also split per manager, `<prefix><manager>/group/<slug>`). A new branch whose name is the directory of a remaining old branch (dep `helm`, branches `deps/helm/…`) can only be pushed once those are gone, normally on the next run.
+
+```yaml
+additionalBranchPrefix: '{{manager}}/'   # deps/github-actions/actions-checkout
+rules:
+  - paths: ['web/**']
+    additionalBranchPrefix: '{{parentDir}}-'
 ```
 
 ## `useBaseBranchConfig`
@@ -1388,8 +1411,8 @@ Group name: all deps with the same group share one PR.
 
 - **Type:** string
 
-- **Groups.** All non-security updates whose policy has the same `group` share a branch `<prefix>group/<slug(group)>` and one PR. The title is `<type>(<scope>): update <group> (<n> dependencies)`, or `update <group> to <v>` when every member moves to one version.
-- **Single deps.** Every other update gets the branch `<prefix><manager>/<slug(name)>`, with titles `<p> update <name> to <ver>`, `<p> pin <name> to <sha7>` and `<p> update <name> digest to <sha7>`. [`prTitle`](#prtitle) replaces these built-in titles.
+- **Groups.** All non-security updates whose policy has the same `group` (and the same expanded [`additionalBranchPrefix`](#additionalbranchprefix)) share a branch `<prefix><additionalBranchPrefix>group/<slug(group)>` and one PR. The title is `<type>(<scope>): update <group> (<n> dependencies)`, or `update <group> to <v>` when every member moves to one version.
+- **Single deps.** Every other update gets the branch `<prefix><additionalBranchPrefix><slug(name)>`, shared by the updates of that dependency name in every manager and file, with titles `<p> update <name> to <ver>`, `<p> pin <name> to <sha7>` and `<p> update <name> digest to <sha7>`. [`prTitle`](#prtitle) replaces these built-in titles.
 - `slug` lowercases the name, maps bytes outside `[a-z0-9._-]` to `-`, and collapses and trims `-`.
 - **Commit type in groups.** A group uses `fix` if any member's type is `fix`, else the first member's type. It always uses the first member's scope and [PR templates](#prtitle).
 - Built-in [monorepo groups](#monorepos) are overridden by any rule that sets `group`.
@@ -1436,6 +1459,14 @@ Must match `^[A-Za-z0-9][A-Za-z0-9._/-]*$`. In groups the first member's scope i
 Schedule (cron triggers and time windows, like the top-level schedule) overriding the top-level schedule; [] means every run.
 
 - **Type:** list of strings
+
+### `rules[].additionalBranchPrefix`
+
+Overrides the top-level additionalBranchPrefix for matching deps (with updateTypes: for updates of those types); an empty string removes it.
+
+- **Type:** string
+
+See [`additionalBranchPrefix`](#additionalbranchprefix).
 
 ### `rules[].minimumReleaseAge`
 

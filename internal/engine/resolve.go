@@ -1563,6 +1563,7 @@ func applyPolicy(up *dep.Update, kp *config.Policy) {
 	up.DraftPR, up.PRCreation = kp.DraftPR, kp.PRCreation
 	up.Labels, up.Reviewers, up.Assignees = kp.Labels, kp.Reviewers, kp.Assignees
 	up.Tasks = kp.Tasks
+	up.BranchTopicPrefix = config.ExpandBranchPrefix(kp.AdditionalBranchPrefix, up.Dep)
 	if len(up.Advisories) == 0 {
 		up.Group, up.Schedule, up.DashboardApproval, up.SecurityGroup = kp.Group, kp.Schedule, kp.DashboardApproval, ""
 	} else {

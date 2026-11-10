@@ -125,6 +125,17 @@ func TestLoadRules(t *testing.T) {
     group: GitHub Actions` + defaultExclusions,
 		},
 		{
+			name: "additionalBranchPrefix with supported templates; others dropped",
+			src:  `{packageRules: [{matchPackageNames: ['a'], additionalBranchPrefix: '{{{parentDir}}}-'}, {matchPackageNames: ['b'], additionalBranchPrefix: '{{depName}}-', automerge: true}]}`,
+			rules: `  - # packageRules[0]
+    names: [a]
+    additionalBranchPrefix: '{{{parentDir}}}-'
+  - # packageRules[1]
+    names: [b]
+    automerge: true` + defaultExclusions,
+			notes: []string{"warn packageRules[1].additionalBranchPrefix: dropped: unsupported template {{depName}}; supported: {{manager}}, {{parentDir}}, {{packageFileDir}}"},
+		},
+		{
 			name: "dockerfile is docker with depTypes dockerfile and install",
 			src:  `{packageRules: [{matchManagers: ['dockerfile'], enabled: false}]}`,
 			rules: `  - # packageRules[0]
@@ -707,7 +718,7 @@ func TestLoadRules(t *testing.T) {
 
 func TestLoadTopLevel(t *testing.T) {
 	res, err := load(t, `{
-		branchPrefix: 'bot/', prConcurrentLimit: 3, prHourlyLimit: 1.5, automerge: true, rebaseWhen: 'auto',
+		branchPrefix: 'bot/', additionalBranchPrefix: '{{manager}}-', prConcurrentLimit: 3, prHourlyLimit: 1.5, automerge: true, rebaseWhen: 'auto',
 		ignorePaths: ['foo', '**/bar/**', '!keep', '/^x/'], automergeStrategy: 'merge-commit', automergeType: 'branch',
 		minimumReleaseAge: '7 days', vulnerabilityAlerts: {enabled: false}, schedule: ['before 6am on monday', 'on the 1st through 7th day of the month'],
 		timezone: 'Europe/Berlin', lockFileMaintenance: {enabled: true, automerge: true}, labels: ['deps'],
@@ -720,6 +731,7 @@ func TestLoadTopLevel(t *testing.T) {
 	y := string(res.YAML)
 	_, body, _ := strings.Cut(y, "\n\nbranchPrefix:")
 	const want = ` bot/
+additionalBranchPrefix: '{{manager}}-'
 prConcurrentLimit: 3
 pin: digest
 rangeStrategy: pin

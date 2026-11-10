@@ -54,8 +54,8 @@ func TestPreview(t *testing.T) {
 	}
 	for _, want := range []string{
 		"new     deps/group/checkout-major  chore(deps): update actions/checkout to v7.0.1\n",
-		"removed deps/github-actions/actions-checkout-major  chore(deps): update actions/checkout to v7.0.1\n",
-		"removed deps/gomod/example.com-a  fix(deps): update example.com/a to v1.1.0\n",
+		"removed deps/actions-checkout-major  chore(deps): update actions/checkout to v7.0.1\n",
+		"removed deps/example.com-a  fix(deps): update example.com/a to v1.1.0\n",
 		"check   https://github.com/o/r/runs/1\n",
 		"1 new, 0 changed, 2 no longer opened, 0 the same (",
 	} {
@@ -119,7 +119,7 @@ func TestPreviewBaseErrors(t *testing.T) {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
 	for _, want := range []string{
-		"unknown deps/gomod/example.com-a  fix(deps): update example.com/a to v1.1.0\n",
+		"unknown deps/example.com-a  fix(deps): update example.com/a to v1.1.0\n",
 		"base checkout: go.mod: ",
 		"0 new, 0 changed, 0 no longer opened, 1 the same, 1 not compared (",
 	} {

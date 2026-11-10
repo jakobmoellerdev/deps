@@ -274,7 +274,7 @@ func TestDeclineReplacements(t *testing.T) {
 	usual := dep.Update{Dep: d, Type: dep.Minor, NewVersion: "1.12.0"}
 	rep := dep.Update{Dep: d, Type: dep.Replacement, NewName: "pug", NewVersion: "2.0.0", Bucket: engine.ReplacementBucket, Declined: []dep.Update{usual}}
 	other := dep.Update{Dep: dep.Dep{Manager: "npm", File: "package.json", Line: 1, Name: "left-pad", Version: "1.3.0"}, Type: dep.Patch, NewVersion: "1.3.1"}
-	const branch, title = "deps/npm/jade-replacement", "chore(deps): replace jade with pug 2.0.0"
+	const branch, title = "deps/jade-replacement", "chore(deps): replace jade with pug 2.0.0"
 	pr := func(t string) []platform.PR { return []platform.PR{{Number: 3, Head: branch, Title: t}} }
 	for _, tt := range []struct {
 		name         string

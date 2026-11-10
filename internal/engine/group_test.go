@@ -25,8 +25,8 @@ func TestGroupUpdatesPolicyGroupsAndSecurity(t *testing.T) {
 				{Dep: gomod("example.com/b"), NewVersion: "v1.3.0"},
 			},
 			want: []Group{
-				{Manager: "gomod", Name: "example.com/b", Branch: "deps/gomod/example.com-b", Title: "chore(deps): update example.com/b to v1.3.0"},
-				{Manager: "group", Name: "Tooling", Branch: "deps/group/tooling", Title: "chore(deps): update Tooling (2 dependencies)"},
+				{Name: "example.com/b", Branch: "deps/example.com-b", Title: "chore(deps): update example.com/b to v1.3.0"},
+				{Kind: "group", Name: "Tooling", Branch: "deps/group/tooling", Title: "chore(deps): update Tooling (2 dependencies)"},
 			},
 			counts: []int{1, 2},
 		},
@@ -36,7 +36,7 @@ func TestGroupUpdatesPolicyGroupsAndSecurity(t *testing.T) {
 				{Dep: gha("actions/checkout"), NewVersion: "v5", Group: "ci"},
 				{Dep: gha("actions/checkout"), NewVersion: "v5", Group: "ci"},
 			},
-			want:   []Group{{Manager: "group", Name: "ci", Branch: "deps/group/ci", Title: "chore(deps): update actions/checkout to v5"}},
+			want:   []Group{{Kind: "group", Name: "ci", Branch: "deps/group/ci", Title: "chore(deps): update actions/checkout to v5"}},
 			counts: []int{2},
 		},
 		{
@@ -46,8 +46,8 @@ func TestGroupUpdatesPolicyGroupsAndSecurity(t *testing.T) {
 				{Dep: gomod("example.com/b"), NewVersion: "v1.3.0", Group: "all"},
 			},
 			want: []Group{
-				{Manager: "gomod", Name: "example.com/a", Branch: "deps/gomod/example.com-a", Title: "fix(deps): update example.com/a to v1.2.1 [security]"},
-				{Manager: "group", Name: "all", Branch: "deps/group/all", Title: "chore(deps): update example.com/b to v1.3.0"},
+				{Name: "example.com/a", Branch: "deps/example.com-a", Title: "fix(deps): update example.com/a to v1.2.1 [security]"},
+				{Kind: "group", Name: "all", Branch: "deps/group/all", Title: "chore(deps): update example.com/b to v1.3.0"},
 			},
 			counts: []int{1, 1},
 		},
@@ -57,7 +57,7 @@ func TestGroupUpdatesPolicyGroupsAndSecurity(t *testing.T) {
 				{Dep: gomod("example.com/a"), NewVersion: "v1.2.1", Advisories: adv},
 				{Dep: gomod("example.com/a"), NewVersion: "v1.4.0"},
 			},
-			want:   []Group{{Manager: "gomod", Name: "example.com/a", Branch: "deps/gomod/example.com-a", Title: "fix(deps): update example.com/a [security]"}},
+			want:   []Group{{Name: "example.com/a", Branch: "deps/example.com-a", Title: "fix(deps): update example.com/a [security]"}},
 			counts: []int{2},
 		},
 		{
@@ -71,9 +71,9 @@ func TestGroupUpdatesPolicyGroupsAndSecurity(t *testing.T) {
 				{Dep: gha("actions/x"), NewVersion: "v2.0.1", Bucket: "major", SecurityGroup: "go", Advisories: adv},
 			},
 			want: []Group{
-				{Manager: "group", Name: "go", Branch: "deps/group/go", Title: "chore(deps): update go (2 dependencies)"},
-				{Manager: "group", Name: "go", Branch: "deps/group/go-major-security", Title: "fix(deps): update go to v2.0.1 [security]"},
-				{Manager: "group", Name: "go", Branch: "deps/group/go-security", Title: "fix(deps): update go (2 dependencies) [security]"},
+				{Kind: "group", Name: "go", Branch: "deps/group/go", Title: "chore(deps): update go (2 dependencies)"},
+				{Kind: "group", Name: "go", Branch: "deps/group/go-major-security", Title: "fix(deps): update go to v2.0.1 [security]"},
+				{Kind: "group", Name: "go", Branch: "deps/group/go-security", Title: "fix(deps): update go (2 dependencies) [security]"},
 			},
 			counts: []int{2, 2, 2},
 		},
@@ -82,7 +82,7 @@ func TestGroupUpdatesPolicyGroupsAndSecurity(t *testing.T) {
 			updates: []dep.Update{
 				{Dep: gomod("example.com/a"), NewVersion: "v1.2.1", SecurityGroup: "Go Security", Advisories: adv},
 			},
-			want:   []Group{{Manager: "group", Name: "Go Security", Branch: "deps/group/go-security-security", Title: "fix(deps): update example.com/a to v1.2.1 [security]"}},
+			want:   []Group{{Kind: "group", Name: "Go Security", Branch: "deps/group/go-security-security", Title: "fix(deps): update example.com/a to v1.2.1 [security]"}},
 			counts: []int{1},
 		},
 		{
@@ -91,7 +91,7 @@ func TestGroupUpdatesPolicyGroupsAndSecurity(t *testing.T) {
 				{Dep: dep.Dep{Manager: "maven", Name: "core", VersionRef: "jackson.version"}, NewVersion: "2.17.0", Group: "jackson.version", SecurityGroup: "sec", Advisories: adv},
 				{Dep: dep.Dep{Manager: "maven", Name: "databind", VersionRef: "jackson.version"}, NewVersion: "2.17.0", Group: "jackson.version"},
 			},
-			want:   []Group{{Manager: "group", Name: "jackson.version", Branch: "deps/group/jackson.version", Title: "fix(deps): update jackson.version to 2.17.0 [security]"}},
+			want:   []Group{{Kind: "group", Name: "jackson.version", Branch: "deps/group/jackson.version", Title: "fix(deps): update jackson.version to 2.17.0 [security]"}},
 			counts: []int{2},
 		},
 		{
@@ -102,8 +102,8 @@ func TestGroupUpdatesPolicyGroupsAndSecurity(t *testing.T) {
 				{Dep: gomod("example.com/b"), NewVersion: "v1.3.0", Group: "All Go"},
 			},
 			want: []Group{
-				{Manager: "gomod", Name: "example.com/a", Branch: "renovate/gomod/example.com-a", Title: "chore(deps): update example.com/a to v1.2.0"},
-				{Manager: "group", Name: "All Go", Branch: "renovate/group/all-go", Title: "chore(deps): update example.com/b to v1.3.0"},
+				{Name: "example.com/a", Branch: "renovate/example.com-a", Title: "chore(deps): update example.com/a to v1.2.0"},
+				{Kind: "group", Name: "All Go", Branch: "renovate/group/all-go", Title: "chore(deps): update example.com/b to v1.3.0"},
 			},
 			counts: []int{1, 1},
 		},
@@ -116,10 +116,10 @@ func TestGroupUpdatesPolicyGroupsAndSecurity(t *testing.T) {
 				{Dep: gomod("example.com/sec"), NewVersion: "v1.0.1", CommitType: "chore", CommitScope: "", Advisories: adv},
 			},
 			want: []Group{
-				{Manager: "gomod", Name: "example.com/build", Branch: "deps/gomod/example.com-build", Title: "build(tools): pin example.com/build to abcdef0"},
-				{Manager: "gomod", Name: "example.com/ci", Branch: "deps/gomod/example.com-ci", Title: "ci: update example.com/ci to v2"},
-				{Manager: "gomod", Name: "example.com/fix", Branch: "deps/gomod/example.com-fix", Title: "fix(deps): update example.com/fix to v1.2.0"},
-				{Manager: "gomod", Name: "example.com/sec", Branch: "deps/gomod/example.com-sec", Title: "fix: update example.com/sec to v1.0.1 [security]"},
+				{Name: "example.com/build", Branch: "deps/example.com-build", Title: "build(tools): pin example.com/build to abcdef0"},
+				{Name: "example.com/ci", Branch: "deps/example.com-ci", Title: "ci: update example.com/ci to v2"},
+				{Name: "example.com/fix", Branch: "deps/example.com-fix", Title: "fix(deps): update example.com/fix to v1.2.0"},
+				{Name: "example.com/sec", Branch: "deps/example.com-sec", Title: "fix: update example.com/sec to v1.0.1 [security]"},
 			},
 			counts: []int{1, 1, 1, 1},
 		},
@@ -132,8 +132,8 @@ func TestGroupUpdatesPolicyGroupsAndSecurity(t *testing.T) {
 				{Dep: gha("a/y"), NewVersion: "v3", Group: "ci", CommitType: "chore", CommitScope: "deps"},
 			},
 			want: []Group{
-				{Manager: "group", Name: "ci", Branch: "deps/group/ci", Title: "ci(gha): update ci (2 dependencies)"},
-				{Manager: "group", Name: "kubernetes monorepo", Branch: "deps/group/kubernetes-monorepo", Title: "fix(k8s): update kubernetes monorepo to v0.35.0"},
+				{Kind: "group", Name: "ci", Branch: "deps/group/ci", Title: "ci(gha): update ci (2 dependencies)"},
+				{Kind: "group", Name: "kubernetes monorepo", Branch: "deps/group/kubernetes-monorepo", Title: "fix(k8s): update kubernetes monorepo to v0.35.0"},
 			},
 			counts: []int{2, 2},
 		},
@@ -146,7 +146,7 @@ func TestGroupUpdatesPolicyGroupsAndSecurity(t *testing.T) {
 			}
 			for i, w := range tt.want {
 				g := got[i]
-				if g.Manager != w.Manager || g.Name != w.Name || g.Branch != w.Branch || g.Title != w.Title || len(g.Updates) != tt.counts[i] {
+				if g.Kind != w.Kind || g.Name != w.Name || g.Branch != w.Branch || g.Title != w.Title || len(g.Updates) != tt.counts[i] {
 					t.Errorf("group %d = %+v, want %+v with %d updates", i, g, w, tt.counts[i])
 				}
 			}

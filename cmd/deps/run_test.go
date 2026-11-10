@@ -49,7 +49,7 @@ func TestRunRebasesBehindBase(t *testing.T) {
 	giteaEnv(t)
 	t.Setenv("DEPS_TOKEN", "tok")
 	origin, work := gitRepo(t, map[string]string{".github/workflows/ci.yml": workflow})
-	const branch = "deps/github-actions/actions-checkout-major"
+	const branch = "deps/actions-checkout-major"
 	if _, stderr, code := execute(t, "run", "--dir", work, "--author-email", "bot@example.invalid"); code != 0 || len(f.created) != 1 {
 		t.Fatalf("first run: exit %d, created %v\n%s", code, f.created, stderr)
 	}
@@ -152,7 +152,7 @@ func TestRunGitAuthorFromConfig(t *testing.T) {
 	if _, stderr, code := execute(t, "run", "--dir", work); code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
-	const branch = "deps/github-actions/actions-checkout-major"
+	const branch = "deps/actions-checkout-major"
 	if got := git(t, origin, "log", "-1", "--format=%an <%ae>|%cn <%ce>", branch); got != "OCM Bot <ocm-bot@example.com>|OCM Bot <ocm-bot@example.com>" {
 		t.Errorf("author|committer = %q", got)
 	}
@@ -196,7 +196,7 @@ func TestRunSignsCommits(t *testing.T) {
 	if err := os.WriteFile(allowed, []byte("bot@example.invalid namespaces=\"git\" "+string(pub)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	git(t, origin, "-c", "gpg.ssh.allowedSignersFile="+allowed, "verify-commit", "deps/github-actions/actions-checkout-major")
+	git(t, origin, "-c", "gpg.ssh.allowedSignersFile="+allowed, "verify-commit", "deps/actions-checkout-major")
 	if entries, _ := os.ReadDir(tmp); len(entries) != 0 {
 		t.Errorf("temporary files left: %v", entries)
 	}
@@ -213,7 +213,7 @@ func TestRunAutomergeAndDashboard(t *testing.T) {
 		".github/workflows/ci.yml": workflow,
 		".deps.yaml":               "automerge: true\nautomergeStrategy: squash\ndependencyDashboard: true\ndependencyDashboardLabels: [dependencies]\n",
 	})
-	const branch = "deps/github-actions/actions-checkout-major"
+	const branch = "deps/actions-checkout-major"
 
 	_, stderr, code := execute(t, "run", "--dir", work, "--dry-run")
 	if code != 0 || len(f.merges)+len(f.issues)+len(f.created) != 0 {
@@ -267,7 +267,7 @@ func TestRunAutomergeAndDashboard(t *testing.T) {
 // without a PR; once its commit status is green, the next run fast-forwards main to it and
 // deletes it. A main branch that declines the push gets the PR instead.
 func TestRunBranchAutomerge(t *testing.T) {
-	const branch = "deps/github-actions/actions-checkout-major"
+	const branch = "deps/actions-checkout-major"
 	setup := func(t *testing.T) (*fakeNet, string, string) {
 		t.Helper()
 		cleanEnv(t)
@@ -335,7 +335,7 @@ func TestRunBranchAutomerge(t *testing.T) {
 // pushes the branch without a PR, the next one waits while its checks run, and once they are
 // green the PR is opened as a draft (WIP: title).
 func TestRunPRCreationDraft(t *testing.T) {
-	const branch = "deps/github-actions/actions-checkout-major"
+	const branch = "deps/actions-checkout-major"
 	cleanEnv(t)
 	f := newFakeNet(t)
 	giteaEnv(t)

@@ -41,7 +41,13 @@ func TestMigrate(t *testing.T) {
 	cleanEnv(t)
 	newFakeNet(t)
 	dir := t.TempDir()
-	writeFiles(t, dir, map[string]string{".github/workflows/ci.yml": workflow, "go.mod": gomodSrc, ".github/renovate.json5": renovateIgnoreA})
+	const renovate = `{
+  additionalBranchPrefix: '{{manager}}/',
+  // example.com/a stays where it is
+  packageRules: [{matchPackageNames: ['example.com/a'], enabled: false}],
+}
+`
+	writeFiles(t, dir, map[string]string{".github/workflows/ci.yml": workflow, "go.mod": gomodSrc, ".github/renovate.json5": renovate})
 
 	_, stderr, code := execute(t, "migrate", "--dir", dir)
 	if code != 0 {
@@ -55,6 +61,9 @@ func TestMigrate(t *testing.T) {
 	written, err := os.ReadFile(out)
 	if err != nil || !strings.Contains(string(written), "# Translated from .github/renovate.json5 by deps (Renovate compatibility).\n") {
 		t.Fatalf("written = %q, %v", written, err)
+	}
+	if !strings.Contains(string(written), "\nadditionalBranchPrefix: '{{manager}}/'\n") {
+		t.Errorf("additionalBranchPrefix missing:\n%s", written)
 	}
 
 	_, stderr, code = execute(t, "migrate", "--dir", dir)

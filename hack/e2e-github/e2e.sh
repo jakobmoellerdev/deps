@@ -33,9 +33,9 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/deps-e2e.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 
 # Branches and titles deps creates for the fixture.
-b_node=deps/github-actions/actions-setup-node
-b_python=deps/github-actions/actions-setup-python
-b_cobra=deps/gomod/github.com-spf13-cobra
+b_node=deps/actions-setup-node
+b_python=deps/actions-setup-python
+b_cobra=deps/github.com-spf13-cobra
 reset_prefix="[e2e reset] "
 dashboard_title="Dependency Dashboard"
 

@@ -14,12 +14,14 @@ import (
 )
 
 // Group is the updates that become one branch and one pull request: all updates of one
-// dependency in one PR bucket, or all non-security updates sharing a policy group and bucket
-// (Manager "group"), or all security updates sharing a security group and bucket (Manager
-// "group", branch suffix "-security"), or all updates of a shared version definition and
-// bucket (Manager "group", named after the dep.Dep.VersionRef unless a policy group applies).
+// dependency name in one PR bucket, across managers and files (Kind ""), or all non-security
+// updates sharing a policy group and bucket (Kind "group"), or all security updates sharing a
+// security group and bucket (Kind "group", branch suffix "-security"), or all updates of a
+// shared version definition and bucket (Kind "group", named after the dep.Dep.VersionRef
+// unless a policy group applies), or every lock file maintenance update (Kind
+// MaintenanceBranch). Updates with different dep.Update.BranchTopicPrefix never share one.
 type Group struct {
-	Manager, Name, Branch, Title string
+	Kind, Name, Branch, Title string
 	// Header and Footer are the rendered prHeader and prFooter of the PR body, "" = none.
 	Header, Footer string
 	Updates        []dep.Update
@@ -41,48 +43,54 @@ type Group struct {
 	Labels, Reviewers, Assignees []string
 }
 
-// GroupManager is the Group.Manager of policy groups.
-const GroupManager = "group"
+// GroupKind is the Group.Kind of policy groups, security groups and shared versions.
+const GroupKind = "group"
 
 // MaintenanceBranch is the branch name (after the branch prefix) of the lock file maintenance
 // PR, which holds every dep.LockFileMaintenance update; it is Renovate's.
 const MaintenanceBranch = "lock-file-maintenance"
 
-// GroupUpdates groups updates by policy group name, or by (Manager, Name) for ungrouped and
-// security updates (security updates are never batched into a policy group), and by PR
-// bucket (dep.Update.Bucket). Security updates with a dep.Update.SecurityGroup share a group
-// of that name apart from the policy group of the same name. Updates of a shared version
+// GroupUpdates groups updates by policy group name, or by dependency name for ungrouped and
+// security updates (security updates are never batched into a policy group) across managers
+// and files, by PR bucket (dep.Update.Bucket) and by dep.Update.BranchTopicPrefix (the
+// expanded additionalBranchPrefix). Security updates with a dep.Update.SecurityGroup share a
+// group of that name apart from the policy group of the same name. Updates of a shared version
 // definition carry the group Resolve gave them (unifyShared), security updates included: they
-// edit the same bytes. Branches are <branchPrefix><manager>/<slug> and
-// <branchPrefix>group/<slug>, with "-<bucket>" appended for a non-empty bucket, then
-// "-security" for a security group; "" means config.DefaultBranchPrefix. Lock file
-// maintenance updates share one group (Manager and Name MaintenanceBranch) on
-// <branchPrefix>lock-file-maintenance. Sorted by Manager, Name, then Branch.
+// edit the same bytes. Branches are <branchPrefix><topicPrefix><slug(name)> and
+// <branchPrefix><topicPrefix>group/<slug(group)>, with "-<bucket>" appended for a non-empty
+// bucket, then "-security" for a security group; "" means config.DefaultBranchPrefix. Lock
+// file maintenance updates share one group (Kind and Name MaintenanceBranch) on
+// <branchPrefix>lock-file-maintenance. Sorted by Kind, Name, then Branch.
 func GroupUpdates(updates []dep.Update, branchPrefix string) []Group {
 	branchPrefix = cmp.Or(branchPrefix, config.DefaultBranchPrefix)
 	type key struct {
-		manager, name, bucket string
-		security              bool
+		topicPrefix, kind, name, bucket string
+		security                        bool
 	}
 	idx := map[key]int{}
 	var groups []Group
 	for _, u := range updates {
-		k := key{manager: u.Dep.Manager, name: u.Dep.Name, bucket: u.Bucket}
+		k := key{topicPrefix: u.BranchTopicPrefix, name: u.Dep.Name, bucket: u.Bucket}
 		switch {
 		case u.Maintenance():
-			k = key{manager: MaintenanceBranch, name: MaintenanceBranch}
+			k = key{kind: MaintenanceBranch, name: MaintenanceBranch}
 		case u.Group != "" && (len(u.Advisories) == 0 || u.Dep.VersionRef != ""):
-			k = key{manager: GroupManager, name: u.Group, bucket: u.Bucket}
+			k.kind, k.name = GroupKind, u.Group
 		case u.SecurityGroup != "" && len(u.Advisories) > 0:
-			k = key{GroupManager, u.SecurityGroup, u.Bucket, true}
+			k.kind, k.name, k.security = GroupKind, u.SecurityGroup, true
 		}
 		i, ok := idx[k]
 		if !ok {
 			i = len(groups)
 			idx[k] = i
-			branch := branchPrefix + k.manager + "/" + slug(k.name)
-			if k.manager == MaintenanceBranch {
+			var branch string
+			switch k.kind {
+			case MaintenanceBranch:
 				branch = branchPrefix + MaintenanceBranch
+			case GroupKind:
+				branch = branchPrefix + k.topicPrefix + GroupKind + "/" + slug(k.name)
+			default:
+				branch = branchPrefix + k.topicPrefix + slug(k.name)
 			}
 			if k.bucket != "" {
 				branch += "-" + k.bucket
@@ -90,7 +98,7 @@ func GroupUpdates(updates []dep.Update, branchPrefix string) []Group {
 			if k.security {
 				branch += "-security"
 			}
-			groups = append(groups, Group{Manager: k.manager, Name: k.name, Branch: branch})
+			groups = append(groups, Group{Kind: k.kind, Name: k.name, Branch: branch})
 		}
 		groups[i].Updates = append(groups[i].Updates, u)
 	}
@@ -115,7 +123,7 @@ func GroupUpdates(updates []dep.Update, branchPrefix string) []Group {
 		}
 	}
 	stableSortInPlace(groups, func(a, b *Group) int {
-		return cmp.Or(strings.Compare(a.Manager, b.Manager), strings.Compare(a.Name, b.Name), strings.Compare(a.Branch, b.Branch))
+		return cmp.Or(strings.Compare(a.Kind, b.Kind), strings.Compare(a.Name, b.Name), strings.Compare(a.Branch, b.Branch))
 	})
 	return groups
 }
@@ -242,7 +250,7 @@ func texts(g Group) (title, header, footer string) {
 		}
 		return s
 	}
-	if g.Manager != MaintenanceBranch {
+	if g.Kind != MaintenanceBranch {
 		title = render(tpl.Title, "prTitle")
 	}
 	switch {
@@ -273,12 +281,12 @@ func templateData(g Group) prtemplate.Data {
 		UpdateType: shared(g.Updates, func(u dep.Update) string { return string(u.Type) }),
 	}
 	switch {
-	case g.Manager == MaintenanceBranch:
+	case g.Kind == MaintenanceBranch:
 		d.Name = "lock file maintenance"
 	case count == 1:
 		d.Name = first
 	}
-	if g.Manager == GroupManager {
+	if g.Kind == GroupKind {
 		d.Group = g.Name
 	}
 	return d
@@ -299,12 +307,12 @@ func shared(ups []dep.Update, f func(dep.Update) string) string {
 // group, or a shared version definition with a security member) gets the security prefix and
 // SecuritySuffix.
 func groupTitle(g Group) string {
-	if g.Manager == MaintenanceBranch {
+	if g.Kind == MaintenanceBranch {
 		return commitPrefix(g.Updates, false) + "lock file maintenance"
 	}
 	name := g.Name
 	security := slices.ContainsFunc(g.Updates, func(u dep.Update) bool { return len(u.Advisories) > 0 })
-	if g.Manager == GroupManager {
+	if g.Kind == GroupKind {
 		first, count := distinctNames(g.Updates)
 		if count > 1 {
 			pre, suffix := commitPrefix(g.Updates, security), ""
@@ -344,15 +352,23 @@ func distinctNames(ups []dep.Update) (first string, n int) {
 	return first, len(seen)
 }
 
-// sameVersion returns the NewVersion shared by all updates.
+// sameVersion returns the NewVersion shared by all updates (the first update's form, see
+// sameV).
 func sameVersion(ups []dep.Update) (string, bool) {
 	v := ups[0].NewVersion
 	for _, u := range ups[1:] {
-		if u.NewVersion != v {
+		if !sameV(u.NewVersion, v) {
 			return "", false
 		}
 	}
 	return v, true
+}
+
+// sameV reports whether versions a and b are the same for a title: equal up to a leading "v",
+// so a dependency updated to v0.7.0 by github-actions and to 0.7.0 by homebrew moves to one
+// version.
+func sameV(a, b string) bool {
+	return strings.TrimPrefix(a, "v") == strings.TrimPrefix(b, "v")
 }
 
 func title(name string, ups []dep.Update) string {
@@ -379,7 +395,7 @@ func title(name string, ups []dep.Update) string {
 		return pre + "pin " + name + " to " + short(first.NewDigest)
 	case same(func(u dep.Update) bool { return u.Type == dep.Digest && u.NewDigest == first.NewDigest }):
 		return pre + "update " + name + " digest to " + short(first.NewDigest)
-	case same(func(u dep.Update) bool { return u.NewVersion == first.NewVersion }):
+	case same(func(u dep.Update) bool { return sameV(u.NewVersion, first.NewVersion) }):
 		return pre + "update " + name + " to " + first.NewVersion
 	}
 	return pre + "update " + name

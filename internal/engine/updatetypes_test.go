@@ -165,9 +165,9 @@ func TestUpdateTypeRulesOCM(t *testing.T) {
 		groups = append(groups, group{g.Branch, g.Title})
 	}
 	wantGroups := []group{
-		{"deps/github-actions/actions-setup-go-major", "chore(deps): update actions/setup-go to v6.0.0"},
-		{"deps/gomod/example.com-direct", "fix(deps): update example.com/direct to v1.1.0"},
-		{"deps/gomod/example.com-ind", "chore(deps): update example.com/ind to v0.10.0"},
+		{"deps/actions-setup-go-major", "chore(deps): update actions/setup-go to v6.0.0"},
+		{"deps/example.com-direct", "fix(deps): update example.com/direct to v1.1.0"},
+		{"deps/example.com-ind", "chore(deps): update example.com/ind to v0.10.0"},
 		{"deps/group/digest-pins", "chore(deps): update Digest pins (3 dependencies)"},
 		{"deps/group/github-actions", "chore(deps): update GitHub Actions (2 dependencies)"},
 		{"deps/group/kubernetes-controller-chart", "chore(deps): update Kubernetes Controller chart (2 dependencies)"},

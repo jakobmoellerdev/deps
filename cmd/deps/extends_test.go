@@ -114,9 +114,9 @@ func TestRunRepositories(t *testing.T) {
 	}
 	for _, want := range []string{
 		"repository o/r\n",
-		"pr      created  deps/github-actions/actions-checkout-major",
+		"pr      created  deps/actions-checkout-major",
 		"repository o/s\n",
-		"pr      created  deps/github-actions/actions-checkout  chore(deps): pin actions/checkout to 1af3b93  https://git.test/o/s/pulls/8\n",
+		"pr      created  deps/actions-checkout  chore(deps): pin actions/checkout to 1af3b93  https://git.test/o/s/pulls/8\n",
 		"2 repositories, 0 failed\n",
 	} {
 		if !strings.Contains(stderr, want) {
@@ -128,7 +128,7 @@ func TestRunRepositories(t *testing.T) {
 	}
 	// o/r got its major update; o/s, whose org config allows < 7 and pins digests, only the
 	// pin. Both were pushed to their origins.
-	for repo, branch := range map[string]string{"o/r": "deps/github-actions/actions-checkout-major", "o/s": "deps/github-actions/actions-checkout"} {
+	for repo, branch := range map[string]string{"o/r": "deps/actions-checkout-major", "o/s": "deps/actions-checkout"} {
 		if got := git(t, "", "--git-dir", filepath.Join(root, repo+".git"), "branch", "--list", "deps/*"); strings.TrimSpace(got) != branch {
 			t.Errorf("%s branches = %q, want %s", repo, got, branch)
 		}
@@ -169,7 +169,7 @@ func TestRunRepositoriesBaseBranches(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
-	for _, want := range []string{"repository o/r\n", "base    main\n", "base    release/v1\n", "deps/main/github-actions/", "deps/release/v1/github-actions/", "1 repositories, 0 failed\n"} {
+	for _, want := range []string{"repository o/r\n", "base    main\n", "base    release/v1\n", "deps/main/", "deps/release/v1/", "1 repositories, 0 failed\n"} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr lacks %q:\n%s", want, stderr)
 		}

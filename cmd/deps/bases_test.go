@@ -38,7 +38,7 @@ func TestRunBaseBranches(t *testing.T) {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
 	const (
-		mainBranch    = "deps/main/github-actions/actions-checkout-major"
+		mainBranch    = "deps/main/actions-checkout-major"
 		releaseBranch = "deps/release/1.x/group/release-actions-major"
 	)
 	for _, want := range []string{
@@ -86,7 +86,7 @@ func TestRunBaseBranchesDryRun(t *testing.T) {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
 	for _, want := range []string{
-		"pr      would-create  deps/main/github-actions/actions-checkout-major",
+		"pr      would-create  deps/main/actions-checkout-major",
 		"pr      would-create  deps/release/1.x/group/release-actions-major",
 		"(dry run: 2 would change, 0 would automerge)",
 	} {

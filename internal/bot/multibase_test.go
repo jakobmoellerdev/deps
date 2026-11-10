@@ -25,11 +25,11 @@ func (g baseGit) LsRemote(ctx context.Context, pattern string) (map[string]strin
 }
 
 const (
-	mainA    = "deps/main/github-actions/a-x"
-	mainB    = "deps/main/github-actions/b-y"
-	releaseA = "deps/release/github-actions/a-x"
-	releaseB = "deps/release/github-actions/b-y"
-	stale    = "deps/release/github-actions/stale"
+	mainA    = "deps/main/a-x"
+	mainB    = "deps/main/b-y"
+	releaseA = "deps/release/a-x"
+	releaseB = "deps/release/b-y"
+	stale    = "deps/release/stale"
 )
 
 // multiBase runs the fixture on main and release with a shared limit of two new PRs. Open:

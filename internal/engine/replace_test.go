@@ -230,7 +230,7 @@ rules:
 func TestReplacementTitle(t *testing.T) {
 	u := dep.Update{Dep: dep.Dep{Manager: "npm", Name: "jade", Version: "1.11.0"}, Type: dep.Replacement, NewName: "pug", NewVersion: "2.0.0", Bucket: ReplacementBucket, CommitType: "fix", CommitScope: "deps"}
 	g := GroupUpdates([]dep.Update{u}, "")
-	if len(g) != 1 || g[0].Title != "fix(deps): replace jade with pug 2.0.0" || g[0].Branch != "deps/npm/jade-replacement" {
+	if len(g) != 1 || g[0].Title != "fix(deps): replace jade with pug 2.0.0" || g[0].Branch != "deps/jade-replacement" {
 		t.Errorf("groups = %+v", g)
 	}
 }
