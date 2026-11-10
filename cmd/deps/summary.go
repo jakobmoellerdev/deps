@@ -400,7 +400,7 @@ func (s *summary) writeText(w io.Writer) {
 	st := s.Style
 	fmt.Fprintf(w, "\n%s %s\n", st.Paint(logx.Bold, "Summary:"), s.headline(st))
 	for _, g := range s.Groups {
-		notes := s.groupNotes(g, func(a bot.Action) string { return a.URL })
+		notes := s.textNotes(g)
 		fmt.Fprintf(w, "  PR %s  %s", st.Paint(logx.Accent, g.Branch), g.Title)
 		if len(notes) > 0 {
 			fmt.Fprintf(w, "  [%s]", strings.Join(notes, "; "))
@@ -414,9 +414,6 @@ func (s *summary) writeText(w io.Writer) {
 			from, to := u.FromTo()
 			fmt.Fprintf(w, "      %s  %s  %s -> %s  (%s)\n", u.Dep.Name, st.Paint(logx.Dim, u.Dep.File+":"+strconv.Itoa(u.Dep.Line)), from, to, updateType(u, st))
 		}
-	}
-	for _, a := range s.others() {
-		fmt.Fprintf(w, "  %s  %s  %s\n", a.Display(), cmp.Or(a.Branch, a.Title), a.URL)
 	}
 	switch {
 	case len(s.Res.Pending) > 0 && !s.ShowSkipped:
@@ -446,6 +443,29 @@ func (s *summary) writeText(w io.Writer) {
 			fmt.Fprintln(w)
 		}
 	}
+}
+
+// textNotes are the groupNotes of the text summary. In run the `pr` and `dashboard` result
+// lines already give each action's status, automerge and PR creation outcome and URL, so the
+// summary adds only what they lack: why an update cannot be applied (or the stop-updating
+// label) and the schedule entries a group waits for. The actions without a group (closed
+// obsolete PRs, the dashboard) are not repeated at all.
+func (s *summary) textNotes(g engine.Group) []string {
+	if !s.Run {
+		return s.groupNotes(g, func(bot.Action) string { return "" })
+	}
+	a, ok := s.action(g)
+	if !ok {
+		return []string{"not processed (see errors)"}
+	}
+	var notes []string
+	if a.Reason != "" {
+		notes = append(notes, a.Reason)
+	}
+	if len(a.Waits) > 0 {
+		notes = append(notes, "waiting for "+strings.Join(a.Waits, " or "))
+	}
+	return notes
 }
 
 // mdCell escapes a table cell.

@@ -2,6 +2,7 @@ package main
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"text/tabwriter"
 	"time"
 	"unicode/utf8"
 
@@ -38,9 +40,10 @@ var phaseLabels = map[engine.Phase]string{
 // live status block: the logx.Writer overlay, below every record, redrawn every tick until the
 // phase ends and then removed. With the actions format (groups) every phase gets a
 // collapsible ::group:: (discover and extract share one; PRs are groups of their own) that
-// ends with the phase's final counts, and off a terminal a heartbeat line every heartbeat shows that a long phase still
-// moves. Only the phase goroutine calls Start and End; Done and RateLimited may come from
-// any goroutine.
+// lists the files or deps of the phase (engine.Lister) and ends with the phase's final
+// counts, and off a terminal a heartbeat line every heartbeat shows that a long phase still
+// moves. Only the phase goroutine calls Start, End and the List methods; Done and
+// RateLimited may come from any goroutine.
 type progress struct {
 	w         *logx.Writer
 	style     logx.Style
@@ -191,6 +194,81 @@ func (p *progress) RateLimited(host string, until time.Time) {
 		p.limitedHost, p.limitedUntil = host, until
 	}
 }
+
+// ListFiles lists the discovered files in the discovery group, one line each with the
+// managers matching it and its dep counts. Only with the actions format: the group is
+// collapsed, so the listing costs no screen space.
+func (p *progress) ListFiles(files []engine.FileReport) {
+	if p.groups == nil || len(files) == 0 {
+		return
+	}
+	var b strings.Builder
+	tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
+	for _, f := range files {
+		var outcome []string
+		if f.Deps > 0 || f.Err == nil {
+			outcome = append(outcome, plural(f.Deps, "dep", "deps"))
+		}
+		if f.Skipped > 0 {
+			outcome = append(outcome, strconv.Itoa(f.Skipped)+" skipped")
+		}
+		if f.Err != nil {
+			outcome = append(outcome, "error: "+shortError(f.Err))
+		}
+		if f.Deps == 0 && f.Err == nil {
+			outcome[0] = "no deps"
+		}
+		fmt.Fprintf(tw, "  %s\t%s\t%s\n", f.File, strings.Join(f.Managers, ", "), strings.Join(outcome, ", "))
+	}
+	_ = tw.Flush()
+	_, _ = io.WriteString(p.w, b.String())
+}
+
+// ListDeps lists the looked-up deps in the resolve group, one line each with its updates, or
+// up to date, skipped or failed. Only with the actions format, as ListFiles.
+func (p *progress) ListDeps(deps []engine.DepReport) {
+	if p.groups == nil || len(deps) == 0 {
+		return
+	}
+	var b strings.Builder
+	tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
+	for _, d := range deps {
+		var outcome string
+		switch {
+		case d.Err != nil:
+			outcome = "error: " + shortError(d.Err)
+		case d.Skip != "":
+			outcome = "skipped: " + d.Skip
+		case len(d.Updates) > 0:
+			ups := make([]string, len(d.Updates))
+			for i, u := range d.Updates {
+				from, to := u.FromTo()
+				ups[i] = fmt.Sprintf("%s -> %s (%s)", from, to, updateType(u, plain))
+			}
+			outcome = strings.Join(ups, "; ")
+		case d.Pending != nil:
+			outcome = "up to date (" + d.Pending.Version + " held back: " + d.Pending.Reason + ")"
+		default:
+			outcome = "up to date"
+		}
+		fmt.Fprintf(tw, "  %s:%d\t%s\t%s\n", d.File, d.Line, d.Name, outcome)
+	}
+	_ = tw.Flush()
+	_, _ = io.WriteString(p.w, b.String())
+}
+
+// shortError is the first line of err, at most maxErrorText runes, without the location a
+// DepError adds (the listing line has it).
+func shortError(err error) string {
+	if de, ok := errors.AsType[*engine.DepError](err); ok {
+		err = de.Err
+	}
+	msg, _, _ := strings.Cut(err.Error(), "\n")
+	return truncate(msg, maxErrorText)
+}
+
+// maxErrorText is the length of an error in a listing line.
+const maxErrorText = 120
 
 // groupTitle is the log group title of the discover, extract or resolve phase.
 func groupTitle(ph engine.Phase, total int) string {

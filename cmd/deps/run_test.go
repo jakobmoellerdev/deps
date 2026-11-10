@@ -242,6 +242,13 @@ func TestRunAutomergeAndDashboard(t *testing.T) {
 			t.Errorf("stderr lacks %q:\n%s", want, stderr)
 		}
 	}
+	// The result lines are the only place of each action (the actions format is on: the
+	// summary does not repeat them).
+	for _, url := range []string{"https://git.test/o/r/issues/3", "https://git.test/o/r/pulls/7"} {
+		if n := strings.Count(stderr, url); n != 1 {
+			t.Errorf("%s printed %d times:\n%s", url, n, stderr)
+		}
+	}
 	tip := git(t, origin, "rev-parse", branch)
 	if len(f.merges) != 1 || f.merges[0]["do"] != "squash" || f.merges[0]["merge_when_checks_succeed"] != true ||
 		f.merges[0]["delete_branch_after_merge"] != true || f.merges[0]["head_commit_id"] != tip {

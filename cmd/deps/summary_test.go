@@ -83,16 +83,18 @@ func TestSummaryRender(t *testing.T) {
 				{Branch: "deps/gomod/old", Title: "chore(deps): update old", Status: bot.StatusClosed, URL: "https://x/pulls/2", Number: 2},
 				{Dashboard: true, Title: "Dependency Dashboard", Status: bot.StatusUpdated, URL: "https://x/issues/1", Number: 1},
 			}},
+			// The pr and dashboard result lines give the statuses and URLs: the text summary
+			// adds only the schedule a group waits for, and leaves out the closed PR and the
+			// dashboard.
 			text: []string{
 				"PRs: 1 created, 1 skipped: outside schedule, 1 up-to-date, 1 closed,",
-				"  PR deps/actions-checkout-major  chore(deps): update actions/checkout to v7.0.1  [created https://x/pulls/7]\n",
-				"[skipped: outside schedule; waiting for 0 5 * * 1]\n",
-				"[up-to-date https://x/pulls/3; automerge enabled]\n",
-				"  closed  deps/gomod/old  https://x/pulls/2\n",
-				"  updated  Dependency Dashboard  https://x/issues/1\n",
+				"  PR deps/actions-checkout-major  chore(deps): update actions/checkout to v7.0.1\n",
+				"  [waiting for 0 5 * * 1]\n",
+				"  PR deps/github.com-spf13-cobra  chore(deps): update github.com/spf13/cobra to v1.10.2\n",
 				"  Held back by minimumReleaseAge: 1 (--show-skipped lists each)\n",
 				"  Deprecated or abandoned: 1 (--show-skipped lists each)\n",
 			},
+			notText: []string{"https://x/", "Dependency Dashboard", "deps/gomod/old", "[created", "automerge enabled"},
 			md: []string{
 				"## deps run\n",
 				"### Pull requests\n\n",
@@ -114,7 +116,7 @@ func TestSummaryRender(t *testing.T) {
 			s: summary{Command: "run", Run: true, Res: &engine.Result{Updates: res.Updates[:1], Deps: res.Deps[:1], Skipped: []dep.Dep{{Name: "actions/checkout", Skip: "module path changed to x (y@v7.0.1)"}}},
 				Groups: groups[:1], Actions: []bot.Action{{Branch: groups[0].Branch, Status: bot.StatusSkipApply, Reason: "module path changed to x (y@v7.0.1)"}}},
 			text: []string{
-				"0 errors (0s)\n", "[skipped: update cannot be applied; module path changed to x (y@v7.0.1)]\n",
+				"0 errors (0s)\n", "  [module path changed to x (y@v7.0.1)]\n",
 				"       1  module path changed to x (y@v7.0.1)  (the new version's go.mod declares another module path; require that path to update)\n",
 			},
 		},

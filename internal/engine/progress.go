@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
@@ -31,6 +32,37 @@ type Progress interface {
 	End(p Phase)
 	// RateLimited reports a request waiting for host's rate limit to reset at until.
 	RateLimited(host string, until time.Time)
+}
+
+// Lister is implemented by a Progress that lists what a phase did, for CI log groups: Resolve
+// calls ListFiles before it ends the extract phase and ListDeps before it ends the resolve
+// phase, both from the Resolve goroutine.
+type Lister interface {
+	// ListFiles lists the discovered files, sorted by path.
+	ListFiles(files []FileReport)
+	// ListDeps lists the outcomes of the looked-up deps, sorted by file and line.
+	ListDeps(deps []DepReport)
+}
+
+// FileReport is the extraction of one discovered file.
+type FileReport struct {
+	File     string
+	Managers []string // the names of the managers matching it, in Options.Managers order
+	Deps     int      // deps extracted (and not dropped by Options.Filter)
+	Skipped  int      // of Deps, skipped before any lookup
+	Err      error    // the first extraction error, if any
+}
+
+// DepReport is the outcome of looking up one dep: Err, else Skip, else Updates, else up to
+// date (Pending: a release held back by minimumReleaseAge).
+type DepReport struct {
+	File    string
+	Line    int
+	Name    string
+	Updates []dep.Update
+	Pending *Pending
+	Skip    string
+	Err     error
 }
 
 // WithProgress returns ctx with p's RateLimited hooked into the HTTP retries of requests

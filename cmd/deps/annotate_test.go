@@ -310,3 +310,70 @@ func TestActionsRecords(t *testing.T) {
 		}
 	}
 }
+
+// With the actions format the discovery group lists every discovered file with its managers
+// and dep counts, and the resolve group every looked-up dep with its outcome; managers of one
+// name (custom entries) are one entry of `files discovered`, counting distinct files. Other
+// formats list neither.
+func TestActionsListings(t *testing.T) {
+	cleanEnv(t)
+	newFakeNet(t)
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		".github/workflows/ci.yml": workflow,
+		"go.mod":                   "module example.com/x\n\ngo 1.24\n\nrequire (\n\texample.com/a v1.0.0\n\texample.com/missing v1.0.0\n)\n",
+		"versions.txt":             "checkout=v6.0.0\nother=v7.0.1\n",
+		"empty.txt":                "nothing\n",
+		".deps.yaml": `custom:
+  - files: [versions.txt, empty.txt]
+    match: 'checkout=(?P<currentValue>\S+)'
+    name: https://github.com/actions/checkout
+    datasource: git-tags
+  - files: [versions.txt]
+    match: 'other=(?P<currentValue>\S+)'
+    name: https://github.com/actions/checkout
+    datasource: git-tags
+`,
+	})
+	githubActions(t, dir)
+	t.Setenv("NO_COLOR", "1")
+	_, stderr, _ := execute(t, "plan", "--dir", dir, "--log-level", "info")
+	discovery := []string{
+		"::group::Discovering and extracting dependency files\n",
+		`managers="docker 2, helm 2, kubernetes 2, crossplane 2, tekton 2, glasskube 2, ocb 2, custom 2, github-actions 1, gomod 1, deps-config 1"`,
+		"INF dependencies extracted  files=20 updatable=6 skipped=2 duration=",
+		"  .github/workflows/ci.yml  github-actions, docker, helm, kubernetes, crossplane, tekton, glasskube, ocb  3 deps, 1 skipped\n",
+		"  empty.txt                 custom                                                                        no deps\n",
+		"  go.mod                    gomod                                                                         3 deps, 1 skipped\n",
+		"  versions.txt              custom                                                                        2 deps\n",
+		"deps: extracting 20/20 · ",
+		"::endgroup::\n",
+	}
+	resolve := []string{
+		"::group::Resolving 6 dependencies\n",
+		"INF dependencies resolved  updates=4 errors=1 duration=",
+		"  .github/workflows/ci.yml:6  actions/checkout                     v6.0.0 -> v7.0.1 (major)\n",
+		"  .github/workflows/ci.yml:7  actions/checkout                     v6.0.0@1af3b93 -> v7.0.1@3d3c42e (major)\n",
+		"  go.mod:6                    example.com/a                        v1.0.0 -> v1.1.0 (minor)\n",
+		"  go.mod:7                    example.com/missing                  error: no proxy has example.com/missing\n",
+		"  versions.txt:1              https://github.com/actions/checkout  v6.0.0 -> v7.0.1 (major)\n",
+		"  versions.txt:2              https://github.com/actions/checkout  up to date\n",
+		"deps: resolving 6/6 · 1 error · ",
+		"::endgroup::\n",
+	}
+	at := 0
+	for _, s := range append(discovery, resolve...) {
+		i := strings.Index(stderr[at:], s)
+		if i < 0 {
+			t.Fatalf("%q missing after offset %d:\n%s", s, at, stderr)
+		}
+		at += i + len(s)
+	}
+	if strings.Contains(stderr, "custom 1") {
+		t.Errorf("custom entries counted apart:\n%s", stderr)
+	}
+	_, stderr, _ = execute(t, "plan", "--dir", dir, "--log-level", "info", "--log-format", "text")
+	if strings.Contains(stderr, "  versions.txt  ") || strings.Contains(stderr, "up to date\n") {
+		t.Errorf("listing without the actions format:\n%s", stderr)
+	}
+}

@@ -126,10 +126,10 @@ type namedManager struct {
 func (m namedManager) Name() string { return m.name }
 
 func TestDiscoveryAttrs(t *testing.T) {
-	ms := []manager.Manager{namedManager{name: "gomod"}, namedManager{name: "helm"}, namedManager{name: "docker"}}
-	found := [][]string{{"a"}, nil, {"b", "c", "d"}}
+	ms := []manager.Manager{namedManager{name: "gomod"}, namedManager{name: "helm"}, namedManager{name: "docker"}, namedManager{name: "custom"}, namedManager{name: "custom"}}
+	found := [][]string{{"a"}, nil, {"b", "c", "d"}, {".env", "a"}, {".env", "e"}}
 	got := discoveryAttrs(ms, found, 5)
-	want := []any{"files", 4, "duration", time.Duration(5), "managers", "docker 3, gomod 1"}
+	want := []any{"files", 8, "duration", time.Duration(5), "managers", "docker 3, custom 3, gomod 1"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}

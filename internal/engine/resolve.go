@@ -308,9 +308,31 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	}
 	skipped := 0
 	kindRules := cfg.HasUpdateTypeRules()
+	lister, _ := prog.(Lister)
+	var files []FileReport    // with a lister
+	var fileAt map[string]int // index of a file in files
+	if lister != nil {
+		fileAt = make(map[string]int, len(jobs))
+	}
 	for i, e := range ex {
+		var f *FileReport
+		if lister != nil {
+			at, ok := fileAt[jobs[i].file]
+			if !ok {
+				at = len(files)
+				fileAt[jobs[i].file] = at
+				files = append(files, FileReport{File: jobs[i].file})
+			}
+			f = &files[at]
+			if name := jobs[i].m.Name(); !slices.Contains(f.Managers, name) {
+				f.Managers = append(f.Managers, name)
+			}
+		}
 		if e.err != nil {
 			res.Errors = append(res.Errors, &FileError{File: jobs[i].file, Err: e.err})
+			if f != nil && f.Err == nil {
+				f.Err = e.err
+			}
 			continue
 		}
 		slog.DebugContext(ctx, "file extracted", "file", jobs[i].file, "manager", jobs[i].m.Name(), "deps", len(e.deps))
@@ -322,8 +344,14 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 			d, pol := classify(cfg, d, kindRules, timed, o.Security != nil)
 			res.Deps = append(res.Deps, d)
 			allPols = append(allPols, pol)
+			if f != nil {
+				f.Deps++
+			}
 			if d.Skip != "" {
 				skipped++
+				if f != nil {
+					f.Skipped++
+				}
 				if o.Trace != nil {
 					t := Trace{Dep: d}
 					if pol != nil {
@@ -353,6 +381,10 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 		}
 	}
 	slog.InfoContext(ctx, "dependencies extracted", "files", len(jobs), "updatable", len(todo), "skipped", len(res.Skipped), "duration", time.Since(start))
+	if lister != nil {
+		slices.SortFunc(files, func(a, b FileReport) int { return strings.Compare(a.File, b.File) })
+		lister.ListFiles(files)
+	}
 	prog.End(PhaseExtract)
 	start = time.Now()
 	planAll(o.Datasources, todo)
@@ -531,6 +563,10 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	res.Warnings = slices.Grow(res.Warnings, nWarn)
 	res.Pending = slices.Grow(res.Pending, nPend)
 	upPols := make([]*policies, 0, nUp) // the policies of res.Updates[i]
+	var upAt []int                      // with a lister: the index of ups[i] in res.Updates
+	if lister != nil {
+		upAt = make([]int, len(outs))
+	}
 	for i, t := range outs {
 		switch {
 		case t.Err != nil:
@@ -538,6 +574,9 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 		case t.Dep.Skip != "":
 			res.Skipped = append(res.Skipped, t.Dep)
 			res.Deps[depAt[i]].Skip = t.Dep.Skip
+		}
+		if upAt != nil {
+			upAt[i] = len(res.Updates)
 		}
 		res.Updates = append(res.Updates, ups[i]...)
 		for range ups[i] {
@@ -552,10 +591,42 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 		}
 	}
 	unifyShared(ctx, res.Updates, func(i int, kind dep.UpdateType) *config.Policy { return upPols[i].of(kind) })
+	var listed []DepReport
+	if lister != nil {
+		listed = depReports(todo, outs, pend, res.Updates, upAt, ups)
+	}
 	sortUpdates(res.Updates)
 	slog.InfoContext(ctx, "dependencies resolved", "updates", len(res.Updates), "errors", len(res.Errors), "duration", time.Since(start))
+	if lister != nil {
+		lister.ListDeps(listed)
+	}
 	prog.End(PhaseResolve)
 	return res, nil
+}
+
+// depReports are the outcomes of the looked-up deps todo for a Lister, sorted by file and
+// line: outs[i] is the outcome of todo[i], pend[i] its held-back release, and its updates (as
+// unifyShared left them) are updates[upAt[i]:][:len(ups[i])].
+func depReports(todo []dep.Dep, outs []Trace, pend []*Pending, updates []dep.Update, upAt []int, ups [][]dep.Update) []DepReport {
+	out := make([]DepReport, len(todo))
+	for i := range todo {
+		d, t := &todo[i], &outs[i]
+		r := DepReport{File: d.File, Line: d.Line, Name: d.Name}
+		switch {
+		case t.Err != nil:
+			r.Err = t.Err
+		case t.Dep.Skip != "":
+			r.Skip = t.Dep.Skip
+		default:
+			r.Updates = slices.Clone(updates[upAt[i]:][:len(ups[i])])
+			r.Pending = pend[i]
+		}
+		out[i] = r
+	}
+	slices.SortStableFunc(out, func(a, b DepReport) int {
+		return cmp.Or(strings.Compare(a.File, b.File), cmp.Compare(a.Line, b.Line))
+	})
+	return out
 }
 
 // holdTogether drops the updates of Together deps (dep.Dep.Together) to a new version that not
@@ -689,19 +760,41 @@ func classify(cfg *config.Config, d dep.Dep, kindRules, timed, security bool) (d
 }
 
 // discoveryAttrs summarizes one discovery walk: the total file count, the walk duration and
-// the managers that matched files, by count descending ("docker 137, helm 134").
+// the managers that matched files, by count descending ("docker 137, helm 134"). Managers of
+// one name (the entries of customManagers) are one entry counting their distinct files.
 func discoveryAttrs(managers []manager.Manager, found [][]string, d time.Duration) []any {
 	type count struct {
 		name string
 		n    int
 	}
-	var counts []count
+	byName := map[string][]int{} // manager indices per name
+	var names []string           // in order of first appearance
 	total := 0
 	for i, m := range managers {
-		if n := len(found[i]); n > 0 {
-			counts = append(counts, count{m.Name(), n})
-			total += n
+		if len(found[i]) == 0 {
+			continue
 		}
+		total += len(found[i])
+		name := m.Name()
+		if _, ok := byName[name]; !ok {
+			names = append(names, name)
+		}
+		byName[name] = append(byName[name], i)
+	}
+	counts := make([]count, len(names))
+	for j, name := range names {
+		idx := byName[name]
+		n := len(found[idx[0]])
+		if len(idx) > 1 {
+			files := map[string]struct{}{}
+			for _, i := range idx {
+				for _, f := range found[i] {
+					files[f] = struct{}{}
+				}
+			}
+			n = len(files)
+		}
+		counts[j] = count{name, n}
 	}
 	slices.SortStableFunc(counts, func(a, b count) int { return cmp.Compare(b.n, a.n) })
 	parts := make([]string, len(counts))
