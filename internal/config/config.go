@@ -735,6 +735,16 @@ type PostUpgradeTasks struct {
 	list bool // written as a list
 }
 
+// postUpgradeTasksKeys are the yaml keys of PostUpgradeTasks.
+var postUpgradeTasksKeys = func() []string {
+	fs := keyFields(reflect.TypeFor[PostUpgradeTasks]())
+	out := make([]string, 0, len(fs))
+	for _, f := range fs {
+		out = append(out, yamlKey(f))
+	}
+	return out
+}()
+
 // UnmarshalYAML accepts a list of commands or a mapping with the PostUpgradeTasks keys.
 func (t *PostUpgradeTasks) UnmarshalYAML(n *yaml.Node) error {
 	if n.Kind == yaml.SequenceNode {
@@ -743,7 +753,7 @@ func (t *PostUpgradeTasks) UnmarshalYAML(n *yaml.Node) error {
 	}
 	if n.Kind == yaml.MappingNode {
 		for i := 0; i+1 < len(n.Content); i += 2 { // node.Decode does not reject unknown keys
-			if k := n.Content[i]; k.Value != "commands" && k.Value != "executionMode" && k.Value != "files" {
+			if k := n.Content[i]; !slices.Contains(postUpgradeTasksKeys, k.Value) {
 				return fmt.Errorf("line %d: field %s not found in type config.PostUpgradeTasks", k.Line, k.Value)
 			}
 		}

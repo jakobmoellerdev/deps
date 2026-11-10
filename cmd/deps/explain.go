@@ -291,11 +291,11 @@ func sourceOf(s interface{ Source() (string, int) }) string {
 // sets none).
 func describeGroup(g *config.GroupSettings) string {
 	var set []string
-	walkRuleFields(reflect.ValueOf(g).Elem(), func(k string, v reflect.Value) {
+	for k, v := range g.EachSet() {
 		if s, ok := describeRuleValue(k, v); ok {
 			set = append(set, k+"="+s)
 		}
-	})
+	}
 	return cmp.Or(strings.Join(set, " "), "nothing")
 }
 
@@ -303,17 +303,17 @@ func describeGroup(g *config.GroupSettings) string {
 // fields ("match: all" when none is set), then the apply fields.
 func describeRule(r config.Rule) string {
 	var match, apply []string
-	walkRuleFields(reflect.ValueOf(r), func(k string, v reflect.Value) {
+	for k, v := range r.EachSet() {
 		s, ok := describeRuleValue(k, v)
 		if !ok {
-			return
+			continue
 		}
 		if slices.Contains(config.RuleMatchFields, k) {
 			match = append(match, k+"="+s)
 		} else {
 			apply = append(apply, k+"="+s)
 		}
-	})
+	}
 	m := "all"
 	if len(match) > 0 {
 		m = strings.Join(match, " ")
@@ -323,27 +323,6 @@ func describeRule(r config.Rule) string {
 		a = strings.Join(apply, " ")
 	}
 	return "match: " + m + "; apply: " + a
-}
-
-// walkRuleFields calls fn with the yaml key and value of each exported field of struct v in
-// declaration order, descending into anonymous embedded structs (yaml ",inline").
-func walkRuleFields(v reflect.Value, fn func(string, reflect.Value)) {
-	t := v.Type()
-	for i := range t.NumField() {
-		f := t.Field(i)
-		if !f.IsExported() {
-			continue
-		}
-		name, _, _ := strings.Cut(f.Tag.Get("yaml"), ",")
-		if f.Anonymous && name == "" && f.Type.Kind() == reflect.Struct {
-			walkRuleFields(v.Field(i), fn)
-			continue
-		}
-		if name == "" || name == "-" {
-			continue
-		}
-		fn(name, v.Field(i))
-	}
 }
 
 // describeRuleValue renders a rule field's value; ok is false when the field is unset.

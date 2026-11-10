@@ -3,6 +3,7 @@ package config
 import (
 	"cmp"
 	"fmt"
+	"iter"
 	"maps"
 	"reflect"
 	"slices"
@@ -105,12 +106,36 @@ func (c *Config) lintGroups() []Warning {
 // non-nil list (also []), a non-nil pointer or a non-empty string.
 func (r *Rule) SetApplyFields() []string { return r.setFields(RuleApplyFields) }
 
+// EachSet yields the yaml key and value of each field r sets, in declaration order: a
+// non-zero value (a non-nil list, also [], a non-nil pointer or a non-empty string).
+func (r *Rule) EachSet() iter.Seq2[string, reflect.Value] {
+	return eachSet(reflect.ValueOf(r).Elem(), ruleFields)
+}
+
+// EachSet yields the yaml key and value of each setting g sets, in declaration order (see
+// Rule.EachSet).
+func (g *GroupSettings) EachSet() iter.Seq2[string, reflect.Value] {
+	return eachSet(reflect.ValueOf(g).Elem(), groupFields)
+}
+
+// groupFields are the key fields of GroupSettings.
+var groupFields = keyFields(reflect.TypeFor[GroupSettings]())
+
+func eachSet(v reflect.Value, fields []reflect.StructField) iter.Seq2[string, reflect.Value] {
+	return func(yield func(string, reflect.Value) bool) {
+		for _, f := range fields {
+			if fv := v.FieldByIndex(f.Index); !fv.IsZero() && !yield(yamlKey(f), fv) {
+				return
+			}
+		}
+	}
+}
+
 // setFields returns the keys among keys of the fields r sets, in declaration order.
 func (r *Rule) setFields(keys []string) []string {
 	var out []string
-	v := reflect.ValueOf(r).Elem()
-	for _, f := range ruleFields {
-		if k := yamlKey(f); slices.Contains(keys, k) && !v.FieldByIndex(f.Index).IsZero() {
+	for k := range r.EachSet() {
+		if slices.Contains(keys, k) {
 			out = append(out, k)
 		}
 	}
