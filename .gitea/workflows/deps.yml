@@ -29,7 +29,7 @@ jobs:
         with:
           token: ${{ secrets.DEPS_BOT_TOKEN }}
       # The published release, as users run it; deps bumps this pin itself after each release.
-      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.9.0
+      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.10.0
         with:
           token: ${{ secrets.DEPS_BOT_TOKEN }}
           signing-key: ${{ secrets.DEPS_SIGNING_KEY }}
