@@ -165,16 +165,14 @@ func suppressed(bad []string, field string) bool {
 	})
 }
 
-// structFields returns the yaml keys of struct t in declaration order.
+// structFields returns the yaml keys of struct t in declaration order (keyFields).
 func (d *decoder) structFields(t reflect.Type) []structField {
 	if fs, ok := d.fields[t]; ok {
 		return fs
 	}
 	var fs []structField
-	for f := range t.Fields() {
-		if name := yamlKey(f); name != "" {
-			fs = append(fs, structField{name, f.Type})
-		}
+	for _, f := range keyFields(t) {
+		fs = append(fs, structField{yamlKey(f), f.Type})
 	}
 	d.fields[t] = fs
 	return fs

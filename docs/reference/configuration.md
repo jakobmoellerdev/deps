@@ -90,11 +90,29 @@ customDatasources:
 - [`pin`](#pin)
 - [`rangeStrategy`](#rangestrategy)
 - [`schedule`](#schedule)
+- [`additionalBranchPrefix`](#additionalbranchprefix)
+- [`minimumReleaseAge`](#minimumreleaseage)
+- [`minimumReleaseAgeBehaviour`](#minimumreleaseagebehaviour)
+- [`abandonmentThreshold`](#abandonmentthreshold)
+- [`separateMajorMinor`](#separatemajorminor)
+- [`separateMultipleMajor`](#separatemultiplemajor)
+- [`separateMinorPatch`](#separateminorpatch)
+- [`automerge`](#automerge)
+- [`automergeStrategy`](#automergestrategy)
+- [`automergeType`](#automergetype)
+- [`draftPR`](#draftpr)
+- [`prCreation`](#prcreation)
+- [`labels`](#labels)
+- [`reviewers`](#reviewers)
+- [`assignees`](#assignees)
+- [`prTitle`](#prtitle)
+- [`prHeader`](#prheader)
+- [`prFooter`](#prfooter)
+- [`dashboardApproval`](#dashboardapproval)
 - [`timezone`](#timezone)
 - [`security`](#security)
 - [`branchPrefix`](#branchprefix)
 - [`baseBranches`](#basebranches)
-- [`additionalBranchPrefix`](#additionalbranchprefix)
 - [`useBaseBranchConfig`](#usebasebranchconfig)
 - [`rebaseWhen`](#rebasewhen)
 - [`monorepos`](#monorepos)
@@ -112,32 +130,14 @@ customDatasources:
 - [`gitlabci`](#gitlabci)
   - [`gitlabci.url`](#gitlabciurl)
 - [`registryAliases`](#registryaliases)
-- [`minimumReleaseAge`](#minimumreleaseage)
-- [`minimumReleaseAgeBehaviour`](#minimumreleaseagebehaviour)
-- [`abandonmentThreshold`](#abandonmentthreshold)
 - [`ignorePaths`](#ignorepaths)
-- [`separateMajorMinor`](#separatemajorminor)
-- [`separateMultipleMajor`](#separatemultiplemajor)
-- [`separateMinorPatch`](#separateminorpatch)
 - [`updateNotScheduled`](#updatenotscheduled)
-- [`automerge`](#automerge)
-- [`automergeStrategy`](#automergestrategy)
-- [`automergeType`](#automergetype)
-- [`draftPR`](#draftpr)
-- [`prCreation`](#prcreation)
 - [`prNotPendingHours`](#prnotpendinghours)
-- [`labels`](#labels)
-- [`reviewers`](#reviewers)
-- [`assignees`](#assignees)
-- [`prTitle`](#prtitle)
-- [`prHeader`](#prheader)
-- [`prFooter`](#prfooter)
 - [`rebaseLabel`](#rebaselabel)
 - [`stopUpdatingLabel`](#stopupdatinglabel)
 - [`dependencyDashboard`](#dependencydashboard)
 - [`dependencyDashboardTitle`](#dependencydashboardtitle)
 - [`dependencyDashboardLabels`](#dependencydashboardlabels)
-- [`dashboardApproval`](#dashboardapproval)
 - [`extends`](#extends)
 - [`rules`](#rules)
   - [`rules[].managers`](#rulesmanagers)
@@ -151,40 +151,40 @@ customDatasources:
   - [`rules[].updateTypes`](#rulesupdatetypes)
   - [`rules[].ignore`](#rulesignore)
   - [`rules[].pin`](#rulespin)
+  - [`rules[].rangeStrategy`](#rulesrangestrategy)
+  - [`rules[].schedule`](#rulesschedule)
+  - [`rules[].additionalBranchPrefix`](#rulesadditionalbranchprefix)
+  - [`rules[].minimumReleaseAge`](#rulesminimumreleaseage)
+  - [`rules[].minimumReleaseAgeBehaviour`](#rulesminimumreleaseagebehaviour)
+  - [`rules[].abandonmentThreshold`](#rulesabandonmentthreshold)
+  - [`rules[].separateMajorMinor`](#rulesseparatemajorminor)
+  - [`rules[].separateMultipleMajor`](#rulesseparatemultiplemajor)
+  - [`rules[].separateMinorPatch`](#rulesseparateminorpatch)
+  - [`rules[].automerge`](#rulesautomerge)
+  - [`rules[].automergeStrategy`](#rulesautomergestrategy)
+  - [`rules[].automergeType`](#rulesautomergetype)
+  - [`rules[].draftPR`](#rulesdraftpr)
+  - [`rules[].prCreation`](#rulesprcreation)
+  - [`rules[].labels`](#ruleslabels)
+  - [`rules[].reviewers`](#rulesreviewers)
+  - [`rules[].assignees`](#rulesassignees)
+  - [`rules[].prTitle`](#rulesprtitle)
+  - [`rules[].prHeader`](#rulesprheader)
+  - [`rules[].prFooter`](#rulesprfooter)
+  - [`rules[].dashboardApproval`](#rulesdashboardapproval)
   - [`rules[].allow`](#rulesallow)
   - [`rules[].allowedUpdateTypes`](#rulesallowedupdatetypes)
-  - [`rules[].rangeStrategy`](#rulesrangestrategy)
   - [`rules[].versioning`](#rulesversioning)
   - [`rules[].extractVersion`](#rulesextractversion)
   - [`rules[].registryUrls`](#rulesregistryurls)
   - [`rules[].replacementName`](#rulesreplacementname)
   - [`rules[].replacementVersion`](#rulesreplacementversion)
   - [`rules[].replacementPrefix`](#rulesreplacementprefix)
-  - [`rules[].separateMajorMinor`](#rulesseparatemajorminor)
-  - [`rules[].separateMultipleMajor`](#rulesseparatemultiplemajor)
-  - [`rules[].separateMinorPatch`](#rulesseparateminorpatch)
   - [`rules[].group`](#rulesgroup)
   - [`rules[].securityGroup`](#rulessecuritygroup)
   - [`rules[].commitType`](#rulescommittype)
   - [`rules[].commitScope`](#rulescommitscope)
-  - [`rules[].schedule`](#rulesschedule)
-  - [`rules[].additionalBranchPrefix`](#rulesadditionalbranchprefix)
-  - [`rules[].minimumReleaseAge`](#rulesminimumreleaseage)
-  - [`rules[].minimumReleaseAgeBehaviour`](#rulesminimumreleaseagebehaviour)
-  - [`rules[].abandonmentThreshold`](#rulesabandonmentthreshold)
-  - [`rules[].automerge`](#rulesautomerge)
-  - [`rules[].automergeStrategy`](#rulesautomergestrategy)
-  - [`rules[].automergeType`](#rulesautomergetype)
-  - [`rules[].dashboardApproval`](#rulesdashboardapproval)
-  - [`rules[].draftPR`](#rulesdraftpr)
-  - [`rules[].prCreation`](#rulesprcreation)
-  - [`rules[].labels`](#ruleslabels)
   - [`rules[].addLabels`](#rulesaddlabels)
-  - [`rules[].reviewers`](#rulesreviewers)
-  - [`rules[].assignees`](#rulesassignees)
-  - [`rules[].prTitle`](#rulesprtitle)
-  - [`rules[].prHeader`](#rulesprheader)
-  - [`rules[].prFooter`](#rulesprfooter)
   - [`rules[].postUpgradeTasks`](#rulespostupgradetasks)
     - [`rules[].postUpgradeTasks.commands`](#rulespostupgradetaskscommands)
     - [`rules[].postUpgradeTasks.executionMode`](#rulespostupgradetasksexecutionmode)
@@ -397,6 +397,326 @@ rules:
     schedule: ["before 6am on sunday"]   # PRs are created by runs on Sunday before 06:00 in Berlin
 ```
 
+## `additionalBranchPrefix`
+
+Text between branchPrefix and the branch topic (the dependency name, or group/\<group>), as in Renovate. Literal text plus the templates {{manager}}, {{parentDir}} and {{packageFileDir}} of each update's file; updates whose expanded prefix differs never share a PR, so `{{manager}}/` keeps managers apart. Rules override it.
+
+- **Type:** string
+
+Renovate's `additionalBranchPrefix`: text between [`branchPrefix`](#branchprefix) and the branch topic. Renovate builds branch names as `{{branchPrefix}}{{additionalBranchPrefix}}{{branchTopic}}`; deps' topics are the dependency name (`slug(name)`) and, for groups, `group/<slug(group)>`, followed by the [bucket](#separatemajorminor) suffix. Without it (the default `""`) the updates of one dependency name share one branch and PR across managers and files, as in Renovate: `anchore/syft` updated as a GitHub action, a Homebrew formula and a [custom](#custom) match gets one PR on `deps/anchore-syft`.
+
+- **Templates.** Literal text plus Renovate's `{{manager}}` (the deps manager), `{{parentDir}}` (the name of the directory of the dependency's file, `""` at the root) and `{{packageFileDir}}` (that directory's path, `""` at the root); the triple-brace forms (`{{{manager}}}`) are the same. Any other template is a config error naming these three. The expanded text is cleaned as Renovate cleans branch names: whitespace is dropped, characters git rejects become `-`, repeated `/` and `-` collapse, and no component starts with `-` or `.`, so `{{parentDir}}-` of a file at the root expands to nothing.
+- **Sharing.** Updates whose expanded prefix differs never share a branch or PR, also in a [group](#rulesgroup): `{{manager}}/` keeps managers apart (`deps/github-actions/anchore-syft`, `deps/homebrew/anchore-syft`; groups `deps/github-actions/group/tools`), `{{parentDir}}-` splits a monorepo by directory (`deps/web-react`). Lock file maintenance ignores it.
+- **Members' settings.** When one dependency is updated by several managers or files, their settings combine as in a [group](#rulesgroup): the PR automerges only when every member does (with the first member's `automergeStrategy`), is a draft or needs [dashboard approval](#dashboardapproval) when any member asks, waits for the most waiting [`prCreation`](#prcreation), is created only when every member is in [schedule](#schedule), and gets the labels, reviewers and assignees of all members; the commit type is `fix` when any member's is, the scope and [PR templates](#prtitle) are the first member's. The title is `update <name> to <v>` when every member moves to the same version; versions differing only by a leading `v` (an action's `v0.7.0`, a formula's `0.7.0`) count as the same, and the title shows the first member's form.
+- **Rules** override it for matching deps (with `updateTypes`: for those updates); `""` removes it.
+- **Upgrading from deps 0.7 and earlier.** Those versions named branches `<prefix><manager>/<slug(name)>`, one per manager. The first run with the new names opens the PRs under them and closes the per-manager PRs as obsolete (with their branches), as for any branch no update wants. `additionalBranchPrefix: '{{manager}}/'` keeps the old single-dependency names (groups then also split per manager, `<prefix><manager>/group/<slug>`). A new branch whose name is the directory of a remaining old branch (dep `helm`, branches `deps/helm/…`) can only be pushed once those are gone, normally on the next run.
+
+```yaml
+additionalBranchPrefix: '{{manager}}/'   # deps/github-actions/actions-checkout
+rules:
+  - paths: ['web/**']
+    additionalBranchPrefix: '{{parentDir}}-'
+```
+
+## `minimumReleaseAge`
+
+Minimum age of a new version before it is proposed, e.g. `3 days`, `12h`, `90m` or a Go duration; `0` disables. Versions with an unknown release time are allowed unless minimumReleaseAgeBehaviour is timestamp-required; digest refresh, pin and security updates are exempt, except Go pseudo-version digest updates, which have a commit time.
+
+- **Type:** string
+
+- **Syntax:**
+  - `<n> <unit>`, where the unit is minutes, hours, days or weeks, written singular, plural or as the first letter, with the space optional: `28 days`, `1 day`, `3d`, `12h`, `90m`, `2w`;
+  - `0`;
+  - a Go duration: `1h30m`.
+
+  Negative or unparsable values are errors (`invalid age "<v>": want e.g. "3 days", "12h", "90m" or "0"`).
+- **Fallback:** a too-new candidate is rejected as `too new (released <date>, minimum <age>)`, and the next older candidate in the same PR bucket is tried.
+- **Unknown release times** are allowed by default (`minimumReleaseAgeBehaviour: timestamp-optional`). This covers datasources without release times (`custom.<name>`, `bazel`: Bazel registries such as the BCR publish none), images without a `created` time and failed time lookups.
+- **Exempt:** digest refreshes, pins and security updates. Go pseudo-version digest updates are not exempt: the new pseudo-version's commit time is checked against the age of the `digest` update type.
+- `rules[].minimumReleaseAge` overrides the value per dep. With `updateTypes` it overrides it per update type. `0` or `0 days` turns the age off for matching deps.
+
+```yaml
+minimumReleaseAge: 28 days
+rules:
+  - names: ['open-component-model/cosign']
+    minimumReleaseAge: 0 days
+```
+
+## `minimumReleaseAgeBehaviour`
+
+How minimumReleaseAge treats a version whose release time is unknown (the datasource has none, or the lookup failed): timestamp-optional proposes it, timestamp-required holds it back like a too-new version (reported as `release time unknown`). Renovate's default is timestamp-required.
+
+- **Type:** string
+- **Default:** `timestamp-optional`
+- **Values:** `timestamp-optional`, `timestamp-required`
+
+- `timestamp-optional` (the default): a candidate whose release time is unknown passes `minimumReleaseAge`.
+- `timestamp-required`: such a candidate is held back like a too-new one, as `release time unknown (minimum <age>, timestamp-required)` in the trace and the summary's held-back list, and the next older candidate in the same PR bucket is tried. After 3 candidates without a time the bucket gives up: the datasource likely has none for the dep.
+- Without a `minimumReleaseAge` (or with `0`) the behaviour has no effect. Digest refreshes, pins and security updates stay exempt in both modes.
+- The names are Renovate's. Renovate defaults to `timestamp-required` since version 42; deps keeps `timestamp-optional` so that adding `minimumReleaseAge` does not silently stop updates of deps whose datasource has no times. Set `timestamp-required` to match Renovate.
+- `rules[].minimumReleaseAgeBehaviour` overrides it per dep, with `updateTypes` per update type.
+
+```yaml
+minimumReleaseAge: 28 days
+minimumReleaseAgeBehaviour: timestamp-required
+rules:
+  - managers: [custom] # in-house datasources without release times are not held back
+    minimumReleaseAgeBehaviour: timestamp-optional
+```
+
+## `abandonmentThreshold`
+
+Age of a dependency's newest release after which the dependency dashboard and its PRs flag it as abandoned, e.g. `1 year` or `18 months` (units of minimumReleaseAge, plus months of 30 days and years of 365 days); empty or `0` turns the check off. It costs at most one release time lookup per dep (npm: none when its modified time is old enough).
+
+- **Type:** string
+
+A dependency whose newest release is older than this is listed under **Abandoned dependencies** on the [dashboard](#dependencydashboard), and its update PRs say so under **Warnings** (Renovate's `abandonmentThreshold`).
+
+- **Syntax:** as for [`minimumReleaseAge`](#minimumreleaseage), plus months (30 days) and years (365 days): `1 year`, `18 months`, `2y`. Empty or `0` turns the check off (the default).
+- **Newest release:** the highest stable release the datasource lists. With npm, the package's `modified` time bounds every release, so a package not modified within the threshold is abandoned without another request (`no release since <date>`); otherwise the newest release's time is looked up, once per dep (`newest release <v> published <date>`; for npm that is the full packument, shared with `minimumReleaseAge` and the PR's age column). Datasources without release times, and unknown times, never flag a dep.
+- Only deps that are looked up are checked: ignored deps and deps without a valid version are not.
+- `rules[].abandonmentThreshold` overrides it per dep; `0` turns it off for matching deps.
+
+```yaml
+abandonmentThreshold: 2 years
+rules:
+  - managers: [github-actions]
+    abandonmentThreshold: 0
+```
+
+## `separateMajorMinor`
+
+Propose the newest major update in its own PR (branch suffix -major), apart from the newest minor/patch update; false proposes only the newest update.
+
+- **Type:** boolean
+- **Default:** `true`
+
+`separateMajorMinor`, `separateMultipleMajor` and `separateMinorPatch` split one dep's candidate updates into **PR buckets**. Each bucket yields at most one update, and each update gets its own branch (suffix) and PR:
+
+| Setting | Buckets (branch suffix) |
+|---|---|
+| `separateMajorMinor: false` | one bucket, the newest update of any kind (no suffix) |
+| default (`separateMajorMinor: true`) | newest major (`-major`); newest minor/patch (no suffix) |
+| `+ separateMultipleMajor: true` | one per newer major *N*, the newest release of each (`-v<N>`); minor/patch (no suffix) |
+| `+ separateMinorPatch: true` | newest minor (`-minor`); newest patch of the current minor (`-patch`) |
+
+- The bucket of a candidate comes from the policy of its update type. A rule with `updateTypes` can therefore set these flags for its types, unlike in Renovate (see [behavior differences](../migrating-from-renovate.md#behavior-differences)).
+- `plan`/`apply` write one update per dep: the newest non-major one, else the lowest major. The others are reported with `, separate PR`.
+- A policy group inherits its members' bucket suffix: `deps/group/actions-patch`.
+
+## `separateMultipleMajor`
+
+With separateMajorMinor: one PR per newer major version (branch suffix -v\<N>, newest release of each major) instead of one for the newest major.
+
+- **Type:** boolean
+- **Default:** `false`
+
+See the bucket table under [`separateMajorMinor`](#separatemajorminor).
+
+## `separateMinorPatch`
+
+With separateMajorMinor: separate PRs for the newest minor (branch suffix -minor) and the newest patch of the current minor (-patch).
+
+- **Type:** boolean
+- **Default:** `false`
+
+See the bucket table under [`separateMajorMinor`](#separatemajorminor).
+
+## `automerge`
+
+Request platform auto-merge for update PRs: the forge merges them once required checks pass. Rules override it, e.g. for minor and patch updates only.
+
+- **Type:** boolean
+- **Default:** `false`
+
+deps itself never merges red or pending PRs or branches. Rules override `automerge`, `automergeStrategy` and `automergeType` per dep or per update type, so Renovate's `matchUpdateTypes: [minor, patch], automerge: true` is:
+
+```yaml
+rules:
+  - updateTypes: [minor, patch]
+    automerge: true
+```
+
+- A PR automerges only when **every** update in it does; a group that mixes an automerged minor with a major does not. The strategy comes from the PR's first update.
+- The request is sent after the PR is created, updated or rebased, and on every run for an up-to-date automerge PR, until the platform reports it scheduled. Security updates follow the same policy.
+- With [`automergeType: branch`](#automergetype) there is no PR: deps merges the branch itself once its checks pass.
+- Outcomes are listed under [automerge outcomes](cli.md#deps-run); platform behavior and the GitHub fallback are described in [design.md](../design.md#automerge).
+
+## `automergeStrategy`
+
+Merge method of automerged PRs: auto (the repository's default merge style), merge, squash or rebase.
+
+- **Type:** string
+- **Default:** `auto`
+- **Values:** `auto`, `merge`, `squash`, `rebase`
+
+`auto` uses the repository's default: Gitea/Forgejo `default_merge_style`, on GitHub the first method the repository allows (merge commit, then squash, then rebase), and on GitLab the project's squash default. GitLab's merge method (merge commit, semi-linear, fast-forward) is a project setting, so there `squash` squashes and `merge` and `rebase` merge without squashing. Branch automerge (`automergeType: branch`) always fast-forwards and ignores it.
+
+## `automergeType`
+
+How updates are automerged: pr (platform auto-merge of the PR) or branch (push the branch without a PR and fast-forward the base branch to it once its checks pass; a PR is raised only when they fail).
+
+- **Type:** string
+- **Default:** `pr`
+- **Values:** `pr`, `branch`
+
+`pr` (the default) requests the platform's auto-merge for the update PR. `branch` is Renovate's branch automerge: updates land on the base branch without a PR, so passing updates are silent.
+
+1. deps pushes the update branch (one commit on top of the base) and opens no PR.
+2. Later runs read the commit statuses and check runs of the branch tip:
+   - none reported yet, or still running: `branch automerge waiting for checks`;
+   - all green: deps fast-forwards the base branch to the branch with `git push --force-with-lease` (so the push fails if the base moved) and deletes the branch (`merged`);
+   - one failed: deps opens the PR, noting why in its body, and requests platform auto-merge for it like `automergeType: pr`.
+3. A branch behind the base, or with other content, is rebuilt and pushed again, whatever `rebaseWhen` says: only a branch directly on the base can be fast-forwarded. Its checks then start over.
+4. Only one branch is merged per run, because merging moves the base. Other green branches report `branch automerge next run`; the next run rebases and merges them one by one.
+5. If the base branch declines the push (branch protection, a required PR, a pre-receive hook), deps opens the PR instead, as for failed checks.
+
+- CI must run on pushes to the update branches (`deps/**`), and the token must be allowed to push to the base branch. On GitHub a protected base branch needs the token's App or user on the bypass list; on Gitea and Forgejo it needs push access in the branch protection (*Enable push*, with the user allowlisted if restricted); on GitLab the token's role must be *Allowed to push* on a protected branch.
+- A repository without any checks never merges: the branch waits. Tick it under **Pending branch automerge** on the [dashboard](#dependencydashboard) to open its PR instead.
+- Once a PR exists for the branch, it stays a PR and is automerged as such; the strategy then applies again.
+- New branches count toward the PR limits (`--max-new-prs`, `prConcurrentLimit`, `prHourlyLimit`) of the run that pushes them, as does raising a PR for a failed branch.
+- Branches no update wants anymore and without a PR are deleted after an error-free run (`deleted`), unless someone else committed to them.
+- A group merges its branch only when **every** update in it uses `automergeType: branch`; otherwise it automerges as a PR. Lock file maintenance follows the top-level value.
+
+## `draftPR`
+
+Open new update PRs as drafts (GitHub draft PRs; on Gitea and Forgejo the title starts with WIP:, on GitLab with Draft:). PRs that automerge are never drafts. Rules override it.
+
+- **Type:** boolean
+- **Default:** `false`
+
+Renovate's `draftPR`: new update PRs are opened as drafts, which the forge does not merge until someone marks them ready for review. It applies when the PR is created; deps never turns an existing PR into a draft or back.
+
+- GitHub opens a draft PR (the `draft` flag of the API). Marking it ready is up to you.
+- Gitea and Forgejo have no draft flag in their API: the title starts with `WIP: `, one of the forges' default work-in-progress prefixes. Title updates keep the prefix while the PR is a draft; remove it from the title to mark the PR ready, and deps leaves it off.
+- GitLab likewise marks a draft merge request by its title: it starts with `Draft: `, kept on title updates while the merge request is a draft (GitLab reports `draft`).
+- A PR that automerges is never a draft: forges do not merge drafts. Rules turn it on or off per dep or update type, e.g. drafts for majors only:
+
+```yaml
+rules:
+  - updateTypes: [major]
+    draftPR: true
+```
+
+## `prCreation`
+
+When the PR of a new update branch is opened: immediate (right after the push), not-pending (on a later run, once the branch's checks finished, passed or failed, or prNotPendingHours after its last commit), status-success (once they all passed) or approval (once its checkbox under Pending approval on the dependency dashboard is ticked; requires dependencyDashboard). Until then the branch waits without a PR, listed on the dependency dashboard. Rules override it.
+
+- **Type:** string
+- **Default:** `immediate`
+- **Values:** `immediate`, `not-pending`, `status-success`, `approval`
+
+Renovate's `prCreation`. With `immediate` (the default) the PR is opened right after the branch is pushed. The other modes push the branch first and open its PR on a later run, once its commit statuses and check runs are in, so a PR arrives with its test results:
+
+| Mode | The PR is opened when the branch's checks | Until then |
+|---|---|---|
+| `immediate` | (right away) | |
+| `not-pending` | have finished: all passed, or one failed | `PR waiting for checks` |
+| `status-success` | all passed | `PR waiting for checks`, or `PR waiting for green checks` after a failure |
+
+1. The first run pushes the branch (one commit on top of the base) without a PR: `created, PR waiting for checks`.
+2. Later runs read the checks of the branch tip and open the PR when the mode allows (`created`); until then the branch is `up-to-date` with the outcome above. deps does not wait for the checks within a run.
+3. A branch with other content than this run builds is rebuilt and pushed again (`updated`), and its checks start over. A branch that is only behind the base is kept, unless `rebaseWhen: behind-base-branch` (then it is rebuilt on the base, like a PR branch) or its commit was made through the API (`platformCommit`): deps cannot read such a branch's files locally, so it rebuilds it whenever the base moved.
+4. Waiting branches are listed under **Pending status checks** on the [dashboard](#dependencydashboard); ticking one opens its PR on the next run without waiting.
+
+- CI must run on pushes to the update branches (`deps/**`); with workflows that only run on `pull_request` the branch never gets checks and never gets its PR. A repository without any checks waits forever too (Renovate's `prNotPendingHours` fallback is not offered); tick the branch on the dashboard to open its PR.
+- New branches count toward the PR limits of the run that pushes them, as does opening the PR of a waiting branch.
+- Once the PR is open, the branch is handled like any PR branch. Groups use the most waiting mode of their updates; [`automergeType: branch`](#automergetype) groups have no PR anyway and ignore it. Lock file maintenance follows the top-level value.
+
+## `labels`
+
+Labels added to new update PRs (by name; on Gitea and Forgejo they must exist in the repository or its organization). Rules replace them (labels) or add to them (addLabels).
+
+- **Type:** list of strings
+
+## `reviewers`
+
+Reviewers requested on new update PRs: user names, or team:\<slug> for a team of the repository's organization (not on GitLab). Rules replace them.
+
+- **Type:** list of strings
+
+## `assignees`
+
+Users assigned to new update PRs. Rules replace them.
+
+- **Type:** list of strings
+
+## `prTitle`
+
+Go text/template of PR titles and commit subjects over the fields .Type, .Scope, .Name, .Group, .From, .To, .UpdateType, .Count and .IsSecurity, e.g. `{{.Type}}({{.Scope}}): bump {{.Name}} to {{.To}}`; empty means the built-in titles. Security PRs keep the ' [security]' suffix. Rules override it.
+
+- **Type:** string
+
+The title of each update PR and the subject of its commit, as a [Go `text/template`](https://pkg.go.dev/text/template) over these fields of the PR:
+
+| Field | Value | Renovate |
+|---|---|---|
+| `.Type` | conventional commit type: `fix` for production deps, else `chore`, or [`rules[].commitType`](#rulescommittype); always `fix` for security updates | `semanticCommitType` |
+| `.Scope` | commit scope, `deps` or [`rules[].commitScope`](#rulescommitscope); `""` = none | `semanticCommitScope` |
+| `.Name` | the dependency, or the group name when the PR updates several (`lock file maintenance` for that PR) | `depName` |
+| `.Group` | the policy group, or the shared version definition (`jackson.version`) of the PR; `""` = none | `groupName` |
+| `.From` | the current version (the locked one for lockfile-only updates), when every update has the same; else `""` | `currentVersion` |
+| `.To` | the new version, when every update has the same; else `""` | `newVersion` |
+| `.UpdateType` | `major`, `minor`, `patch`, `digest`, `pin` or `lockFileMaintenance`, when every update has the same; else `""` | `updateType` |
+| `.Count` | the number of dependencies | `upgrades.length` |
+| `.IsSecurity` | some update fixes advisories | `isVulnerabilityAlert` |
+
+- Empty (the default) means the built-in titles described under [`rules[].group`](#rulesgroup).
+- The title is one line: runs of white space, newlines included, become one space.
+- Titles of PRs with security updates end with ` [security]`; deps appends it unless the template already does.
+- The lock file maintenance PR keeps its title (`chore(deps): lock file maintenance`); `prHeader` and `prFooter` apply to it.
+- A group's PR takes the templates of its first update (as for `commitType` and `commitScope`); its type is `fix` when any member's is.
+- [`rules[].prTitle`](#rulesprtitle), `prHeader` and `prFooter` override the templates per dep or, with `updateTypes`, per update type; `''` resets them to the built-in title, or no header or footer.
+- **Validation.** Templates are parsed when the config is loaded: every field reference must name a field above, also in branches that are not taken (`rules[0].prTitle: line 1, column 13: unknown field .DepName (fields: .Type, ...)`), and each template is executed on sample data (a single dependency, and a security group without versions or scope), where a title must not render empty. Errors name the config line and the line and column in the template; the built-in functions of `text/template` (`printf`, `eq`, `and`, `or`, `slice`, ...) are available.
+- **Existing PRs.** The content fingerprint covers the file contents only, so a changed template rewrites the title and body of an open PR the next time its content changes, not before. Closed PRs are matched by the `deps:versions` marker in their body, not by title, so a changed template does not reopen closed updates (see [closed PRs](../design.md#pr-lifecycle-deps-run)).
+
+```yaml
+prTitle: '{{.Type}}{{with .Scope}}({{.}}){{end}}: bump {{.Name}}{{with .To}} to {{.}}{{end}}'
+prHeader: |
+  This PR updates {{if eq .Count 1}}{{.Name}}{{else}}{{.Count}} dependencies of {{.Name}}{{end}}.
+prFooter: '{{if .IsSecurity}}**Security update: please review soon.**{{end}}'
+rules:
+  - managers: [github-actions]
+    prTitle: 'ci: bump {{.Name}} from {{.From}} to {{.To}}'
+```
+
+## `prHeader`
+
+Go text/template (the fields of prTitle) rendered at the top of update PR bodies; empty means none. Rules override it.
+
+- **Type:** string
+
+Rendered above the update table of every update PR body, with the fields of [`prTitle`](#prtitle); leading and trailing white space is trimmed, and an empty result adds nothing. Use it for review instructions or links. The marker comments and the rebase checkbox stay deps'.
+
+## `prFooter`
+
+Go text/template (the fields of prTitle) rendered at the end of update PR bodies, above the rebase checkbox; empty means none. Rules override it.
+
+- **Type:** string
+
+Rendered below the release notes, above the workflow run link (in Actions, see `deps help run`), the rule and the rebase checkbox, with the fields of [`prTitle`](#prtitle); trimmed like [`prHeader`](#prheader).
+
+## `dashboardApproval`
+
+Create no new PR (or automerge branch) for an update until it is approved on the dependency dashboard: it is listed under Pending approval, and ticking its checkbox makes the next run create it. Security updates need no approval. Rules override it; requires dependencyDashboard.
+
+- **Type:** boolean
+- **Default:** `false`
+
+Renovate's `dependencyDashboardApproval`: an update that needs approval gets no PR (and, with [`automergeType: branch`](#automergetype), no branch) until someone approves it on the [dashboard](#dependencydashboard). Usually it is set per rule, e.g. for majors:
+
+```yaml
+dependencyDashboard: true
+rules:
+  - updateTypes: [major]
+    dashboardApproval: true
+```
+
+- The run reports `skipped: awaiting dashboard approval` and does not build the update; the dashboard lists it under **Pending approval** with a checkbox. Ticking it makes the next run create the PR, regardless of `schedule` and the PR limits, like the other `create` checkboxes.
+- Approval is needed once: an update with an open PR or an existing branch is handled as usual, also when its version moves on. A PR closed without merging is ignored as usual (**Ignored or blocked**); its `recreate` checkbox approves it too.
+- A group needs approval when any of its updates does. Security updates never need approval (Renovate's `vulnerabilityAlerts` default). Lock file maintenance follows the top-level value.
+- It requires [`dependencyDashboard: true`](#dependencydashboard). Without issues (`dashboard skipped: issues disabled`) nothing can be approved, so these updates wait.
+
 ## `timezone`
 
 IANA time zone (e.g. Europe/Berlin) of the schedule time windows; default UTC. Cron triggers are unaffected.
@@ -460,27 +780,6 @@ rules:
   - baseBranches: ['/^release\//']   # release branches get no majors
     updateTypes: [major]
     ignore: true
-```
-
-## `additionalBranchPrefix`
-
-Text between branchPrefix and the branch topic (the dependency name, or group/\<group>), as in Renovate. Literal text plus the templates {{manager}}, {{parentDir}} and {{packageFileDir}} of each update's file; updates whose expanded prefix differs never share a PR, so `{{manager}}/` keeps managers apart. Rules override it.
-
-- **Type:** string
-
-Renovate's `additionalBranchPrefix`: text between [`branchPrefix`](#branchprefix) and the branch topic. Renovate builds branch names as `{{branchPrefix}}{{additionalBranchPrefix}}{{branchTopic}}`; deps' topics are the dependency name (`slug(name)`) and, for groups, `group/<slug(group)>`, followed by the [bucket](#separatemajorminor) suffix. Without it (the default `""`) the updates of one dependency name share one branch and PR across managers and files, as in Renovate: `anchore/syft` updated as a GitHub action, a Homebrew formula and a [custom](#custom) match gets one PR on `deps/anchore-syft`.
-
-- **Templates.** Literal text plus Renovate's `{{manager}}` (the deps manager), `{{parentDir}}` (the name of the directory of the dependency's file, `""` at the root) and `{{packageFileDir}}` (that directory's path, `""` at the root); the triple-brace forms (`{{{manager}}}`) are the same. Any other template is a config error naming these three. The expanded text is cleaned as Renovate cleans branch names: whitespace is dropped, characters git rejects become `-`, repeated `/` and `-` collapse, and no component starts with `-` or `.`, so `{{parentDir}}-` of a file at the root expands to nothing.
-- **Sharing.** Updates whose expanded prefix differs never share a branch or PR, also in a [group](#rulesgroup): `{{manager}}/` keeps managers apart (`deps/github-actions/anchore-syft`, `deps/homebrew/anchore-syft`; groups `deps/github-actions/group/tools`), `{{parentDir}}-` splits a monorepo by directory (`deps/web-react`). Lock file maintenance ignores it.
-- **Members' settings.** When one dependency is updated by several managers or files, their settings combine as in a [group](#rulesgroup): the PR automerges only when every member does (with the first member's `automergeStrategy`), is a draft or needs [dashboard approval](#dashboardapproval) when any member asks, waits for the most waiting [`prCreation`](#prcreation), is created only when every member is in [schedule](#schedule), and gets the labels, reviewers and assignees of all members; the commit type is `fix` when any member's is, the scope and [PR templates](#prtitle) are the first member's. The title is `update <name> to <v>` when every member moves to the same version; versions differing only by a leading `v` (an action's `v0.7.0`, a formula's `0.7.0`) count as the same, and the title shows the first member's form.
-- **Rules** override it for matching deps (with `updateTypes`: for those updates); `""` removes it.
-- **Upgrading from deps 0.7 and earlier.** Those versions named branches `<prefix><manager>/<slug(name)>`, one per manager. The first run with the new names opens the PRs under them and closes the per-manager PRs as obsolete (with their branches), as for any branch no update wants. `additionalBranchPrefix: '{{manager}}/'` keeps the old single-dependency names (groups then also split per manager, `<prefix><manager>/group/<slug>`). A new branch whose name is the directory of a remaining old branch (dep `helm`, branches `deps/helm/…`) can only be pushed once those are gone, normally on the next run.
-
-```yaml
-additionalBranchPrefix: '{{manager}}/'   # deps/github-actions/actions-checkout
-rules:
-  - paths: ['web/**']
-    additionalBranchPrefix: '{{parentDir}}-'
 ```
 
 ## `useBaseBranchConfig`
@@ -708,72 +1007,6 @@ registryAliases:
   ${HARBOR}/proxy: harbor.example.com/dockerhub-proxy
 ```
 
-## `minimumReleaseAge`
-
-Minimum age of a new version before it is proposed, e.g. `3 days`, `12h`, `90m` or a Go duration; `0` disables. Versions with an unknown release time are allowed unless minimumReleaseAgeBehaviour is timestamp-required; digest refresh, pin and security updates are exempt, except Go pseudo-version digest updates, which have a commit time.
-
-- **Type:** string
-
-- **Syntax:**
-  - `<n> <unit>`, where the unit is minutes, hours, days or weeks, written singular, plural or as the first letter, with the space optional: `28 days`, `1 day`, `3d`, `12h`, `90m`, `2w`;
-  - `0`;
-  - a Go duration: `1h30m`.
-
-  Negative or unparsable values are errors (`invalid age "<v>": want e.g. "3 days", "12h", "90m" or "0"`).
-- **Fallback:** a too-new candidate is rejected as `too new (released <date>, minimum <age>)`, and the next older candidate in the same PR bucket is tried.
-- **Unknown release times** are allowed by default (`minimumReleaseAgeBehaviour: timestamp-optional`). This covers datasources without release times (`custom.<name>`, `bazel`: Bazel registries such as the BCR publish none), images without a `created` time and failed time lookups.
-- **Exempt:** digest refreshes, pins and security updates. Go pseudo-version digest updates are not exempt: the new pseudo-version's commit time is checked against the age of the `digest` update type.
-- `rules[].minimumReleaseAge` overrides the value per dep. With `updateTypes` it overrides it per update type. `0` or `0 days` turns the age off for matching deps.
-
-```yaml
-minimumReleaseAge: 28 days
-rules:
-  - names: ['open-component-model/cosign']
-    minimumReleaseAge: 0 days
-```
-
-## `minimumReleaseAgeBehaviour`
-
-How minimumReleaseAge treats a version whose release time is unknown (the datasource has none, or the lookup failed): timestamp-optional proposes it, timestamp-required holds it back like a too-new version (reported as `release time unknown`). Renovate's default is timestamp-required.
-
-- **Type:** string
-- **Default:** `timestamp-optional`
-- **Values:** `timestamp-optional`, `timestamp-required`
-
-- `timestamp-optional` (the default): a candidate whose release time is unknown passes `minimumReleaseAge`.
-- `timestamp-required`: such a candidate is held back like a too-new one, as `release time unknown (minimum <age>, timestamp-required)` in the trace and the summary's held-back list, and the next older candidate in the same PR bucket is tried. After 3 candidates without a time the bucket gives up: the datasource likely has none for the dep.
-- Without a `minimumReleaseAge` (or with `0`) the behaviour has no effect. Digest refreshes, pins and security updates stay exempt in both modes.
-- The names are Renovate's. Renovate defaults to `timestamp-required` since version 42; deps keeps `timestamp-optional` so that adding `minimumReleaseAge` does not silently stop updates of deps whose datasource has no times. Set `timestamp-required` to match Renovate.
-- `rules[].minimumReleaseAgeBehaviour` overrides it per dep, with `updateTypes` per update type.
-
-```yaml
-minimumReleaseAge: 28 days
-minimumReleaseAgeBehaviour: timestamp-required
-rules:
-  - managers: [custom] # in-house datasources without release times are not held back
-    minimumReleaseAgeBehaviour: timestamp-optional
-```
-
-## `abandonmentThreshold`
-
-Age of a dependency's newest release after which the dependency dashboard and its PRs flag it as abandoned, e.g. `1 year` or `18 months` (units of minimumReleaseAge, plus months of 30 days and years of 365 days); empty or `0` turns the check off. It costs at most one release time lookup per dep (npm: none when its modified time is old enough).
-
-- **Type:** string
-
-A dependency whose newest release is older than this is listed under **Abandoned dependencies** on the [dashboard](#dependencydashboard), and its update PRs say so under **Warnings** (Renovate's `abandonmentThreshold`).
-
-- **Syntax:** as for [`minimumReleaseAge`](#minimumreleaseage), plus months (30 days) and years (365 days): `1 year`, `18 months`, `2y`. Empty or `0` turns the check off (the default).
-- **Newest release:** the highest stable release the datasource lists. With npm, the package's `modified` time bounds every release, so a package not modified within the threshold is abandoned without another request (`no release since <date>`); otherwise the newest release's time is looked up, once per dep (`newest release <v> published <date>`; for npm that is the full packument, shared with `minimumReleaseAge` and the PR's age column). Datasources without release times, and unknown times, never flag a dep.
-- Only deps that are looked up are checked: ignored deps and deps without a valid version are not.
-- `rules[].abandonmentThreshold` overrides it per dep; `0` turns it off for matching deps.
-
-```yaml
-abandonmentThreshold: 2 years
-rules:
-  - managers: [github-actions]
-    abandonmentThreshold: 0
-```
-
 ## `ignorePaths`
 
 Case-sensitive doublestar globs (as in Renovate) on slash paths relative to --dir; matching files and directories are not scanned. When the key is absent, the default list (dependency trees, examples and tests) applies; any list (also []) replaces it. Entries may also be /RE2/ regexes.
@@ -790,44 +1023,6 @@ Case-sensitive doublestar globs (as in Renovate) on slash paths relative to --di
 ignorePaths: ['**/node_modules/**', 'docs/**']
 ```
 
-## `separateMajorMinor`
-
-Propose the newest major update in its own PR (branch suffix -major), apart from the newest minor/patch update; false proposes only the newest update.
-
-- **Type:** boolean
-- **Default:** `true`
-
-`separateMajorMinor`, `separateMultipleMajor` and `separateMinorPatch` split one dep's candidate updates into **PR buckets**. Each bucket yields at most one update, and each update gets its own branch (suffix) and PR:
-
-| Setting | Buckets (branch suffix) |
-|---|---|
-| `separateMajorMinor: false` | one bucket, the newest update of any kind (no suffix) |
-| default (`separateMajorMinor: true`) | newest major (`-major`); newest minor/patch (no suffix) |
-| `+ separateMultipleMajor: true` | one per newer major *N*, the newest release of each (`-v<N>`); minor/patch (no suffix) |
-| `+ separateMinorPatch: true` | newest minor (`-minor`); newest patch of the current minor (`-patch`) |
-
-- The bucket of a candidate comes from the policy of its update type. A rule with `updateTypes` can therefore set these flags for its types, unlike in Renovate (see [behavior differences](../migrating-from-renovate.md#behavior-differences)).
-- `plan`/`apply` write one update per dep: the newest non-major one, else the lowest major. The others are reported with `, separate PR`.
-- A policy group inherits its members' bucket suffix: `deps/group/actions-patch`.
-
-## `separateMultipleMajor`
-
-With separateMajorMinor: one PR per newer major version (branch suffix -v\<N>, newest release of each major) instead of one for the newest major.
-
-- **Type:** boolean
-- **Default:** `false`
-
-See the bucket table under [`separateMajorMinor`](#separatemajorminor).
-
-## `separateMinorPatch`
-
-With separateMajorMinor: separate PRs for the newest minor (branch suffix -minor) and the newest patch of the current minor (-patch).
-
-- **Type:** boolean
-- **Default:** `false`
-
-See the bucket table under [`separateMajorMinor`](#separatemajorminor).
-
 ## `updateNotScheduled`
 
 Keep updating and rebasing open update PRs outside their schedule; only new PRs wait for the schedule window. false leaves out-of-schedule branches untouched.
@@ -840,107 +1035,6 @@ Keep updating and rebasing open update PRs outside their schedule; only new PRs 
 
 Out-of-schedule PRs are never closed as obsolete.
 
-## `automerge`
-
-Request platform auto-merge for update PRs: the forge merges them once required checks pass. Rules override it, e.g. for minor and patch updates only.
-
-- **Type:** boolean
-- **Default:** `false`
-
-deps itself never merges red or pending PRs or branches. Rules override `automerge`, `automergeStrategy` and `automergeType` per dep or per update type, so Renovate's `matchUpdateTypes: [minor, patch], automerge: true` is:
-
-```yaml
-rules:
-  - updateTypes: [minor, patch]
-    automerge: true
-```
-
-- A PR automerges only when **every** update in it does; a group that mixes an automerged minor with a major does not. The strategy comes from the PR's first update.
-- The request is sent after the PR is created, updated or rebased, and on every run for an up-to-date automerge PR, until the platform reports it scheduled. Security updates follow the same policy.
-- With [`automergeType: branch`](#automergetype) there is no PR: deps merges the branch itself once its checks pass.
-- Outcomes are listed under [automerge outcomes](cli.md#deps-run); platform behavior and the GitHub fallback are described in [design.md](../design.md#automerge).
-
-## `automergeStrategy`
-
-Merge method of automerged PRs: auto (the repository's default merge style), merge, squash or rebase.
-
-- **Type:** string
-- **Default:** `auto`
-- **Values:** `auto`, `merge`, `squash`, `rebase`
-
-`auto` uses the repository's default: Gitea/Forgejo `default_merge_style`, on GitHub the first method the repository allows (merge commit, then squash, then rebase), and on GitLab the project's squash default. GitLab's merge method (merge commit, semi-linear, fast-forward) is a project setting, so there `squash` squashes and `merge` and `rebase` merge without squashing. Branch automerge (`automergeType: branch`) always fast-forwards and ignores it.
-
-## `automergeType`
-
-How updates are automerged: pr (platform auto-merge of the PR) or branch (push the branch without a PR and fast-forward the base branch to it once its checks pass; a PR is raised only when they fail).
-
-- **Type:** string
-- **Default:** `pr`
-- **Values:** `pr`, `branch`
-
-`pr` (the default) requests the platform's auto-merge for the update PR. `branch` is Renovate's branch automerge: updates land on the base branch without a PR, so passing updates are silent.
-
-1. deps pushes the update branch (one commit on top of the base) and opens no PR.
-2. Later runs read the commit statuses and check runs of the branch tip:
-   - none reported yet, or still running: `branch automerge waiting for checks`;
-   - all green: deps fast-forwards the base branch to the branch with `git push --force-with-lease` (so the push fails if the base moved) and deletes the branch (`merged`);
-   - one failed: deps opens the PR, noting why in its body, and requests platform auto-merge for it like `automergeType: pr`.
-3. A branch behind the base, or with other content, is rebuilt and pushed again, whatever `rebaseWhen` says: only a branch directly on the base can be fast-forwarded. Its checks then start over.
-4. Only one branch is merged per run, because merging moves the base. Other green branches report `branch automerge next run`; the next run rebases and merges them one by one.
-5. If the base branch declines the push (branch protection, a required PR, a pre-receive hook), deps opens the PR instead, as for failed checks.
-
-- CI must run on pushes to the update branches (`deps/**`), and the token must be allowed to push to the base branch. On GitHub a protected base branch needs the token's App or user on the bypass list; on Gitea and Forgejo it needs push access in the branch protection (*Enable push*, with the user allowlisted if restricted); on GitLab the token's role must be *Allowed to push* on a protected branch.
-- A repository without any checks never merges: the branch waits. Tick it under **Pending branch automerge** on the [dashboard](#dependencydashboard) to open its PR instead.
-- Once a PR exists for the branch, it stays a PR and is automerged as such; the strategy then applies again.
-- New branches count toward the PR limits (`--max-new-prs`, `prConcurrentLimit`, `prHourlyLimit`) of the run that pushes them, as does raising a PR for a failed branch.
-- Branches no update wants anymore and without a PR are deleted after an error-free run (`deleted`), unless someone else committed to them.
-- A group merges its branch only when **every** update in it uses `automergeType: branch`; otherwise it automerges as a PR. Lock file maintenance follows the top-level value.
-
-## `draftPR`
-
-Open new update PRs as drafts (GitHub draft PRs; on Gitea and Forgejo the title starts with WIP:, on GitLab with Draft:). PRs that automerge are never drafts. Rules override it.
-
-- **Type:** boolean
-- **Default:** `false`
-
-Renovate's `draftPR`: new update PRs are opened as drafts, which the forge does not merge until someone marks them ready for review. It applies when the PR is created; deps never turns an existing PR into a draft or back.
-
-- GitHub opens a draft PR (the `draft` flag of the API). Marking it ready is up to you.
-- Gitea and Forgejo have no draft flag in their API: the title starts with `WIP: `, one of the forges' default work-in-progress prefixes. Title updates keep the prefix while the PR is a draft; remove it from the title to mark the PR ready, and deps leaves it off.
-- GitLab likewise marks a draft merge request by its title: it starts with `Draft: `, kept on title updates while the merge request is a draft (GitLab reports `draft`).
-- A PR that automerges is never a draft: forges do not merge drafts. Rules turn it on or off per dep or update type, e.g. drafts for majors only:
-
-```yaml
-rules:
-  - updateTypes: [major]
-    draftPR: true
-```
-
-## `prCreation`
-
-When the PR of a new update branch is opened: immediate (right after the push), not-pending (on a later run, once the branch's checks finished, passed or failed, or prNotPendingHours after its last commit), status-success (once they all passed) or approval (once its checkbox under Pending approval on the dependency dashboard is ticked; requires dependencyDashboard). Until then the branch waits without a PR, listed on the dependency dashboard. Rules override it.
-
-- **Type:** string
-- **Default:** `immediate`
-- **Values:** `immediate`, `not-pending`, `status-success`, `approval`
-
-Renovate's `prCreation`. With `immediate` (the default) the PR is opened right after the branch is pushed. The other modes push the branch first and open its PR on a later run, once its commit statuses and check runs are in, so a PR arrives with its test results:
-
-| Mode | The PR is opened when the branch's checks | Until then |
-|---|---|---|
-| `immediate` | (right away) | |
-| `not-pending` | have finished: all passed, or one failed | `PR waiting for checks` |
-| `status-success` | all passed | `PR waiting for checks`, or `PR waiting for green checks` after a failure |
-
-1. The first run pushes the branch (one commit on top of the base) without a PR: `created, PR waiting for checks`.
-2. Later runs read the checks of the branch tip and open the PR when the mode allows (`created`); until then the branch is `up-to-date` with the outcome above. deps does not wait for the checks within a run.
-3. A branch with other content than this run builds is rebuilt and pushed again (`updated`), and its checks start over. A branch that is only behind the base is kept, unless `rebaseWhen: behind-base-branch` (then it is rebuilt on the base, like a PR branch) or its commit was made through the API (`platformCommit`): deps cannot read such a branch's files locally, so it rebuilds it whenever the base moved.
-4. Waiting branches are listed under **Pending status checks** on the [dashboard](#dependencydashboard); ticking one opens its PR on the next run without waiting.
-
-- CI must run on pushes to the update branches (`deps/**`); with workflows that only run on `pull_request` the branch never gets checks and never gets its PR. A repository without any checks waits forever too (Renovate's `prNotPendingHours` fallback is not offered); tick the branch on the dashboard to open its PR.
-- New branches count toward the PR limits of the run that pushes them, as does opening the PR of a waiting branch.
-- Once the PR is open, the branch is handled like any PR branch. Groups use the most waiting mode of their updates; [`automergeType: branch`](#automergetype) groups have no PR anyway and ignore it. Lock file maintenance follows the top-level value.
-
 ## `prNotPendingHours`
 
 With prCreation not-pending: hours after the last commit of a branch whose checks are still running or absent after which its PR is opened anyway.
@@ -948,79 +1042,6 @@ With prCreation not-pending: hours after the last commit of a branch whose check
 - **Type:** integer
 - **Default:** `25`
 - **Minimum:** `0`
-
-## `labels`
-
-Labels added to new update PRs (by name; on Gitea and Forgejo they must exist in the repository or its organization). Rules replace them (labels) or add to them (addLabels).
-
-- **Type:** list of strings
-
-## `reviewers`
-
-Reviewers requested on new update PRs: user names, or team:\<slug> for a team of the repository's organization (not on GitLab). Rules replace them.
-
-- **Type:** list of strings
-
-## `assignees`
-
-Users assigned to new update PRs. Rules replace them.
-
-- **Type:** list of strings
-
-## `prTitle`
-
-Go text/template of PR titles and commit subjects over the fields .Type, .Scope, .Name, .Group, .From, .To, .UpdateType, .Count and .IsSecurity, e.g. `{{.Type}}({{.Scope}}): bump {{.Name}} to {{.To}}`; empty means the built-in titles. Security PRs keep the ' [security]' suffix. Rules override it.
-
-- **Type:** string
-
-The title of each update PR and the subject of its commit, as a [Go `text/template`](https://pkg.go.dev/text/template) over these fields of the PR:
-
-| Field | Value | Renovate |
-|---|---|---|
-| `.Type` | conventional commit type: `fix` for production deps, else `chore`, or [`rules[].commitType`](#rulescommittype); always `fix` for security updates | `semanticCommitType` |
-| `.Scope` | commit scope, `deps` or [`rules[].commitScope`](#rulescommitscope); `""` = none | `semanticCommitScope` |
-| `.Name` | the dependency, or the group name when the PR updates several (`lock file maintenance` for that PR) | `depName` |
-| `.Group` | the policy group, or the shared version definition (`jackson.version`) of the PR; `""` = none | `groupName` |
-| `.From` | the current version (the locked one for lockfile-only updates), when every update has the same; else `""` | `currentVersion` |
-| `.To` | the new version, when every update has the same; else `""` | `newVersion` |
-| `.UpdateType` | `major`, `minor`, `patch`, `digest`, `pin` or `lockFileMaintenance`, when every update has the same; else `""` | `updateType` |
-| `.Count` | the number of dependencies | `upgrades.length` |
-| `.IsSecurity` | some update fixes advisories | `isVulnerabilityAlert` |
-
-- Empty (the default) means the built-in titles described under [`rules[].group`](#rulesgroup).
-- The title is one line: runs of white space, newlines included, become one space.
-- Titles of PRs with security updates end with ` [security]`; deps appends it unless the template already does.
-- The lock file maintenance PR keeps its title (`chore(deps): lock file maintenance`); `prHeader` and `prFooter` apply to it.
-- A group's PR takes the templates of its first update (as for `commitType` and `commitScope`); its type is `fix` when any member's is.
-- [`rules[].prTitle`](#rulesprtitle), `prHeader` and `prFooter` override the templates per dep or, with `updateTypes`, per update type; `''` resets them to the built-in title, or no header or footer.
-- **Validation.** Templates are parsed when the config is loaded: every field reference must name a field above, also in branches that are not taken (`rules[0].prTitle: line 1, column 13: unknown field .DepName (fields: .Type, ...)`), and each template is executed on sample data (a single dependency, and a security group without versions or scope), where a title must not render empty. Errors name the config line and the line and column in the template; the built-in functions of `text/template` (`printf`, `eq`, `and`, `or`, `slice`, ...) are available.
-- **Existing PRs.** The content fingerprint covers the file contents only, so a changed template rewrites the title and body of an open PR the next time its content changes, not before. Closed PRs are matched by the `deps:versions` marker in their body, not by title, so a changed template does not reopen closed updates (see [closed PRs](../design.md#pr-lifecycle-deps-run)).
-
-```yaml
-prTitle: '{{.Type}}{{with .Scope}}({{.}}){{end}}: bump {{.Name}}{{with .To}} to {{.}}{{end}}'
-prHeader: |
-  This PR updates {{if eq .Count 1}}{{.Name}}{{else}}{{.Count}} dependencies of {{.Name}}{{end}}.
-prFooter: '{{if .IsSecurity}}**Security update: please review soon.**{{end}}'
-rules:
-  - managers: [github-actions]
-    prTitle: 'ci: bump {{.Name}} from {{.From}} to {{.To}}'
-```
-
-## `prHeader`
-
-Go text/template (the fields of prTitle) rendered at the top of update PR bodies; empty means none. Rules override it.
-
-- **Type:** string
-
-Rendered above the update table of every update PR body, with the fields of [`prTitle`](#prtitle); leading and trailing white space is trimmed, and an empty result adds nothing. Use it for review instructions or links. The marker comments and the rebase checkbox stay deps'.
-
-## `prFooter`
-
-Go text/template (the fields of prTitle) rendered at the end of update PR bodies, above the rebase checkbox; empty means none. Rules override it.
-
-- **Type:** string
-
-Rendered below the release notes, above the workflow run link (in Actions, see `deps help run`), the rule and the rebase checkbox, with the fields of [`prTitle`](#prtitle); trimmed like [`prHeader`](#prheader).
 
 ## `rebaseLabel`
 
@@ -1089,27 +1110,6 @@ Labels set when the dashboard issue is created (by name; on Gitea and Forgejo th
 - **Type:** list of strings
 
 Each label must be non-blank and must not contain `,`. GitHub and GitLab create missing labels; Gitea and Forgejo look the names up in the repository's and its organization's labels and leave out unknown ones (with a warning).
-
-## `dashboardApproval`
-
-Create no new PR (or automerge branch) for an update until it is approved on the dependency dashboard: it is listed under Pending approval, and ticking its checkbox makes the next run create it. Security updates need no approval. Rules override it; requires dependencyDashboard.
-
-- **Type:** boolean
-- **Default:** `false`
-
-Renovate's `dependencyDashboardApproval`: an update that needs approval gets no PR (and, with [`automergeType: branch`](#automergetype), no branch) until someone approves it on the [dashboard](#dependencydashboard). Usually it is set per rule, e.g. for majors:
-
-```yaml
-dependencyDashboard: true
-rules:
-  - updateTypes: [major]
-    dashboardApproval: true
-```
-
-- The run reports `skipped: awaiting dashboard approval` and does not build the update; the dashboard lists it under **Pending approval** with a checkbox. Ticking it makes the next run create the PR, regardless of `schedule` and the PR limits, like the other `create` checkboxes.
-- Approval is needed once: an update with an open PR or an existing branch is handled as usual, also when its version moves on. A PR closed without merging is ignored as usual (**Ignored or blocked**); its `recreate` checkbox approves it too.
-- A group needs approval when any of its updates does. Security updates never need approval (Renovate's `vulnerabilityAlerts` default). Lock file maintenance follows the top-level value.
-- It requires [`dependencyDashboard: true`](#dependencydashboard). Without issues (`dashboard skipped: issues disabled`) nothing can be approved, so these updates wait.
 
 ## `extends`
 
@@ -1285,6 +1285,143 @@ Pin mode for matching deps.
 
 See the top-level [`pin`](#pin). Applies to github-actions and docker deps; not allowed with `updateTypes`.
 
+### `rules[].rangeStrategy`
+
+Range strategy for matching npm, deno, cargo, Python, Swift, bundler, Elm, composer, julia, NuGet, Maven, sbt and terraform deps, Gradle dynamic versions, GitHub Actions setup input ranges and Rust toolchain channels (see the top-level rangeStrategy). Cannot be combined with updateTypes.
+
+- **Type:** string
+- **Values:** `auto`, `bump`, `replace`, `update-lockfile`, `widen`, `pin`, `in-range-only`
+
+### `rules[].schedule`
+
+Schedule (cron triggers and time windows, like the top-level schedule) overriding the top-level schedule; [] means every run.
+
+- **Type:** list of strings
+
+### `rules[].additionalBranchPrefix`
+
+Overrides the top-level additionalBranchPrefix for matching deps (with updateTypes: for updates of those types); an empty string removes it.
+
+- **Type:** string
+
+See [`additionalBranchPrefix`](#additionalbranchprefix).
+
+### `rules[].minimumReleaseAge`
+
+Minimum release age overriding the top-level minimumReleaseAge, e.g. `7 days`; `0` or `0 days` disables it for matching deps.
+
+- **Type:** string
+
+### `rules[].minimumReleaseAgeBehaviour`
+
+Overrides the top-level minimumReleaseAgeBehaviour for matching deps (with updateTypes: for candidates of those types).
+
+- **Type:** string
+- **Values:** `timestamp-optional`, `timestamp-required`
+
+### `rules[].abandonmentThreshold`
+
+Overrides the top-level abandonmentThreshold for matching deps, e.g. `2 years`; `0` turns the check off for them.
+
+- **Type:** string
+
+### `rules[].separateMajorMinor`
+
+Overrides the top-level separateMajorMinor for matching deps (with updateTypes: for candidates of those types).
+
+- **Type:** boolean
+
+See the bucket table under [`separateMajorMinor`](#separatemajorminor).
+
+### `rules[].separateMultipleMajor`
+
+Overrides the top-level separateMultipleMajor for matching deps (with updateTypes: for candidates of those types).
+
+- **Type:** boolean
+
+### `rules[].separateMinorPatch`
+
+Overrides the top-level separateMinorPatch for matching deps (with updateTypes: for candidates of those types).
+
+- **Type:** boolean
+
+### `rules[].automerge`
+
+Overrides the top-level automerge for matching deps (with updateTypes: for updates of those types). A PR is automerged only when all of its updates are.
+
+- **Type:** boolean
+
+### `rules[].automergeStrategy`
+
+Overrides the top-level automergeStrategy for matching deps; a PR uses the strategy of its first update.
+
+- **Type:** string
+- **Values:** `auto`, `merge`, `squash`, `rebase`
+
+### `rules[].automergeType`
+
+Overrides the top-level automergeType for matching deps; a group merges its branch only when all of its updates use branch.
+
+- **Type:** string
+- **Values:** `pr`, `branch`
+
+### `rules[].draftPR`
+
+Overrides the top-level draftPR for matching deps (with updateTypes: for updates of those types). A group's PR is a draft when any of its updates asks for one.
+
+- **Type:** boolean
+
+### `rules[].prCreation`
+
+Overrides the top-level prCreation for matching deps; a group waits as long as the most waiting of its updates asks (approval over status-success over not-pending over immediate).
+
+- **Type:** string
+- **Values:** `immediate`, `not-pending`, `status-success`, `approval`
+
+### `rules[].labels`
+
+Replaces the labels of new PRs of matching deps; [] removes them. A group's PR gets the labels of all its updates.
+
+- **Type:** list of strings
+
+### `rules[].reviewers`
+
+Replaces the reviewers of new PRs of matching deps (user names or team:\<slug>); [] removes them. A group's PR requests the reviewers of all its updates.
+
+- **Type:** list of strings
+
+### `rules[].assignees`
+
+Replaces the assignees of new PRs of matching deps; [] removes them. A group's PR gets the assignees of all its updates.
+
+- **Type:** list of strings
+
+### `rules[].prTitle`
+
+Overrides the top-level prTitle for matching deps (with updateTypes: for updates of those types); empty string means the built-in titles. A group's PR uses its first update's templates.
+
+- **Type:** string
+
+Overrides the top-level [`prTitle`](#prtitle) for matching deps; `''` restores the built-in titles. `rules[].prHeader` and `rules[].prFooter` work the same, with `''` for none. With `updateTypes` the override applies to updates of those types, so majors can get their own title.
+
+### `rules[].prHeader`
+
+Overrides the top-level prHeader for matching deps; empty string means none.
+
+- **Type:** string
+
+### `rules[].prFooter`
+
+Overrides the top-level prFooter for matching deps; empty string means none.
+
+- **Type:** string
+
+### `rules[].dashboardApproval`
+
+Overrides the top-level dashboardApproval for matching deps (with updateTypes: for updates of those types). A PR needs approval when any of its updates does.
+
+- **Type:** boolean
+
 ### `rules[].allow`
 
 New versions must satisfy this Masterminds semver constraint (e.g. `< 7`), or match Renovate's regex form `/<RE2>/` (e.g. `/^\d+\.\d+$/`; `!/<RE2>/` rejects matches; flag i allowed) against the version as written.
@@ -1303,13 +1440,6 @@ Update types allowed for matching deps; replaces the earlier list (all five type
 - **Values:** `major`, `minor`, `patch`, `digest`, `pin`
 
 When no rule sets it, all five update types are allowed, except `major` for [travis](managers.md#travis) deps (Renovate disables their major updates: a `node_js` list is a test matrix); a rule such as `{managers: [travis], allowedUpdateTypes: [major, minor, patch]}` allows them. A later matching rule replaces the list; `[]` allows none (security updates still apply).
-
-### `rules[].rangeStrategy`
-
-Range strategy for matching npm, deno, cargo, Python, Swift, bundler, Elm, composer, julia, NuGet, Maven, sbt and terraform deps, Gradle dynamic versions, GitHub Actions setup input ranges and Rust toolchain channels (see the top-level rangeStrategy). Cannot be combined with updateTypes.
-
-- **Type:** string
-- **Values:** `auto`, `bump`, `replace`, `update-lockfile`, `widen`, `pin`, `in-range-only`
 
 ### `rules[].versioning`
 
@@ -1385,26 +1515,6 @@ Prefix of the dep name that replacementName replaces, for moves of many names at
 
 - **Type:** string
 
-### `rules[].separateMajorMinor`
-
-Overrides the top-level separateMajorMinor for matching deps (with updateTypes: for candidates of those types).
-
-- **Type:** boolean
-
-See the bucket table under [`separateMajorMinor`](#separatemajorminor).
-
-### `rules[].separateMultipleMajor`
-
-Overrides the top-level separateMultipleMajor for matching deps (with updateTypes: for candidates of those types).
-
-- **Type:** boolean
-
-### `rules[].separateMinorPatch`
-
-Overrides the top-level separateMinorPatch for matching deps (with updateTypes: for candidates of those types).
-
-- **Type:** boolean
-
 ### `rules[].group`
 
 Group name: all deps with the same group share one PR.
@@ -1454,121 +1564,11 @@ Conventional commit scope; default deps, empty string means no scope (`chore: ..
 
 Must match `^[A-Za-z0-9][A-Za-z0-9._/-]*$`. In groups the first member's scope is used.
 
-### `rules[].schedule`
-
-Schedule (cron triggers and time windows, like the top-level schedule) overriding the top-level schedule; [] means every run.
-
-- **Type:** list of strings
-
-### `rules[].additionalBranchPrefix`
-
-Overrides the top-level additionalBranchPrefix for matching deps (with updateTypes: for updates of those types); an empty string removes it.
-
-- **Type:** string
-
-See [`additionalBranchPrefix`](#additionalbranchprefix).
-
-### `rules[].minimumReleaseAge`
-
-Minimum release age overriding the top-level minimumReleaseAge, e.g. `7 days`; `0` or `0 days` disables it for matching deps.
-
-- **Type:** string
-
-### `rules[].minimumReleaseAgeBehaviour`
-
-Overrides the top-level minimumReleaseAgeBehaviour for matching deps (with updateTypes: for candidates of those types).
-
-- **Type:** string
-- **Values:** `timestamp-optional`, `timestamp-required`
-
-### `rules[].abandonmentThreshold`
-
-Overrides the top-level abandonmentThreshold for matching deps, e.g. `2 years`; `0` turns the check off for them.
-
-- **Type:** string
-
-### `rules[].automerge`
-
-Overrides the top-level automerge for matching deps (with updateTypes: for updates of those types). A PR is automerged only when all of its updates are.
-
-- **Type:** boolean
-
-### `rules[].automergeStrategy`
-
-Overrides the top-level automergeStrategy for matching deps; a PR uses the strategy of its first update.
-
-- **Type:** string
-- **Values:** `auto`, `merge`, `squash`, `rebase`
-
-### `rules[].automergeType`
-
-Overrides the top-level automergeType for matching deps; a group merges its branch only when all of its updates use branch.
-
-- **Type:** string
-- **Values:** `pr`, `branch`
-
-### `rules[].dashboardApproval`
-
-Overrides the top-level dashboardApproval for matching deps (with updateTypes: for updates of those types). A PR needs approval when any of its updates does.
-
-- **Type:** boolean
-
-### `rules[].draftPR`
-
-Overrides the top-level draftPR for matching deps (with updateTypes: for updates of those types). A group's PR is a draft when any of its updates asks for one.
-
-- **Type:** boolean
-
-### `rules[].prCreation`
-
-Overrides the top-level prCreation for matching deps; a group waits as long as the most waiting of its updates asks (approval over status-success over not-pending over immediate).
-
-- **Type:** string
-- **Values:** `immediate`, `not-pending`, `status-success`, `approval`
-
-### `rules[].labels`
-
-Replaces the labels of new PRs of matching deps; [] removes them. A group's PR gets the labels of all its updates.
-
-- **Type:** list of strings
-
 ### `rules[].addLabels`
 
 Labels added to those of earlier rules and the top level for new PRs of matching deps.
 
 - **Type:** list of strings
-
-### `rules[].reviewers`
-
-Replaces the reviewers of new PRs of matching deps (user names or team:\<slug>); [] removes them. A group's PR requests the reviewers of all its updates.
-
-- **Type:** list of strings
-
-### `rules[].assignees`
-
-Replaces the assignees of new PRs of matching deps; [] removes them. A group's PR gets the assignees of all its updates.
-
-- **Type:** list of strings
-
-### `rules[].prTitle`
-
-Overrides the top-level prTitle for matching deps (with updateTypes: for updates of those types); empty string means the built-in titles. A group's PR uses its first update's templates.
-
-- **Type:** string
-
-Overrides the top-level [`prTitle`](#prtitle) for matching deps; `''` restores the built-in titles. `rules[].prHeader` and `rules[].prFooter` work the same, with `''` for none. With `updateTypes` the override applies to updates of those types, so majors can get their own title.
-
-### `rules[].prHeader`
-
-Overrides the top-level prHeader for matching deps; empty string means none.
-
-- **Type:** string
-
-### `rules[].prFooter`
-
-Overrides the top-level prFooter for matching deps; empty string means none.
-
-- **Type:** string
 
 ### `rules[].postUpgradeTasks`
 

@@ -234,7 +234,7 @@ func datasourceEnum(t *testing.T, name string, n *schemaNode) *schemaNode {
 // TestConfigTagsHaveNoValueLists checks that no jsonschema tag of the config types repeats a
 // list of allowed values: addEnums takes them from config's lists.
 func TestConfigTagsHaveNoValueLists(t *testing.T) {
-	for _, typ := range []reflect.Type{reflect.TypeFor[config.Config](), reflect.TypeFor[config.Rule](), reflect.TypeFor[config.Custom](),
+	for _, typ := range []reflect.Type{reflect.TypeFor[config.Config](), reflect.TypeFor[config.Settings](), reflect.TypeFor[config.Rule](), reflect.TypeFor[config.Custom](),
 		reflect.TypeFor[config.CustomDatasource](), reflect.TypeFor[config.Checksum](), reflect.TypeFor[config.LockFileMaintenance](),
 		reflect.TypeFor[config.Actions](), reflect.TypeFor[config.Terraform]()} {
 		for f := range typ.Fields() {

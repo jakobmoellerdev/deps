@@ -217,17 +217,12 @@ var DefaultIgnorePaths = []string{
 
 // Config is the parsed .deps.yaml.
 type Config struct {
-	Version       int      `yaml:"version" jsonschema:"default=1" jsonschema_description:"Config format version; must be 1 if set."`
-	Pin           string   `yaml:"pin" jsonschema:"default=keep" jsonschema_description:"Default pin mode for actions and docker: keep the current style, or pin to the digest with the version in a comment."`
-	RangeStrategy string   `yaml:"rangeStrategy" jsonschema:"default=auto" jsonschema_description:"How npm, cargo, Python, bundler and composer dependency ranges, Deno jsr: and npm: specifier ranges, Swift package requirements, Elm package constraints, Julia compat entries, terraform version constraints, Gradle dynamic versions (1.+, [1.0,2.0)), Maven version ranges ([1.0,2.0)), sbt Ivy ranges and sub-revisions ([1.0,2.0[, 1.2.+), NuGet floating versions and intervals (13.*, [1.0,2.0)), GitHub Actions setup input ranges (1.27.x, >=24) and Rust toolchain channels (stable, nightly; only pin moves them) are updated: update-lockfile moves only the lockfile (package-lock.json, Cargo.lock, uv.lock, poetry.lock, pdm.lock, Pipfile.lock, Gemfile.lock, composer.lock, Manifest.toml, Package.resolved, deno.lock, .terraform.lock.hcl, gradle.lockfile) while the range admits the new version (rewriting the range otherwise, 1.+ -> 2.+), replace leaves admitted versions alone and rewrites the range otherwise (~> 5.0 -> ~> 6.2), bump always raises the range (^1.2.3 -> ^1.4.0, >=1.2,<2 -> >=1.5.0,<2, ~> 5.0 -> ~> 5.46; Gradle dynamic versions and ranges without a floor keep update-lockfile), in-range-only raises the range like bump but only to versions it admits, widen leaves admitted versions alone and widens the range to admit others (^1.2.3 -> ^1.2.3 || ^2.0.0, >=1.2,<2 -> >=1.2,<3, cargo 1.2 -> >=1.2, <3, Ruby \"~> 7.1\" -> \">= 7.1\", \"< 9\"), pin writes the exact version (^1.2.3 -> 1.4.0, cargo =1.4.0, Python ==1.4.0, Swift exact: 1.4.0 or .exact(1.4.0), Ruby \"= 1.4.0\", NuGet 1.4.0, Rust toolchain stable -> 1.91.1): a pin update to the locked or newest admitted version, then each newer one (widen and pin are replace for terraform, terragrunt and Gradle; Swift from: is replaced under widen; NuGet ranges widen as replace, and deps reads no packages.lock.json, so update-lockfile proposes no version a NuGet range admits; Maven and sbt ranges are extended under every strategy but pin, sbt sub-revisions never rewritten); auto is Renovate's default per manager: update-lockfile, widen for npm peerDependencies, || ranges, Elm package constraints and julia projects without a Manifest.toml, replace for terraform, terragrunt and gemspec dependencies."`
-	Schedule      []string `yaml:"schedule" jsonschema_description:"When new update PRs are created: cron triggers of the workflow running deps (minute fixed, e.g. '0 5 * * 1'), matched against the cron that started the run, and time windows evaluated against the run time in timezone: Renovate's text ('before 6am on monday', 'every weekend') or crons with minute * ('* 0-5 * * 1'). Empty means every run."`
-	Timezone      string   `yaml:"timezone" jsonschema_description:"IANA time zone (e.g. Europe/Berlin) of the schedule time windows; default UTC. Cron triggers are unaffected."`
-	Security      *bool    `yaml:"security" jsonschema:"default=true" jsonschema_description:"Look up OSV advisories and propose security updates that bypass allow, allowedUpdateTypes and schedule."`
-	BranchPrefix  string   `yaml:"branchPrefix" jsonschema:"default=deps/" jsonschema_description:"Prefix of update branches (<prefix><additionalBranchPrefix><name>, <prefix><additionalBranchPrefix>group/<group>); must end with '/'. Only branches and PRs under it are managed."`
-	BaseBranches  []string `yaml:"baseBranches" jsonschema_description:"Base branches deps run proposes updates against, each resolved from its own tip: branch names, $default (the repository's default branch) and RE2 regexes '/<RE2>/' (flag i allowed) matching branches on origin. With more than one entry, or a regex, update branches carry their base (<prefix><base>/<name>) and PRs, cleanup and the dashboard are kept per base. Empty means the default branch; run --base overrides it."`
-	// AdditionalBranchPrefix is Renovate's additionalBranchPrefix, a template over
-	// BranchPrefixVars; rules override it.
-	AdditionalBranchPrefix string `yaml:"additionalBranchPrefix" jsonschema_description:"Text between branchPrefix and the branch topic (the dependency name, or group/<group>), as in Renovate. Literal text plus the templates {{manager}}, {{parentDir}} and {{packageFileDir}} of each update's file; updates whose expanded prefix differs never share a PR, so '{{manager}}/' keeps managers apart. Rules override it."`
+	Version      int `yaml:"version" jsonschema:"default=1" jsonschema_description:"Config format version; must be 1 if set."`
+	Settings     `yaml:",inline"`
+	Timezone     string   `yaml:"timezone" jsonschema_description:"IANA time zone (e.g. Europe/Berlin) of the schedule time windows; default UTC. Cron triggers are unaffected."`
+	Security     *bool    `yaml:"security" jsonschema:"default=true" jsonschema_description:"Look up OSV advisories and propose security updates that bypass allow, allowedUpdateTypes and schedule."`
+	BranchPrefix string   `yaml:"branchPrefix" jsonschema:"default=deps/" jsonschema_description:"Prefix of update branches (<prefix><additionalBranchPrefix><name>, <prefix><additionalBranchPrefix>group/<group>); must end with '/'. Only branches and PRs under it are managed."`
+	BaseBranches []string `yaml:"baseBranches" jsonschema_description:"Base branches deps run proposes updates against, each resolved from its own tip: branch names, $default (the repository's default branch) and RE2 regexes '/<RE2>/' (flag i allowed) matching branches on origin. With more than one entry, or a regex, update branches carry their base (<prefix><base>/<name>) and PRs, cleanup and the dashboard are kept per base. Empty means the default branch; run --base overrides it."`
 	// UseBaseBranchConfig is Renovate's useBaseBranchConfig.
 	UseBaseBranchConfig string `yaml:"useBaseBranchConfig" jsonschema:"default=none" jsonschema_description:"Config of the base branches run resolves from their own tip (baseBranches, explain --base, preview --base): none (the checkout's config), merge (the config file of the same name on the base branch is merged over the checkout's config as extends merges, the base's keys winning; a base without the file is a config error), merge-if-present (as merge, a base without the file uses the checkout's config). The keys that span the run (baseBranches, useBaseBranchConfig, branchPrefix, the PR limits, git and rebase settings, the dashboard) stay the checkout's."`
 	RebaseWhen          string `yaml:"rebaseWhen" jsonschema:"default=conflicted" jsonschema_description:"When to rebuild an open update PR whose content is unchanged: conflicted (only when not mergeable), behind-base-branch (also when the base branch moved), never (only when its content changes)."`
@@ -248,36 +243,10 @@ type Config struct {
 	GitLabCI               GitLabCI `yaml:"gitlabci" jsonschema_description:"gitlabci manager settings."`
 	// RegistryAliases maps a registry alias as written (a variable such as $CI_REGISTRY) to
 	// the registry it stands for (Renovate's registryAliases).
-	RegistryAliases map[string]string `yaml:"registryAliases" jsonschema_description:"Registry aliases by the prefix written in files, e.g. $CI_REGISTRY or ${REGISTRY}: an image reference '<alias>/<path>[:tag][@digest]' is looked up as '<value>/<path>' while the file keeps the alias. Extended files merge it by key."`
-	// MinimumReleaseAge is a string, not a duration, so "28 days" style values are accepted.
-	MinimumReleaseAge string `yaml:"minimumReleaseAge" jsonschema_description:"Minimum age of a new version before it is proposed, e.g. '3 days', '12h', '90m' or a Go duration; '0' disables. Versions with an unknown release time are allowed unless minimumReleaseAgeBehaviour is timestamp-required; digest refresh, pin and security updates are exempt, except Go pseudo-version digest updates, which have a commit time."`
-	// MinimumReleaseAgeBehaviour decides whether an unknown release time passes
-	// minimumReleaseAge.
-	MinimumReleaseAgeBehaviour string `yaml:"minimumReleaseAgeBehaviour" jsonschema:"default=timestamp-optional" jsonschema_description:"How minimumReleaseAge treats a version whose release time is unknown (the datasource has none, or the lookup failed): timestamp-optional proposes it, timestamp-required holds it back like a too-new version (reported as 'release time unknown'). Renovate's default is timestamp-required."`
-	// AbandonmentThreshold flags deps whose newest release is older than it (Renovate's
-	// abandonmentThreshold); a string like MinimumReleaseAge.
-	AbandonmentThreshold string   `yaml:"abandonmentThreshold" jsonschema_description:"Age of a dependency's newest release after which the dependency dashboard and its PRs flag it as abandoned, e.g. '1 year' or '18 months' (units of minimumReleaseAge, plus months of 30 days and years of 365 days); empty or '0' turns the check off. It costs at most one release time lookup per dep (npm: none when its modified time is old enough)."`
-	IgnorePaths          []string `yaml:"ignorePaths" jsonschema_description:"Case-sensitive doublestar globs (as in Renovate) on slash paths relative to --dir; matching files and directories are not scanned. When the key is absent, the default list (dependency trees, examples and tests) applies; any list (also []) replaces it. Entries may also be /RE2/ regexes."`
-	// Separate* split the candidates of one dep into PR buckets (Renovate's options of the
-	// same names); rules override them.
-	SeparateMajorMinor    *bool  `yaml:"separateMajorMinor" jsonschema:"default=true" jsonschema_description:"Propose the newest major update in its own PR (branch suffix -major), apart from the newest minor/patch update; false proposes only the newest update."`
-	SeparateMultipleMajor *bool  `yaml:"separateMultipleMajor" jsonschema:"default=false" jsonschema_description:"With separateMajorMinor: one PR per newer major version (branch suffix -v<N>, newest release of each major) instead of one for the newest major."`
-	SeparateMinorPatch    *bool  `yaml:"separateMinorPatch" jsonschema:"default=false" jsonschema_description:"With separateMajorMinor: separate PRs for the newest minor (branch suffix -minor) and the newest patch of the current minor (-patch)."`
-	UpdateNotScheduled    *bool  `yaml:"updateNotScheduled" jsonschema:"default=true" jsonschema_description:"Keep updating and rebasing open update PRs outside their schedule; only new PRs wait for the schedule window. false leaves out-of-schedule branches untouched."`
-	Automerge             bool   `yaml:"automerge" jsonschema:"default=false" jsonschema_description:"Request platform auto-merge for update PRs: the forge merges them once required checks pass. Rules override it, e.g. for minor and patch updates only."`
-	AutomergeStrategy     string `yaml:"automergeStrategy" jsonschema:"default=auto" jsonschema_description:"Merge method of automerged PRs: auto (the repository's default merge style), merge, squash or rebase."`
-	AutomergeType         string `yaml:"automergeType" jsonschema:"default=pr" jsonschema_description:"How updates are automerged: pr (platform auto-merge of the PR) or branch (push the branch without a PR and fast-forward the base branch to it once its checks pass; a PR is raised only when they fail)."`
-	DraftPR               bool   `yaml:"draftPR" jsonschema:"default=false" jsonschema_description:"Open new update PRs as drafts (GitHub draft PRs; on Gitea and Forgejo the title starts with WIP:, on GitLab with Draft:). PRs that automerge are never drafts. Rules override it."`
-	PRCreation            string `yaml:"prCreation" jsonschema:"default=immediate" jsonschema_description:"When the PR of a new update branch is opened: immediate (right after the push), not-pending (on a later run, once the branch's checks finished, passed or failed, or prNotPendingHours after its last commit), status-success (once they all passed) or approval (once its checkbox under Pending approval on the dependency dashboard is ticked; requires dependencyDashboard). Until then the branch waits without a PR, listed on the dependency dashboard. Rules override it."`
-	PRNotPendingHours     *int   `yaml:"prNotPendingHours" jsonschema:"minimum=0,default=25" jsonschema_description:"With prCreation not-pending: hours after the last commit of a branch whose checks are still running or absent after which its PR is opened anyway."`
-	// Labels, Reviewers and Assignees are set on new update PRs; rules override them.
-	Labels    []string `yaml:"labels" jsonschema_description:"Labels added to new update PRs (by name; on Gitea and Forgejo they must exist in the repository or its organization). Rules replace them (labels) or add to them (addLabels)."`
-	Reviewers []string `yaml:"reviewers" jsonschema_description:"Reviewers requested on new update PRs: user names, or team:<slug> for a team of the repository's organization (not on GitLab). Rules replace them."`
-	Assignees []string `yaml:"assignees" jsonschema_description:"Users assigned to new update PRs. Rules replace them."`
-	// PRTitle, PRHeader and PRFooter are Go templates over prtemplate.Data; rules override them.
-	PRTitle  string `yaml:"prTitle" jsonschema_description:"Go text/template of PR titles and commit subjects over the fields .Type, .Scope, .Name, .Group, .From, .To, .UpdateType, .Count and .IsSecurity, e.g. '{{.Type}}({{.Scope}}): bump {{.Name}} to {{.To}}'; empty means the built-in titles. Security PRs keep the ' [security]' suffix. Rules override it."`
-	PRHeader string `yaml:"prHeader" jsonschema_description:"Go text/template (the fields of prTitle) rendered at the top of update PR bodies; empty means none. Rules override it."`
-	PRFooter string `yaml:"prFooter" jsonschema_description:"Go text/template (the fields of prTitle) rendered at the end of update PR bodies, above the rebase checkbox; empty means none. Rules override it."`
+	RegistryAliases    map[string]string `yaml:"registryAliases" jsonschema_description:"Registry aliases by the prefix written in files, e.g. $CI_REGISTRY or ${REGISTRY}: an image reference '<alias>/<path>[:tag][@digest]' is looked up as '<value>/<path>' while the file keeps the alias. Extended files merge it by key."`
+	IgnorePaths        []string          `yaml:"ignorePaths" jsonschema_description:"Case-sensitive doublestar globs (as in Renovate) on slash paths relative to --dir; matching files and directories are not scanned. When the key is absent, the default list (dependency trees, examples and tests) applies; any list (also []) replaces it. Entries may also be /RE2/ regexes."`
+	UpdateNotScheduled *bool             `yaml:"updateNotScheduled" jsonschema:"default=true" jsonschema_description:"Keep updating and rebasing open update PRs outside their schedule; only new PRs wait for the schedule window. false leaves out-of-schedule branches untouched."`
+	PRNotPendingHours  *int              `yaml:"prNotPendingHours" jsonschema:"minimum=0,default=25" jsonschema_description:"With prCreation not-pending: hours after the last commit of a branch whose checks are still running or absent after which its PR is opened anyway."`
 	// RebaseLabel and StopUpdatingLabel are PR labels people set (Renovate's options of the
 	// same names).
 	RebaseLabel       string `yaml:"rebaseLabel" jsonschema:"default=rebase" jsonschema_description:"Label that makes the next run rebuild an update PR's branch on the current base, like ticking its rebase checkbox (bypassing the schedule and discarding commits by others); deps removes the label afterwards."`
@@ -286,7 +255,6 @@ type Config struct {
 	DependencyDashboard       bool     `yaml:"dependencyDashboard" jsonschema:"default=false" jsonschema_description:"Maintain a dependency dashboard issue listing pending, blocked and open updates, errors and detected dependencies; its checkboxes make the next run create, recreate or rebase PRs. false leaves an existing dashboard untouched."`
 	DependencyDashboardTitle  string   `yaml:"dependencyDashboardTitle" jsonschema:"default=Dependency Dashboard" jsonschema_description:"Title of the dependency dashboard issue; the issue is found by this exact title."`
 	DependencyDashboardLabels []string `yaml:"dependencyDashboardLabels" jsonschema_description:"Labels set when the dashboard issue is created (by name; on Gitea and Forgejo they must exist in the repository or its organization)."`
-	DashboardApproval         bool     `yaml:"dashboardApproval" jsonschema:"default=false" jsonschema_description:"Create no new PR (or automerge branch) for an update until it is approved on the dependency dashboard: it is listed under Pending approval, and ticking its checkbox makes the next run create it. Security updates need no approval. Rules override it; requires dependencyDashboard."`
 	// Extends names configs of other repositories this file builds on.
 	Extends []string `yaml:"extends" jsonschema_description:"Configs this file builds on, each '<repo>[//<path>][#<ref>]': owner/name of a repository on the same forge (or a git URL: https://, ssh://, file://, user@host:path), the file in it (default .deps.yaml) and a branch, tag or commit (default: its default branch). Their rules come first, so this file's rules override them; this file's other keys replace theirs, custom managers are appended and customDatasources and registryAliases merged by name. Later entries override earlier ones; extended files may extend others, cycles are errors."`
 	Rules   []Rule   `yaml:"rules" jsonschema_description:"Policy rules, evaluated top to bottom; every set field of a matching rule overrides earlier ones."`
@@ -300,19 +268,61 @@ type Config struct {
 	// (Renovate's composerIgnorePlatformReqs); nil = deps' default (composer.Locker).
 	ComposerIgnorePlatformReqs []string `yaml:"composerIgnorePlatformReqs" jsonschema_description:"Platform requirements composer update ignores when it updates composer.lock, each passed as --ignore-platform-req=<req> (php, ext-intl, ext-*, lib-*); [] or null ignores none, so the runner's PHP and extensions must satisfy them. Unset, deps ignores every platform requirement, or only ext-* and lib-* when composer.json sets config.platform.php."`
 
-	path      string         // source path for error messages
-	layers    []layer        // the files of the config (its extends chain, the local file last); nil when not loaded from a file
-	schedule  *schedule.Set  // parsed Schedule
-	loc       *time.Location // parsed Timezone; UTC when unset
-	templates prtemplate.Set // parsed PRTitle, PRHeader and PRFooter
+	path   string         // source path for error messages
+	layers []layer        // the files of the config (its extends chain, the local file last); nil when not loaded from a file
+	loc    *time.Location // parsed Timezone; UTC when unset
 	// lfmSchedule is the parsed LockFileMaintenance.Schedule, or schedule when it is nil.
 	lfmSchedule *schedule.Set
-	minAge      time.Duration // parsed MinimumReleaseAge
-	abandon     time.Duration // parsed AbandonmentThreshold
 	// baseBranches are the parsed BaseBranches; baseBranch is the base branch rules with
 	// baseBranches match against (ForBaseBranch), "" = none.
 	baseBranches []branchPattern
 	baseBranch   string
+}
+
+// Settings are the policy keys of the top level that rules override: the top level sets the
+// defaults of every dep, each matching rule replaces those it sets. Unset is the zero value (a
+// nil pointer or list, an empty string), so a rule's `labels: []` removes the labels and its
+// `prTitle: ""` restores the built-in title; schedule [] means every run. The
+// jsonschema_description tags describe the top-level keys, rule_description the rules[] keys.
+type Settings struct {
+	Pin           string   `yaml:"pin" jsonschema:"default=keep" jsonschema_description:"Default pin mode for actions and docker: keep the current style, or pin to the digest with the version in a comment." rule_description:"Pin mode for matching deps."`
+	RangeStrategy string   `yaml:"rangeStrategy" jsonschema:"default=auto" jsonschema_description:"How npm, cargo, Python, bundler and composer dependency ranges, Deno jsr: and npm: specifier ranges, Swift package requirements, Elm package constraints, Julia compat entries, terraform version constraints, Gradle dynamic versions (1.+, [1.0,2.0)), Maven version ranges ([1.0,2.0)), sbt Ivy ranges and sub-revisions ([1.0,2.0[, 1.2.+), NuGet floating versions and intervals (13.*, [1.0,2.0)), GitHub Actions setup input ranges (1.27.x, >=24) and Rust toolchain channels (stable, nightly; only pin moves them) are updated: update-lockfile moves only the lockfile (package-lock.json, Cargo.lock, uv.lock, poetry.lock, pdm.lock, Pipfile.lock, Gemfile.lock, composer.lock, Manifest.toml, Package.resolved, deno.lock, .terraform.lock.hcl, gradle.lockfile) while the range admits the new version (rewriting the range otherwise, 1.+ -> 2.+), replace leaves admitted versions alone and rewrites the range otherwise (~> 5.0 -> ~> 6.2), bump always raises the range (^1.2.3 -> ^1.4.0, >=1.2,<2 -> >=1.5.0,<2, ~> 5.0 -> ~> 5.46; Gradle dynamic versions and ranges without a floor keep update-lockfile), in-range-only raises the range like bump but only to versions it admits, widen leaves admitted versions alone and widens the range to admit others (^1.2.3 -> ^1.2.3 || ^2.0.0, >=1.2,<2 -> >=1.2,<3, cargo 1.2 -> >=1.2, <3, Ruby \"~> 7.1\" -> \">= 7.1\", \"< 9\"), pin writes the exact version (^1.2.3 -> 1.4.0, cargo =1.4.0, Python ==1.4.0, Swift exact: 1.4.0 or .exact(1.4.0), Ruby \"= 1.4.0\", NuGet 1.4.0, Rust toolchain stable -> 1.91.1): a pin update to the locked or newest admitted version, then each newer one (widen and pin are replace for terraform, terragrunt and Gradle; Swift from: is replaced under widen; NuGet ranges widen as replace, and deps reads no packages.lock.json, so update-lockfile proposes no version a NuGet range admits; Maven and sbt ranges are extended under every strategy but pin, sbt sub-revisions never rewritten); auto is Renovate's default per manager: update-lockfile, widen for npm peerDependencies, || ranges, Elm package constraints and julia projects without a Manifest.toml, replace for terraform, terragrunt and gemspec dependencies." rule_description:"Range strategy for matching npm, deno, cargo, Python, Swift, bundler, Elm, composer, julia, NuGet, Maven, sbt and terraform deps, Gradle dynamic versions, GitHub Actions setup input ranges and Rust toolchain channels (see the top-level rangeStrategy). Cannot be combined with updateTypes."`
+	Schedule      []string `yaml:"schedule" jsonschema_description:"When new update PRs are created: cron triggers of the workflow running deps (minute fixed, e.g. '0 5 * * 1'), matched against the cron that started the run, and time windows evaluated against the run time in timezone: Renovate's text ('before 6am on monday', 'every weekend') or crons with minute * ('* 0-5 * * 1'). Empty means every run." rule_description:"Schedule (cron triggers and time windows, like the top-level schedule) overriding the top-level schedule; [] means every run."`
+	// AdditionalBranchPrefix is Renovate's additionalBranchPrefix, a template over
+	// BranchPrefixVars; rules override it.
+	AdditionalBranchPrefix *string `yaml:"additionalBranchPrefix" jsonschema_description:"Text between branchPrefix and the branch topic (the dependency name, or group/<group>), as in Renovate. Literal text plus the templates {{manager}}, {{parentDir}} and {{packageFileDir}} of each update's file; updates whose expanded prefix differs never share a PR, so '{{manager}}/' keeps managers apart. Rules override it." rule_description:"Overrides the top-level additionalBranchPrefix for matching deps (with updateTypes: for updates of those types); an empty string removes it."`
+	// MinimumReleaseAge is a string, not a duration, so "28 days" style values are accepted.
+	MinimumReleaseAge string `yaml:"minimumReleaseAge" jsonschema_description:"Minimum age of a new version before it is proposed, e.g. '3 days', '12h', '90m' or a Go duration; '0' disables. Versions with an unknown release time are allowed unless minimumReleaseAgeBehaviour is timestamp-required; digest refresh, pin and security updates are exempt, except Go pseudo-version digest updates, which have a commit time." rule_description:"Minimum release age overriding the top-level minimumReleaseAge, e.g. '7 days'; '0' or '0 days' disables it for matching deps."`
+	// MinimumReleaseAgeBehaviour decides whether an unknown release time passes
+	// minimumReleaseAge.
+	MinimumReleaseAgeBehaviour string `yaml:"minimumReleaseAgeBehaviour" jsonschema:"default=timestamp-optional" jsonschema_description:"How minimumReleaseAge treats a version whose release time is unknown (the datasource has none, or the lookup failed): timestamp-optional proposes it, timestamp-required holds it back like a too-new version (reported as 'release time unknown'). Renovate's default is timestamp-required." rule_description:"Overrides the top-level minimumReleaseAgeBehaviour for matching deps (with updateTypes: for candidates of those types)."`
+	// AbandonmentThreshold flags deps whose newest release is older than it (Renovate's
+	// abandonmentThreshold); a string like MinimumReleaseAge.
+	AbandonmentThreshold string `yaml:"abandonmentThreshold" jsonschema_description:"Age of a dependency's newest release after which the dependency dashboard and its PRs flag it as abandoned, e.g. '1 year' or '18 months' (units of minimumReleaseAge, plus months of 30 days and years of 365 days); empty or '0' turns the check off. It costs at most one release time lookup per dep (npm: none when its modified time is old enough)." rule_description:"Overrides the top-level abandonmentThreshold for matching deps, e.g. '2 years'; '0' turns the check off for them."`
+	// Separate* split the candidates of one dep into PR buckets (Renovate's options of the
+	// same names); rules override them.
+	SeparateMajorMinor    *bool  `yaml:"separateMajorMinor" jsonschema:"default=true" jsonschema_description:"Propose the newest major update in its own PR (branch suffix -major), apart from the newest minor/patch update; false proposes only the newest update." rule_description:"Overrides the top-level separateMajorMinor for matching deps (with updateTypes: for candidates of those types)."`
+	SeparateMultipleMajor *bool  `yaml:"separateMultipleMajor" jsonschema:"default=false" jsonschema_description:"With separateMajorMinor: one PR per newer major version (branch suffix -v<N>, newest release of each major) instead of one for the newest major." rule_description:"Overrides the top-level separateMultipleMajor for matching deps (with updateTypes: for candidates of those types)."`
+	SeparateMinorPatch    *bool  `yaml:"separateMinorPatch" jsonschema:"default=false" jsonschema_description:"With separateMajorMinor: separate PRs for the newest minor (branch suffix -minor) and the newest patch of the current minor (-patch)." rule_description:"Overrides the top-level separateMinorPatch for matching deps (with updateTypes: for candidates of those types)."`
+	Automerge             *bool  `yaml:"automerge" jsonschema:"default=false" jsonschema_description:"Request platform auto-merge for update PRs: the forge merges them once required checks pass. Rules override it, e.g. for minor and patch updates only." rule_description:"Overrides the top-level automerge for matching deps (with updateTypes: for updates of those types). A PR is automerged only when all of its updates are."`
+	AutomergeStrategy     string `yaml:"automergeStrategy" jsonschema:"default=auto" jsonschema_description:"Merge method of automerged PRs: auto (the repository's default merge style), merge, squash or rebase." rule_description:"Overrides the top-level automergeStrategy for matching deps; a PR uses the strategy of its first update."`
+	AutomergeType         string `yaml:"automergeType" jsonschema:"default=pr" jsonschema_description:"How updates are automerged: pr (platform auto-merge of the PR) or branch (push the branch without a PR and fast-forward the base branch to it once its checks pass; a PR is raised only when they fail)." rule_description:"Overrides the top-level automergeType for matching deps; a group merges its branch only when all of its updates use branch."`
+	DraftPR               *bool  `yaml:"draftPR" jsonschema:"default=false" jsonschema_description:"Open new update PRs as drafts (GitHub draft PRs; on Gitea and Forgejo the title starts with WIP:, on GitLab with Draft:). PRs that automerge are never drafts. Rules override it." rule_description:"Overrides the top-level draftPR for matching deps (with updateTypes: for updates of those types). A group's PR is a draft when any of its updates asks for one."`
+	PRCreation            string `yaml:"prCreation" jsonschema:"default=immediate" jsonschema_description:"When the PR of a new update branch is opened: immediate (right after the push), not-pending (on a later run, once the branch's checks finished, passed or failed, or prNotPendingHours after its last commit), status-success (once they all passed) or approval (once its checkbox under Pending approval on the dependency dashboard is ticked; requires dependencyDashboard). Until then the branch waits without a PR, listed on the dependency dashboard. Rules override it." rule_description:"Overrides the top-level prCreation for matching deps; a group waits as long as the most waiting of its updates asks (approval over status-success over not-pending over immediate)."`
+	// Labels, Reviewers and Assignees are set on new update PRs; rules override them.
+	Labels    []string `yaml:"labels" jsonschema_description:"Labels added to new update PRs (by name; on Gitea and Forgejo they must exist in the repository or its organization). Rules replace them (labels) or add to them (addLabels)." rule_description:"Replaces the labels of new PRs of matching deps; [] removes them. A group's PR gets the labels of all its updates."`
+	Reviewers []string `yaml:"reviewers" jsonschema_description:"Reviewers requested on new update PRs: user names, or team:<slug> for a team of the repository's organization (not on GitLab). Rules replace them." rule_description:"Replaces the reviewers of new PRs of matching deps (user names or team:<slug>); [] removes them. A group's PR requests the reviewers of all its updates."`
+	Assignees []string `yaml:"assignees" jsonschema_description:"Users assigned to new update PRs. Rules replace them." rule_description:"Replaces the assignees of new PRs of matching deps; [] removes them. A group's PR gets the assignees of all its updates."`
+	// PRTitle, PRHeader and PRFooter are Go templates over prtemplate.Data; rules override them.
+	PRTitle           *string `yaml:"prTitle" jsonschema_description:"Go text/template of PR titles and commit subjects over the fields .Type, .Scope, .Name, .Group, .From, .To, .UpdateType, .Count and .IsSecurity, e.g. '{{.Type}}({{.Scope}}): bump {{.Name}} to {{.To}}'; empty means the built-in titles. Security PRs keep the ' [security]' suffix. Rules override it." rule_description:"Overrides the top-level prTitle for matching deps (with updateTypes: for updates of those types); empty string means the built-in titles. A group's PR uses its first update's templates."`
+	PRHeader          *string `yaml:"prHeader" jsonschema_description:"Go text/template (the fields of prTitle) rendered at the top of update PR bodies; empty means none. Rules override it." rule_description:"Overrides the top-level prHeader for matching deps; empty string means none."`
+	PRFooter          *string `yaml:"prFooter" jsonschema_description:"Go text/template (the fields of prTitle) rendered at the end of update PR bodies, above the rebase checkbox; empty means none. Rules override it." rule_description:"Overrides the top-level prFooter for matching deps; empty string means none."`
+	DashboardApproval *bool   `yaml:"dashboardApproval" jsonschema:"default=false" jsonschema_description:"Create no new PR (or automerge branch) for an update until it is approved on the dependency dashboard: it is listed under Pending approval, and ticking its checkbox makes the next run create it. Security updates need no approval. Rules override it; requires dependencyDashboard." rule_description:"Overrides the top-level dashboardApproval for matching deps (with updateTypes: for updates of those types). A PR needs approval when any of its updates does."`
+
+	schedule  *schedule.Set  // parsed Schedule
+	templates prtemplate.Set // parsed PRTitle, PRHeader and PRFooter; members of unset fields are nil
+	minAge    *time.Duration // parsed MinimumReleaseAge; nil = not set
+	abandon   *time.Duration // parsed AbandonmentThreshold; nil = not set
 }
 
 // NotPendingHours returns prNotPendingHours (default DefaultPRNotPendingHours).
@@ -357,51 +367,77 @@ func (c *Config) StopUpdatingLabelName() string {
 	return cmp.Or(c.StopUpdatingLabel, DefaultStopUpdatingLabel)
 }
 
-// validateAutomerge checks automergeStrategy and automergeType of the top level (f "") or
-// a rule (f "rules[i].").
-func validateAutomerge(f, strategy, typ string, add addFunc) {
-	if strategy != "" && !slices.Contains(AutomergeStrategies, strategy) {
-		add(f+"automergeStrategy", "%s", oneOf("automergeStrategy", AutomergeStrategies, strategy))
-	}
-	if typ != "" && !slices.Contains(AutomergeTypes, typ) {
-		add(f+"automergeType", "%s", oneOf("automergeType", AutomergeTypes, typ))
-	}
-}
-
-// validatePRCreation checks prCreation of the top level (f "") or a rule (f "rules[i].").
-func validatePRCreation(f, v string, add addFunc) {
-	if v != "" && !slices.Contains(PRCreations, v) {
-		add(f+"prCreation", "%s", oneOf("prCreation", PRCreations, v))
-	}
-}
-
 // TeamPrefix marks a team reviewer: team:<slug>.
 const TeamPrefix = "team:"
 
 // userRe matches forge user and team names.
 var userRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
-// validatePRMeta checks labels, addLabels, reviewers and assignees of the top level (f "")
-// or a rule (f "rules[i].").
-func validatePRMeta(f string, labels, addLabels, reviewers, assignees []string, add addFunc) {
-	for _, key := range []struct {
-		name string
-		ls   []string
-	}{{"labels", labels}, {"addLabels", addLabels}} {
-		for i, l := range key.ls {
-			if strings.TrimSpace(l) == "" || strings.Contains(l, ",") {
-				add(fmt.Sprintf("%s%s[%d]", f, key.name, i), "must be a non-blank label name without ',', got %q", l)
-			}
+// validateSettings checks the settings of the top level (f "") or of a rule (f "rules[i].") and
+// parses their ages, templates and schedule (in the time zone of c).
+func (s *Settings) validateSettings(f string, c *Config, add addFunc) {
+	for _, e := range []struct {
+		key, v string
+		vals   []string
+	}{
+		{"pin", s.Pin, Pins}, {"rangeStrategy", s.RangeStrategy, RangeStrategies},
+		{"minimumReleaseAgeBehaviour", s.MinimumReleaseAgeBehaviour, MinimumReleaseAgeBehaviours},
+		{"automergeStrategy", s.AutomergeStrategy, AutomergeStrategies}, {"automergeType", s.AutomergeType, AutomergeTypes},
+		{"prCreation", s.PRCreation, PRCreations},
+	} {
+		if e.v != "" && !slices.Contains(e.vals, e.v) {
+			add(f+e.key, "%s", oneOf(e.key, e.vals, e.v))
 		}
 	}
-	for i, r := range reviewers {
+	if s.AdditionalBranchPrefix != nil {
+		if msg := CheckAdditionalBranchPrefix(*s.AdditionalBranchPrefix); msg != "" {
+			add(f+"additionalBranchPrefix", "%s, got %q", msg, *s.AdditionalBranchPrefix)
+		}
+	}
+	s.minAge = parseAgeKey(f+"minimumReleaseAge", s.MinimumReleaseAge, ParseAge, add)
+	s.abandon = parseAgeKey(f+"abandonmentThreshold", s.AbandonmentThreshold, parseLongAge, add)
+	s.schedule = c.parseSchedule(f+"schedule", s.Schedule, add)
+	s.templates = parseTemplates(f, s.PRTitle, s.PRHeader, s.PRFooter, add)
+	validateLabels(f+"labels", s.Labels, add)
+	for i, r := range s.Reviewers {
 		if !userRe.MatchString(strings.TrimPrefix(r, TeamPrefix)) {
 			add(fmt.Sprintf("%sreviewers[%d]", f, i), "must be a user name or team:<slug>, got %q", r)
 		}
 	}
-	for i, a := range assignees {
+	for i, a := range s.Assignees {
 		if !userRe.MatchString(a) {
 			add(fmt.Sprintf("%sassignees[%d]", f, i), "must be a user name, got %q", a)
+		}
+	}
+	// Approval happens on the dashboard: without it, updates needing approval never get a PR.
+	if !c.DependencyDashboard {
+		if s.DashboardApproval != nil && *s.DashboardApproval {
+			add(f+"dashboardApproval", "requires dependencyDashboard: true")
+		}
+		if s.PRCreation == PRCreationApproval {
+			add(f+"prCreation", "approval requires dependencyDashboard: true")
+		}
+	}
+}
+
+// parseAgeKey parses the age v of field with parse; nil when v is empty or invalid.
+func parseAgeKey(field, v string, parse func(string) (time.Duration, error), add addFunc) *time.Duration {
+	if v == "" {
+		return nil
+	}
+	d, err := parse(v)
+	if err != nil {
+		add(field, "%v", err)
+		return nil
+	}
+	return &d
+}
+
+// validateLabels checks the label names ls of field.
+func validateLabels(field string, ls []string, add addFunc) {
+	for i, l := range ls {
+		if strings.TrimSpace(l) == "" || strings.Contains(l, ",") {
+			add(fmt.Sprintf("%s[%d]", field, i), "must be a non-blank label name without ',', got %q", l)
 		}
 	}
 }
@@ -472,6 +508,19 @@ type Terraform struct {
 	DefaultRegistry string `yaml:"defaultRegistry" jsonschema_description:"Registry host of provider and module addresses without one in *.tf files, e.g. registry.opentofu.org; empty means registry.terraform.io. *.tofu files default to registry.opentofu.org unless this is set."`
 }
 
+// PrePolicyKeys are the rules[] keys deps decides before the type of an update is known, so
+// a rule with updateTypes cannot set them.
+var PrePolicyKeys = []string{"pin", "rangeStrategy", "versioning", "extractVersion", "registryUrls", "replacementName", "replacementVersion", "replacementPrefix"}
+
+// prePolicyDecided is what deps decides with each pre-policy key, for the message of a rule
+// with updateTypes that sets it; replacementVersion and replacementPrefix have none, as they
+// require replacementName.
+var prePolicyDecided = map[string]string{
+	"pin": "the pin mode is decided", "rangeStrategy": "the range strategy is decided",
+	"versioning": "the versioning scheme is decided", "extractVersion": "release names are mapped",
+	"registryUrls": "the registry is decided", "replacementName": "the replacement is decided",
+}
+
 // Rule overrides the policy for matching deps. Its fields are in two groups: the match fields
 // (Managers through UpdateTypes) select the deps and updates the rule applies to, every set
 // one must match (unset ones match everything); the apply fields (the rest) override the
@@ -492,12 +541,12 @@ type Rule struct {
 	UpdateTypes    []string `yaml:"updateTypes" jsonschema_description:"Only match candidate updates of these types: the rule applies once the type of an update is known (e.g. group minor and patch updates, ignore majors). Cannot set pin."`
 
 	// Apply fields.
-	Ignore *bool  `yaml:"ignore" jsonschema_description:"Do not update matching deps; false opts indirect Go requirements, pip-compile pins and Elm indirect dependencies, go directives, npm peerDependencies and engines, actions pinned to a bare SHA no tag points at (digest updates to the default branch), git submodules and Azure Pipelines tasks in. With updateTypes: reject updates of these types."`
-	Pin    string `yaml:"pin" jsonschema_description:"Pin mode for matching deps."`
-	Allow  string `yaml:"allow" jsonschema_description:"New versions must satisfy this Masterminds semver constraint (e.g. '< 7'), or match Renovate's regex form '/<RE2>/' (e.g. '/^\\d+\\.\\d+$/'; '!/<RE2>/' rejects matches; flag i allowed) against the version as written."`
+	Ignore *bool `yaml:"ignore" jsonschema_description:"Do not update matching deps; false opts indirect Go requirements, pip-compile pins and Elm indirect dependencies, go directives, npm peerDependencies and engines, actions pinned to a bare SHA no tag points at (digest updates to the default branch), git submodules and Azure Pipelines tasks in. With updateTypes: reject updates of these types."`
+	// Settings override the top-level ones for matching deps.
+	Settings `yaml:",inline" jsonschema_variant:"rule"`
+	Allow    string `yaml:"allow" jsonschema_description:"New versions must satisfy this Masterminds semver constraint (e.g. '< 7'), or match Renovate's regex form '/<RE2>/' (e.g. '/^\\d+\\.\\d+$/'; '!/<RE2>/' rejects matches; flag i allowed) against the version as written."`
 	// AllowedUpdateTypes replaces the update types the policy allows; nil keeps them.
 	AllowedUpdateTypes []string `yaml:"allowedUpdateTypes" jsonschema_description:"Update types allowed for matching deps; replaces the earlier list (all five types by default). Replacements are not listed here: they are switched off with ignore (updateTypes: [replacement]) or replacements: false."`
-	RangeStrategy      string   `yaml:"rangeStrategy" jsonschema_description:"Range strategy for matching npm, deno, cargo, Python, Swift, bundler, Elm, composer, julia, NuGet, Maven, sbt and terraform deps, Gradle dynamic versions, GitHub Actions setup input ranges and Rust toolchain channels (see the top-level rangeStrategy). Cannot be combined with updateTypes."`
 	// Versioning overrides the dep's scheme before resolution, so it is a pre-policy field.
 	Versioning string `yaml:"versioning" jsonschema_description:"Versioning scheme overriding the manager's: tag, go, docker, semver, loose, cargo, pep440, hashicorp, maven, ivy, ruby, conda, composer, julia, bazel-module, nuget, rpm, apk, deb, pub, hex, nixpkgs, glasskube, kubernetes-api, or regex:<RE2> with named groups major (required), minor, patch, build, revision, prerelease and compatibility; (?<name>) and (?P<name>) syntax both work. Cannot be combined with updateTypes."`
 	// ExtractVersion replaces the dep's release-name mapping before resolution (pre-policy).
@@ -506,40 +555,14 @@ type Rule struct {
 	RegistryURLs []string `yaml:"registryUrls" jsonschema_description:"Registry URLs replacing those of matching apk, deb and rpm deps (Renovate's packageRules registryUrls), in the datasource's form (custom[].registryUrl): e.g. https://deb.debian.org/debian?suite=trixie&components=main&binaryArch=amd64 for the apt-get install pins of a Dockerfile, which are skipped as unknown registry without one, or another Alpine release for apk add pins. The last matching rule setting it wins; other datasources ignore it. Cannot be combined with updateTypes or currentAge."`
 	// ReplacementName and ReplacementVersion move matching deps to another package (Renovate's
 	// options of the same names); pre-policy fields.
-	ReplacementName    string `yaml:"replacementName" jsonschema_description:"Replace matching deps with this package (image, npm package, owner/repo[/path] action, Go module path, group:artifact, chart or registry address; with replacementPrefix, the new prefix) in one replacement update instead of their usual updates, which run proposes once the replacement's PR is closed. The version is kept unless replacementVersion is set, and the new package must have it (else the dep is skipped with the reason). Supported by the docker, gitlabci, kustomize, helm, terraform (providers, registry modules, images), terragrunt, tflint, maven, gradle, npm, github-actions and gomod managers where the name is written literally (see the managers reference). Overrides earlier rules and the built-in replacements. updates lists do not apply to replacements; select them with updateTypes: [replacement]. Cannot be combined with updateTypes or currentAge."`
-	ReplacementVersion string `yaml:"replacementVersion" jsonschema_description:"Version written with replacementName (the new package's version; an npm range keeps its operator); empty keeps the current version. Requires replacementName."`
-	ReplacementPrefix  string `yaml:"replacementPrefix" jsonschema_description:"Prefix of the dep name that replacementName replaces, for moves of many names at once (Renovate's replacementNameTemplate with replace): with replacementPrefix: k8s.gcr.io/ and replacementName: registry.k8s.io/, k8s.gcr.io/pause becomes registry.k8s.io/pause. Deps whose name does not start with it get no replacement from the rule. Requires replacementName."`
-	// Separate* override the top-level PR bucket options for matching deps.
-	SeparateMajorMinor    *bool    `yaml:"separateMajorMinor" jsonschema_description:"Overrides the top-level separateMajorMinor for matching deps (with updateTypes: for candidates of those types)."`
-	SeparateMultipleMajor *bool    `yaml:"separateMultipleMajor" jsonschema_description:"Overrides the top-level separateMultipleMajor for matching deps (with updateTypes: for candidates of those types)."`
-	SeparateMinorPatch    *bool    `yaml:"separateMinorPatch" jsonschema_description:"Overrides the top-level separateMinorPatch for matching deps (with updateTypes: for candidates of those types)."`
-	Group                 string   `yaml:"group" jsonschema_description:"Group name: all deps with the same group share one PR."`
-	SecurityGroup         string   `yaml:"securityGroup" jsonschema_description:"Group name for the security updates of matching deps: those with the same securityGroup share one PR on <prefix>group/<slug>-security, apart from non-security updates (also of a group with the same name). Without it every security update gets its own PR."`
-	CommitType            string   `yaml:"commitType" jsonschema_description:"Conventional commit type of commit and PR titles; default fix for production deps (gomod direct, npm, cargo, poetry, pub and bundler dependencies, composer require, pep621 project.dependencies, pipenv packages, elm direct and dependencies, julia deps, mix prod, gleam dependencies), chore otherwise. Security updates always use fix."`
-	CommitScope           *string  `yaml:"commitScope" jsonschema_description:"Conventional commit scope; default deps, empty string means no scope ('chore: ...')."`
-	Schedule              []string `yaml:"schedule" jsonschema_description:"Schedule (cron triggers and time windows, like the top-level schedule) overriding the top-level schedule; [] means every run."` // non-nil overrides the top-level schedule; [] = always
-	// AdditionalBranchPrefix overrides the top-level additionalBranchPrefix when set.
-	AdditionalBranchPrefix *string `yaml:"additionalBranchPrefix" jsonschema_description:"Overrides the top-level additionalBranchPrefix for matching deps (with updateTypes: for updates of those types); an empty string removes it."`
-	// MinimumReleaseAge overrides the top-level minimumReleaseAge when set; "0" disables it.
-	MinimumReleaseAge string `yaml:"minimumReleaseAge" jsonschema_description:"Minimum release age overriding the top-level minimumReleaseAge, e.g. '7 days'; '0' or '0 days' disables it for matching deps."`
-	// MinimumReleaseAgeBehaviour overrides the top-level minimumReleaseAgeBehaviour when set.
-	MinimumReleaseAgeBehaviour string `yaml:"minimumReleaseAgeBehaviour" jsonschema_description:"Overrides the top-level minimumReleaseAgeBehaviour for matching deps (with updateTypes: for candidates of those types)."`
-	// AbandonmentThreshold overrides the top-level abandonmentThreshold when set; "0" disables it.
-	AbandonmentThreshold string   `yaml:"abandonmentThreshold" jsonschema_description:"Overrides the top-level abandonmentThreshold for matching deps, e.g. '2 years'; '0' turns the check off for them."`
-	Automerge            *bool    `yaml:"automerge" jsonschema_description:"Overrides the top-level automerge for matching deps (with updateTypes: for updates of those types). A PR is automerged only when all of its updates are."`
-	AutomergeStrategy    string   `yaml:"automergeStrategy" jsonschema_description:"Overrides the top-level automergeStrategy for matching deps; a PR uses the strategy of its first update."`
-	AutomergeType        string   `yaml:"automergeType" jsonschema_description:"Overrides the top-level automergeType for matching deps; a group merges its branch only when all of its updates use branch."`
-	DashboardApproval    *bool    `yaml:"dashboardApproval" jsonschema_description:"Overrides the top-level dashboardApproval for matching deps (with updateTypes: for updates of those types). A PR needs approval when any of its updates does."`
-	DraftPR              *bool    `yaml:"draftPR" jsonschema_description:"Overrides the top-level draftPR for matching deps (with updateTypes: for updates of those types). A group's PR is a draft when any of its updates asks for one."`
-	PRCreation           string   `yaml:"prCreation" jsonschema_description:"Overrides the top-level prCreation for matching deps; a group waits as long as the most waiting of its updates asks (approval over status-success over not-pending over immediate)."`
-	Labels               []string `yaml:"labels" jsonschema_description:"Replaces the labels of new PRs of matching deps; [] removes them. A group's PR gets the labels of all its updates."`
-	AddLabels            []string `yaml:"addLabels" jsonschema_description:"Labels added to those of earlier rules and the top level for new PRs of matching deps."`
-	Reviewers            []string `yaml:"reviewers" jsonschema_description:"Replaces the reviewers of new PRs of matching deps (user names or team:<slug>); [] removes them. A group's PR requests the reviewers of all its updates."`
-	Assignees            []string `yaml:"assignees" jsonschema_description:"Replaces the assignees of new PRs of matching deps; [] removes them. A group's PR gets the assignees of all its updates."`
-	// PRTitle, PRHeader and PRFooter override the top-level templates when set; "" resets them.
-	PRTitle  *string `yaml:"prTitle" jsonschema_description:"Overrides the top-level prTitle for matching deps (with updateTypes: for updates of those types); empty string means the built-in titles. A group's PR uses its first update's templates."`
-	PRHeader *string `yaml:"prHeader" jsonschema_description:"Overrides the top-level prHeader for matching deps; empty string means none."`
-	PRFooter *string `yaml:"prFooter" jsonschema_description:"Overrides the top-level prFooter for matching deps; empty string means none."`
+	ReplacementName    string   `yaml:"replacementName" jsonschema_description:"Replace matching deps with this package (image, npm package, owner/repo[/path] action, Go module path, group:artifact, chart or registry address; with replacementPrefix, the new prefix) in one replacement update instead of their usual updates, which run proposes once the replacement's PR is closed. The version is kept unless replacementVersion is set, and the new package must have it (else the dep is skipped with the reason). Supported by the docker, gitlabci, kustomize, helm, terraform (providers, registry modules, images), terragrunt, tflint, maven, gradle, npm, github-actions and gomod managers where the name is written literally (see the managers reference). Overrides earlier rules and the built-in replacements. updates lists do not apply to replacements; select them with updateTypes: [replacement]. Cannot be combined with updateTypes or currentAge."`
+	ReplacementVersion string   `yaml:"replacementVersion" jsonschema_description:"Version written with replacementName (the new package's version; an npm range keeps its operator); empty keeps the current version. Requires replacementName."`
+	ReplacementPrefix  string   `yaml:"replacementPrefix" jsonschema_description:"Prefix of the dep name that replacementName replaces, for moves of many names at once (Renovate's replacementNameTemplate with replace): with replacementPrefix: k8s.gcr.io/ and replacementName: registry.k8s.io/, k8s.gcr.io/pause becomes registry.k8s.io/pause. Deps whose name does not start with it get no replacement from the rule. Requires replacementName."`
+	Group              string   `yaml:"group" jsonschema_description:"Group name: all deps with the same group share one PR."`
+	SecurityGroup      string   `yaml:"securityGroup" jsonschema_description:"Group name for the security updates of matching deps: those with the same securityGroup share one PR on <prefix>group/<slug>-security, apart from non-security updates (also of a group with the same name). Without it every security update gets its own PR."`
+	CommitType         string   `yaml:"commitType" jsonschema_description:"Conventional commit type of commit and PR titles; default fix for production deps (gomod direct, npm, cargo, poetry, pub and bundler dependencies, composer require, pep621 project.dependencies, pipenv packages, elm direct and dependencies, julia deps, mix prod, gleam dependencies), chore otherwise. Security updates always use fix."`
+	CommitScope        *string  `yaml:"commitScope" jsonschema_description:"Conventional commit scope; default deps, empty string means no scope ('chore: ...')."`
+	AddLabels          []string `yaml:"addLabels" jsonschema_description:"Labels added to those of earlier rules and the top level for new PRs of matching deps."`
 	// PostUpgradeTasks of the last matching rule setting it run after the update is built.
 	PostUpgradeTasks *PostUpgradeTasks `yaml:"postUpgradeTasks" jsonschema_description:"Shell commands run in the repository after the update is built (apply, run with --allow-tasks), e.g. go generate ./...: a list (once per branch) or {commands, executionMode}. The files they change, apart from .gitignored ones, join the commit. The last matching rule setting it wins; [] clears."`
 
@@ -551,11 +574,7 @@ type Rule struct {
 	allowedUpdateTypes map[dep.UpdateType]bool // set of AllowedUpdateTypes; nil = not set
 	currentVersion     *Allowed                // parsed CurrentVersion; nil = not set
 	currentAge         *ageRange               // parsed CurrentAge; nil = not set
-	schedule           *schedule.Set
-	templates          prtemplate.Set // parsed PRTitle, PRHeader and PRFooter; members of unset fields are nil
-	minAge             *time.Duration // parsed MinimumReleaseAge; nil = not set
-	abandon            *time.Duration // parsed AbandonmentThreshold; nil = not set
-	names, paths       *pattern.List  // compiled Names and Paths
+	names, paths       *pattern.List           // compiled Names and Paths
 }
 
 // Source returns the file a loaded rule is written in (the config file's path relative to
@@ -988,20 +1007,20 @@ func (c *Config) validate() []*Problem {
 	if c.Version != 0 && c.Version != FormatVersion {
 		add("version", "must be %d, got %d", FormatVersion, c.Version)
 	}
-	if c.Pin != "" && !slices.Contains(Pins, c.Pin) {
-		add("pin", "%s", oneOf("pin", Pins, c.Pin))
-	}
-	if c.RangeStrategy != "" && !slices.Contains(RangeStrategies, c.RangeStrategy) {
-		add("rangeStrategy", "%s", oneOf("rangeStrategy", RangeStrategies, c.RangeStrategy))
-	}
 	if c.BranchPrefix != "" {
 		if msg := checkBranchPrefix(c.BranchPrefix); msg != "" {
 			add("branchPrefix", "%s, got %q", msg, c.BranchPrefix)
 		}
 	}
-	if msg := CheckAdditionalBranchPrefix(c.AdditionalBranchPrefix); msg != "" {
-		add("additionalBranchPrefix", "%s, got %q", msg, c.AdditionalBranchPrefix)
+	c.loc = time.UTC
+	if c.Timezone != "" {
+		if loc, err := loadTimezone(c.Timezone); err != nil {
+			add("timezone", "%v", err)
+		} else {
+			c.loc = loc
+		}
 	}
+	c.validateSettings("", c, add)
 	c.baseBranches = parseBranchPatterns("baseBranches", c.BaseBranches, false, true, add)
 	if c.UseBaseBranchConfig != "" && !slices.Contains(BaseConfigs, c.UseBaseBranchConfig) {
 		add("useBaseBranchConfig", "%s", oneOf("useBaseBranchConfig", BaseConfigs, c.UseBaseBranchConfig))
@@ -1036,18 +1055,10 @@ func (c *Config) validate() []*Problem {
 	if c.PlatformCommit != "" && !slices.Contains(PlatformCommits, c.PlatformCommit) {
 		add("platformCommit", "%s", oneOf("platformCommit", PlatformCommits, c.PlatformCommit))
 	}
-	validateAutomerge("", c.AutomergeStrategy, c.AutomergeType, add)
-	validatePRCreation("", c.PRCreation, add)
 	if c.DependencyDashboardTitle != "" && (strings.TrimSpace(c.DependencyDashboardTitle) == "" || strings.ContainsAny(c.DependencyDashboardTitle, "\r\n")) {
 		add("dependencyDashboardTitle", "must be a non-blank single line, got %q", c.DependencyDashboardTitle)
 	}
-	validatePRMeta("", c.Labels, nil, c.Reviewers, c.Assignees, add)
-	c.templates = parseTemplates("", &c.PRTitle, &c.PRHeader, &c.PRFooter, add)
-	for i, l := range c.DependencyDashboardLabels {
-		if strings.TrimSpace(l) == "" || strings.Contains(l, ",") {
-			add(fmt.Sprintf("dependencyDashboardLabels[%d]", i), "must be a non-blank label name without ',', got %q", l)
-		}
-	}
+	validateLabels("dependencyDashboardLabels", c.DependencyDashboardLabels, add)
 	for _, l := range []struct{ key, v string }{{"rebaseLabel", c.RebaseLabel}, {"stopUpdatingLabel", c.StopUpdatingLabel}} {
 		if l.v != "" && (strings.TrimSpace(l.v) == "" || strings.Contains(l.v, ",")) {
 			add(l.key, "must be a non-blank label name without ',', got %q", l.v)
@@ -1056,32 +1067,6 @@ func (c *Config) validate() []*Problem {
 	if strings.EqualFold(c.RebaseLabelName(), c.StopUpdatingLabelName()) {
 		add("stopUpdatingLabel", "must differ from rebaseLabel, got %q", c.StopUpdatingLabelName())
 	}
-	c.minAge = 0
-	if c.MinimumReleaseAge != "" {
-		if d, err := ParseAge(c.MinimumReleaseAge); err != nil {
-			add("minimumReleaseAge", "%v", err)
-		} else {
-			c.minAge = d
-		}
-	}
-	validateAgeBehaviour("", c.MinimumReleaseAgeBehaviour, add)
-	c.loc = time.UTC
-	if c.Timezone != "" {
-		if loc, err := loadTimezone(c.Timezone); err != nil {
-			add("timezone", "%v", err)
-		} else {
-			c.loc = loc
-		}
-	}
-	c.abandon = 0
-	if c.AbandonmentThreshold != "" {
-		if d, err := parseLongAge(c.AbandonmentThreshold); err != nil {
-			add("abandonmentThreshold", "%v", err)
-		} else {
-			c.abandon = d
-		}
-	}
-	c.schedule = c.parseSchedule("schedule", c.Schedule, add)
 	c.lfmSchedule = c.schedule
 	if c.LockFileMaintenance.Schedule != nil {
 		c.lfmSchedule = c.parseSchedule("lockFileMaintenance.schedule", c.LockFileMaintenance.Schedule, add)
@@ -1095,23 +1080,6 @@ func (c *Config) validate() []*Problem {
 	}
 	for i := range c.Rules {
 		c.validateRule(i, add)
-	}
-	// Approval happens on the dashboard: without it, updates needing approval never get a PR.
-	if !c.DependencyDashboard {
-		if c.DashboardApproval {
-			add("dashboardApproval", "requires dependencyDashboard: true")
-		}
-		if c.PRCreation == PRCreationApproval {
-			add("prCreation", "approval requires dependencyDashboard: true")
-		}
-		for i, r := range c.Rules {
-			if r.DashboardApproval != nil && *r.DashboardApproval {
-				add(fmt.Sprintf("rules[%d].dashboardApproval", i), "requires dependencyDashboard: true")
-			}
-			if r.PRCreation == PRCreationApproval {
-				add(fmt.Sprintf("rules[%d].prCreation", i), "approval requires dependencyDashboard: true")
-			}
-		}
 	}
 	for i := range c.Custom {
 		c.Custom[i].validate(fmt.Sprintf("custom[%d]", i), c, add)
@@ -1216,18 +1184,6 @@ func (c *Config) validateRule(i int, add addFunc) {
 			add(fmt.Sprintf("%s.updateTypes[%d]", f, j), "%s", oneOf("rules[].updateTypes", UpdateTypeSelectors, u))
 		}
 	}
-	if len(r.UpdateTypes) > 0 && r.Pin != "" {
-		add(f+".pin", "cannot be combined with updateTypes: the pin mode is decided before the update type is known")
-	}
-	if r.Pin != "" && !slices.Contains(Pins, r.Pin) {
-		add(f+".pin", "%s", oneOf("rules[].pin", Pins, r.Pin))
-	}
-	if r.RangeStrategy != "" && !slices.Contains(RangeStrategies, r.RangeStrategy) {
-		add(f+".rangeStrategy", "%s", oneOf("rules[].rangeStrategy", RangeStrategies, r.RangeStrategy))
-	}
-	if len(r.UpdateTypes) > 0 && r.RangeStrategy != "" {
-		add(f+".rangeStrategy", "cannot be combined with updateTypes: the range strategy is decided before the update type is known")
-	}
 	r.allowedUpdateTypes = nil
 	if r.AllowedUpdateTypes != nil {
 		r.allowedUpdateTypes = updateSet(r.AllowedUpdateTypes)
@@ -1245,24 +1201,24 @@ func (c *Config) validateRule(i int, add addFunc) {
 		if _, err := versioning.Parse(r.Versioning); err != nil {
 			add(f+".versioning", "%v%s", err, versioningHint(r.Versioning))
 		}
-		if len(r.UpdateTypes) > 0 {
-			add(f+".versioning", "cannot be combined with updateTypes: the versioning scheme is decided before the update type is known")
-		}
 	}
 	if r.ExtractVersion != "" {
 		if _, err := versioning.CompileExtract(r.ExtractVersion); err != nil {
 			add(f+".extractVersion", "%v", err)
 		}
-		if len(r.UpdateTypes) > 0 {
-			add(f+".extractVersion", "cannot be combined with updateTypes: release names are mapped before the update type is known")
+	}
+	if len(r.UpdateTypes) > 0 {
+		for _, k := range PrePolicyKeys {
+			if what := prePolicyDecided[k]; what != "" && r.sets(k) {
+				add(f+"."+k, "cannot be combined with updateTypes: %s before the update type is known", what)
+			}
 		}
 	}
 	if r.RegistryURLs != nil {
 		switch {
 		case len(r.RegistryURLs) == 0:
 			add(f+".registryUrls", "must not be empty")
-		case len(r.UpdateTypes) > 0:
-			add(f+".registryUrls", "cannot be combined with updateTypes: the registry is decided before the update type is known")
+		case len(r.UpdateTypes) > 0: // a pre-policy key, reported above
 		case r.CurrentAge != "":
 			add(f+".registryUrls", "cannot be combined with currentAge: the registry is decided before the age of the current version is known")
 		case len(r.Datasources) > 0 && !slices.ContainsFunc(r.Datasources, func(ds string) bool { return slices.Contains(RegistryURLDatasources, CanonicalDatasource(ds)) }):
@@ -1274,10 +1230,7 @@ func (c *Config) validateRule(i int, add addFunc) {
 			}
 		}
 	}
-	switch {
-	case r.ReplacementName != "" && len(r.UpdateTypes) > 0:
-		add(f+".replacementName", "cannot be combined with updateTypes: the replacement is decided before the update type is known")
-	case r.ReplacementName != "" && r.CurrentAge != "":
+	if r.ReplacementName != "" && r.CurrentAge != "" && len(r.UpdateTypes) == 0 {
 		add(f+".replacementName", "cannot be combined with currentAge: the replacement is decided before the age of the current version is known")
 	}
 	if r.ReplacementName == "" {
@@ -1299,14 +1252,8 @@ func (c *Config) validateRule(i int, add addFunc) {
 	if r.CommitScope != nil && *r.CommitScope != "" && !commitScopeRe.MatchString(*r.CommitScope) {
 		add(f+".commitScope", "must match %s, got %q", commitScopeRe, *r.CommitScope)
 	}
-	if r.AdditionalBranchPrefix != nil {
-		if msg := CheckAdditionalBranchPrefix(*r.AdditionalBranchPrefix); msg != "" {
-			add(f+".additionalBranchPrefix", "%s, got %q", msg, *r.AdditionalBranchPrefix)
-		}
-	}
-	validateAutomerge(f+".", r.AutomergeStrategy, r.AutomergeType, add)
-	validatePRCreation(f+".", r.PRCreation, add)
-	validatePRMeta(f+".", r.Labels, r.AddLabels, r.Reviewers, r.Assignees, add)
+	r.validateSettings(f+".", c, add)
+	validateLabels(f+".addLabels", r.AddLabels, add)
 	if t := r.PostUpgradeTasks; t != nil {
 		key := f + ".postUpgradeTasks.commands"
 		if t.list {
@@ -1322,25 +1269,6 @@ func (c *Config) validateRule(i int, add addFunc) {
 			add(f+".postUpgradeTasks.executionMode", "%s", oneOf("rules[].postUpgradeTasks.executionMode", ExecutionModes, t.ExecutionMode))
 		}
 	}
-	r.schedule = c.parseSchedule(f+".schedule", r.Schedule, add)
-	r.minAge = nil
-	if r.MinimumReleaseAge != "" {
-		if d, err := ParseAge(r.MinimumReleaseAge); err != nil {
-			add(f+".minimumReleaseAge", "%v", err)
-		} else {
-			r.minAge = &d
-		}
-	}
-	validateAgeBehaviour(f+".", r.MinimumReleaseAgeBehaviour, add)
-	r.abandon = nil
-	if r.AbandonmentThreshold != "" {
-		if d, err := parseLongAge(r.AbandonmentThreshold); err != nil {
-			add(f+".abandonmentThreshold", "%v", err)
-		} else {
-			r.abandon = &d
-		}
-	}
-	r.templates = parseTemplates(f+".", r.PRTitle, r.PRHeader, r.PRFooter, add)
 }
 
 // parseTemplates parses the prTitle, prHeader and prFooter templates of the top level (f "")
@@ -1360,17 +1288,6 @@ func parseTemplates(f string, title, header, footer *string, add addFunc) prtemp
 		Title:  one("prTitle", title, prtemplate.ParseTitle),
 		Header: one("prHeader", header, prtemplate.Parse),
 		Footer: one("prFooter", footer, prtemplate.Parse),
-	}
-}
-
-// PRTemplates returns the parsed top-level prTitle, prHeader and prFooter.
-func (c *Config) PRTemplates() prtemplate.Set { return c.templates }
-
-// validateAgeBehaviour checks minimumReleaseAgeBehaviour of the top level (f "") or a rule
-// (f "rules[i].").
-func validateAgeBehaviour(f, b string, add addFunc) {
-	if b != "" && !slices.Contains(MinimumReleaseAgeBehaviours, b) {
-		add(f+"minimumReleaseAgeBehaviour", "%s", oneOf("minimumReleaseAgeBehaviour", MinimumReleaseAgeBehaviours, b))
 	}
 }
 

@@ -20,15 +20,40 @@ var RuleMatchFields = []string{"managers", "names", "depTypes", "paths", "dataso
 // order.
 var RuleApplyFields = ruleApplyFields()
 
+// ruleFields are the fields of Rule with a yaml key (keyFields).
+var ruleFields = keyFields(reflect.TypeFor[Rule]())
+
 func ruleApplyFields() []string {
 	var out []string
-	t := reflect.TypeFor[Rule]()
-	for f := range t.Fields() {
-		if k := yamlKey(f); k != "" && !slices.Contains(RuleMatchFields, k) {
+	for _, f := range ruleFields {
+		if k := yamlKey(f); !slices.Contains(RuleMatchFields, k) {
 			out = append(out, k)
 		}
 	}
 	return out
+}
+
+// keyFields returns the fields of struct t that have a yaml key (yamlKey), in declaration
+// order; the fields of an embedded struct tagged `yaml:",inline"` take its place. Their Index
+// is relative to t (reflect.Value.FieldByIndex).
+func keyFields(t reflect.Type) []reflect.StructField {
+	var out []reflect.StructField
+	for f := range t.Fields() {
+		if inline(f) {
+			for _, g := range keyFields(f.Type) {
+				g.Index = append(slices.Clone(f.Index), g.Index...)
+				out = append(out, g)
+			}
+		} else if yamlKey(f) != "" {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// inline reports whether f is an embedded struct whose keys are those of its parent.
+func inline(f reflect.StructField) bool {
+	return f.Anonymous && f.Type.Kind() == reflect.Struct && f.Tag.Get("yaml") == ",inline"
 }
 
 // yamlKey is the yaml key of a struct field (its tag name, else the lowercased field name),
@@ -54,15 +79,33 @@ func (c *Config) Lint() []Warning {
 	return ws
 }
 
-// hasSet reports whether a field of r among keys is set: a non-nil list (also []), a non-nil
-// pointer or a non-empty string.
-func (r *Rule) hasSet(keys []string) bool {
-	for f, fv := range reflect.ValueOf(r).Elem().Fields() {
-		if k := yamlKey(f); k != "" && slices.Contains(keys, k) && !fv.IsZero() {
-			return true
+// SetApplyFields returns the keys of the apply fields r sets, in declaration order: a
+// non-nil list (also []), a non-nil pointer or a non-empty string.
+func (r *Rule) SetApplyFields() []string { return r.setFields(RuleApplyFields) }
+
+// setFields returns the keys among keys of the fields r sets, in declaration order.
+func (r *Rule) setFields(keys []string) []string {
+	var out []string
+	v := reflect.ValueOf(r).Elem()
+	for _, f := range ruleFields {
+		if k := yamlKey(f); slices.Contains(keys, k) && !v.FieldByIndex(f.Index).IsZero() {
+			out = append(out, k)
 		}
 	}
-	return false
+	return out
+}
+
+// hasSet reports whether r sets a field among keys (setFields).
+func (r *Rule) hasSet(keys []string) bool { return len(r.setFields(keys)) > 0 }
+
+// sets reports whether r sets key to a value: like hasSet, but an empty list sets nothing.
+func (r *Rule) sets(key string) bool {
+	i := slices.IndexFunc(ruleFields, func(f reflect.StructField) bool { return yamlKey(f) == key })
+	if i < 0 {
+		return false
+	}
+	fv := reflect.ValueOf(r).Elem().FieldByIndex(ruleFields[i].Index)
+	return !fv.IsZero() && (fv.Kind() != reflect.Slice || fv.Len() > 0)
 }
 
 func (r *Rule) lint(f string) []Warning {

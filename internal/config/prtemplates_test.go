@@ -50,15 +50,15 @@ rules:
 		{"rule title, footer reset", c.Policy(dep.Dep{Manager: "docker", Name: "x"}), "docker: x", "Header of x", "<nil>"},
 		{"updateTypes rule", c.PolicyFor(dep.Dep{Manager: "docker", Name: "x"}, dep.Major), "docker: x", "Major 1 -> 2", "<nil>"},
 		{"reset to the defaults", c.Policy(dep.Dep{Manager: "gomod", Name: "plain"}), "<nil>", "<nil>", "Footer"},
-		{"lock file maintenance", Policy{Templates: c.PRTemplates()}, "chore: bump x to 2", "Header of x", "Footer"},
+		{"lock file maintenance", c.DefaultPolicy(), "chore: bump x to 2", "Header of x", "Footer"},
 	} {
 		got := []string{render(tc.p.Templates.Title), render(tc.p.Templates.Header), render(tc.p.Templates.Footer)}
 		if want := []string{tc.title, tc.header, tc.footer}; !slices.Equal(got, want) {
 			t.Errorf("%s: templates render %q, want %q", tc.name, got, want)
 		}
 	}
-	if d := Default(); d.PRTemplates() != (prtemplate.Set{}) {
-		t.Errorf("default templates = %+v", d.PRTemplates())
+	if d := Default(); d.DefaultPolicy().Templates != (prtemplate.Set{}) {
+		t.Errorf("default templates = %+v", d.DefaultPolicy().Templates)
 	}
 }
 

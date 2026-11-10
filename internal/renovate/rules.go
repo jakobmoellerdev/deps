@@ -386,7 +386,7 @@ func (t *translator) rule(origin string, r map[string]any) {
 
 	eff := t.effects(origin, r)
 	if len(updateTypes) > 0 {
-		for _, k := range []string{"pin", "rangeStrategy", "versioning", "extractVersion", "registryUrls", "replacementName", "replacementVersion", "replacementPrefix"} {
+		for _, k := range config.PrePolicyKeys {
 			if e, ok := eff[k]; ok {
 				t.n.warn(origin+"."+e.src, "deps decides %s before the update type is known; dropped", k)
 				delete(eff, k)

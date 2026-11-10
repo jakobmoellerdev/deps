@@ -299,33 +299,76 @@ func (c *Config) UnusedRules(deps []dep.Dep) []int {
 	return out
 }
 
-func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Policy {
+// DefaultPolicy is the policy of the top-level settings alone, before the dep is known: no
+// built-in group, replacement or rule applies. Lock file maintenance updates use it.
+func (c *Config) DefaultPolicy() Policy {
 	p := Policy{
-		Pin:                    c.Pin,
-		RangeStrategy:          cmp.Or(c.RangeStrategy, RangeAuto),
-		AllowedUpdateTypes:     allUpdates,
-		Schedule:               c.schedule,
-		MinAge:                 c.minAge,
-		AbandonAfter:           c.abandon,
-		TimestampRequired:      c.MinimumReleaseAgeBehaviour == TimestampRequired,
-		CommitType:             CommitChore,
-		CommitScope:            DefaultScope,
-		Templates:              c.templates,
-		Kind:                   kind,
-		SeparateMajorMinor:     c.SeparateMajorMinor == nil || *c.SeparateMajorMinor,
-		SeparateMultipleMajor:  c.SeparateMultipleMajor != nil && *c.SeparateMultipleMajor,
-		SeparateMinorPatch:     c.SeparateMinorPatch != nil && *c.SeparateMinorPatch,
-		AdditionalBranchPrefix: c.AdditionalBranchPrefix,
-		Automerge:              c.Automerge,
-		AutomergeStrategy:      cmp.Or(c.AutomergeStrategy, StrategyAuto),
-		AutomergeType:          cmp.Or(c.AutomergeType, AutomergeTypePR),
-		DashboardApproval:      c.DashboardApproval,
-		DraftPR:                c.DraftPR,
-		PRCreation:             cmp.Or(c.PRCreation, PRCreationImmediate),
-		Labels:                 c.Labels,
-		Reviewers:              c.Reviewers,
-		Assignees:              c.Assignees,
+		RangeStrategy:      RangeAuto,
+		AllowedUpdateTypes: allUpdates,
+		CommitType:         CommitChore,
+		CommitScope:        DefaultScope,
+		SeparateMajorMinor: true,
+		AutomergeStrategy:  StrategyAuto,
+		AutomergeType:      AutomergeTypePR,
+		PRCreation:         PRCreationImmediate,
 	}
+	p.apply(&c.Settings)
+	return p
+}
+
+// apply overwrites p with the settings s sets: the top level's, then each matching rule's.
+func (p *Policy) apply(s *Settings) {
+	p.Pin = cmp.Or(s.Pin, p.Pin)
+	p.RangeStrategy = cmp.Or(s.RangeStrategy, p.RangeStrategy)
+	if s.Schedule != nil {
+		p.Schedule = s.schedule
+	}
+	setPtr(&p.AdditionalBranchPrefix, s.AdditionalBranchPrefix)
+	setPtr(&p.MinAge, s.minAge)
+	if s.MinimumReleaseAgeBehaviour != "" {
+		p.TimestampRequired = s.MinimumReleaseAgeBehaviour == TimestampRequired
+	}
+	setPtr(&p.AbandonAfter, s.abandon)
+	setPtr(&p.SeparateMajorMinor, s.SeparateMajorMinor)
+	setPtr(&p.SeparateMultipleMajor, s.SeparateMultipleMajor)
+	setPtr(&p.SeparateMinorPatch, s.SeparateMinorPatch)
+	setPtr(&p.Automerge, s.Automerge)
+	p.AutomergeStrategy = cmp.Or(s.AutomergeStrategy, p.AutomergeStrategy)
+	p.AutomergeType = cmp.Or(s.AutomergeType, p.AutomergeType)
+	setPtr(&p.DraftPR, s.DraftPR)
+	p.PRCreation = cmp.Or(s.PRCreation, p.PRCreation)
+	setList(&p.Labels, s.Labels)
+	setList(&p.Reviewers, s.Reviewers)
+	setList(&p.Assignees, s.Assignees)
+	if s.PRTitle != nil {
+		p.Templates.Title = s.templates.Title
+	}
+	if s.PRHeader != nil {
+		p.Templates.Header = s.templates.Header
+	}
+	if s.PRFooter != nil {
+		p.Templates.Footer = s.templates.Footer
+	}
+	setPtr(&p.DashboardApproval, s.DashboardApproval)
+}
+
+// setPtr sets *dst to *v when v is not nil.
+func setPtr[T any](dst, v *T) {
+	if v != nil {
+		*dst = *v
+	}
+}
+
+// setList sets *dst to v when v is not nil ([] clears it).
+func setList(dst *[]string, v []string) {
+	if v != nil {
+		*dst = v
+	}
+}
+
+func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Policy {
+	p := c.DefaultPolicy()
+	p.Kind = kind
 	if production(d) {
 		p.CommitType = CommitFix
 	}
@@ -374,12 +417,6 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Polic
 				p.IgnoreReason += " for " + string(kind)
 			}
 		}
-		if r.Pin != "" {
-			p.Pin = r.Pin
-		}
-		if r.RangeStrategy != "" {
-			p.RangeStrategy = r.RangeStrategy
-		}
 		if r.allow != nil {
 			p.Allow = r.allow
 		}
@@ -392,32 +429,11 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Polic
 		if r.SecurityGroup != "" {
 			p.SecurityGroup = r.SecurityGroup
 		}
-		if r.Schedule != nil {
-			p.Schedule = r.schedule
-		}
 		if r.CommitType != "" {
 			p.CommitType = r.CommitType
 		}
 		if r.CommitScope != nil {
 			p.CommitScope = *r.CommitScope
-		}
-		if r.PRTitle != nil {
-			p.Templates.Title = r.templates.Title
-		}
-		if r.PRHeader != nil {
-			p.Templates.Header = r.templates.Header
-		}
-		if r.PRFooter != nil {
-			p.Templates.Footer = r.templates.Footer
-		}
-		if r.minAge != nil {
-			p.MinAge = *r.minAge
-		}
-		if r.abandon != nil {
-			p.AbandonAfter = *r.abandon
-		}
-		if r.MinimumReleaseAgeBehaviour != "" {
-			p.TimestampRequired = r.MinimumReleaseAgeBehaviour == TimestampRequired
 		}
 		if r.Versioning != "" {
 			p.Versioning = r.Versioning
@@ -425,49 +441,11 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Polic
 		if r.ExtractVersion != "" {
 			p.ExtractVersion = r.ExtractVersion
 		}
-		if r.SeparateMajorMinor != nil {
-			p.SeparateMajorMinor = *r.SeparateMajorMinor
-		}
-		if r.SeparateMultipleMajor != nil {
-			p.SeparateMultipleMajor = *r.SeparateMultipleMajor
-		}
-		if r.SeparateMinorPatch != nil {
-			p.SeparateMinorPatch = *r.SeparateMinorPatch
-		}
-		if r.AdditionalBranchPrefix != nil {
-			p.AdditionalBranchPrefix = *r.AdditionalBranchPrefix
-		}
-		if r.Automerge != nil {
-			p.Automerge = *r.Automerge
-		}
-		if r.AutomergeStrategy != "" {
-			p.AutomergeStrategy = r.AutomergeStrategy
-		}
-		if r.AutomergeType != "" {
-			p.AutomergeType = r.AutomergeType
-		}
-		if r.DashboardApproval != nil {
-			p.DashboardApproval = *r.DashboardApproval
-		}
-		if r.DraftPR != nil {
-			p.DraftPR = *r.DraftPR
-		}
-		if r.PRCreation != "" {
-			p.PRCreation = r.PRCreation
-		}
-		if r.Labels != nil {
-			p.Labels = r.Labels
-		}
+		p.apply(&r.Settings)
 		for _, l := range r.AddLabels {
 			if !slices.Contains(p.Labels, l) {
 				p.Labels = append(slices.Clip(p.Labels), l)
 			}
-		}
-		if r.Reviewers != nil {
-			p.Reviewers = r.Reviewers
-		}
-		if r.Assignees != nil {
-			p.Assignees = r.Assignees
 		}
 		if r.PostUpgradeTasks != nil {
 			p.Tasks = dep.Tasks{Commands: r.PostUpgradeTasks.Commands, Update: r.PostUpgradeTasks.ExecutionMode == ExecutionUpdate, Files: r.PostUpgradeTasks.Files}

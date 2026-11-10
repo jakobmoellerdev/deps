@@ -225,6 +225,9 @@ func effective(root, def *jsonschema.Schema, m *yaml.Node, all bool) *yaml.Node 
 		} else if p.Default != nil {
 			v = encodeNode(p.Default)
 		}
+		if all && v != nil && p.Type == "string" && v.Kind == yaml.ScalarNode && v.Tag == "!!null" {
+			v = encodeNode("") // an unset optional string (prTitle) is empty
+		}
 		if v == nil {
 			if !all {
 				continue

@@ -131,7 +131,10 @@ func (p *Properties) MarshalJSONTo(enc *jsontext.Encoder) error {
 // Property names come from the yaml tags (fields tagged "-" and unexported fields are
 // skipped), descriptions from jsonschema_description. The jsonschema tag is a comma-separated
 // list of required, enum=<v> (repeatable), default=<v>, minimum=<n>, minItems=<n> and
-// pattern=<re>; on a list, enum and pattern apply to its items.
+// pattern=<re>; on a list, enum and pattern apply to its items. The fields of an embedded
+// struct tagged `yaml:",inline"` are properties of the embedding object, in its place; with
+// jsonschema_variant:"<v>" on the embedded field, its fields take their description and
+// keywords from the tags <v>_description and <v>_jsonschema instead.
 func Reflect(v any) (*Schema, error) {
 	t := reflect.TypeOf(v)
 	for t != nil && t.Kind() == reflect.Pointer {
@@ -156,8 +159,20 @@ type reflector struct{ defs Definitions }
 
 func (r *reflector) object(t reflect.Type) (*Schema, error) {
 	s := &Schema{Properties: NewProperties(), AdditionalProperties: FalseSchema, Type: "object"}
+	return s, r.fields(s, t, "")
+}
+
+// fields adds the properties of the fields of struct t to object s; variant is the
+// jsonschema_variant of the embedded field t is the type of, "" for none.
+func (r *reflector) fields(s *Schema, t reflect.Type, variant string) error {
 	for f := range t.Fields() {
-		name, _, _ := strings.Cut(f.Tag.Get("yaml"), ",")
+		name, opts, _ := strings.Cut(f.Tag.Get("yaml"), ",")
+		if f.Anonymous && name == "" && opts == "inline" && f.Type.Kind() == reflect.Struct {
+			if err := r.fields(s, f.Type, f.Tag.Get("jsonschema_variant")); err != nil {
+				return err
+			}
+			continue
+		}
 		if !f.IsExported() || name == "-" {
 			continue
 		}
@@ -166,18 +181,22 @@ func (r *reflector) object(t reflect.Type) (*Schema, error) {
 		}
 		p, err := r.schema(f.Type)
 		if err != nil {
-			return nil, fmt.Errorf("%s.%s: %w", t.Name(), f.Name, err)
+			return fmt.Errorf("%s.%s: %w", t.Name(), f.Name, err)
 		}
-		required, err := applyTags(p, f.Type, f.Tag)
+		desc, spec := f.Tag.Get("jsonschema_description"), f.Tag.Get("jsonschema")
+		if variant != "" {
+			desc, spec = f.Tag.Get(variant+"_description"), f.Tag.Get(variant+"_jsonschema")
+		}
+		required, err := applyTags(p, f.Type, desc, spec)
 		if err != nil {
-			return nil, fmt.Errorf("%s.%s: %w", t.Name(), f.Name, err)
+			return fmt.Errorf("%s.%s: %w", t.Name(), f.Name, err)
 		}
 		if required {
 			s.Required = append(s.Required, name)
 		}
 		s.Properties.Set(name, p)
 	}
-	return s, nil
+	return nil
 }
 
 func (r *reflector) schema(t reflect.Type) (*Schema, error) {
@@ -235,10 +254,10 @@ func scalarType(t reflect.Type) (string, bool) {
 	return "", false
 }
 
-// applyTags sets the keywords of field schema s (of Go type t) from its tags and reports
-// whether the field is required.
-func applyTags(s *Schema, t reflect.Type, tag reflect.StructTag) (required bool, err error) {
-	s.Description = tag.Get("jsonschema_description")
+// applyTags sets the description desc and the keywords of the jsonschema tag spec on field
+// schema s (of Go type t) and reports whether the field is required.
+func applyTags(s *Schema, t reflect.Type, desc, spec string) (required bool, err error) {
+	s.Description = desc
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
@@ -249,7 +268,6 @@ func applyTags(s *Schema, t reflect.Type, tag reflect.StructTag) (required bool,
 			itemType = itemType.Elem()
 		}
 	}
-	spec := tag.Get("jsonschema")
 	if spec == "" {
 		return false, nil
 	}

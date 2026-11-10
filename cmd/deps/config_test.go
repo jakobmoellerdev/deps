@@ -124,7 +124,7 @@ func TestConfigShow(t *testing.T) {
 		"  - <<: *base\n    group: h\n  - *base\n"})
 	stdout, stderr, code = execute(t, "config", "show", "--dir", anchored)
 	if code != 0 || strings.Contains(stdout, "&") || strings.Contains(stdout, "*base") || strings.Contains(stdout, "<<") ||
-		!strings.Contains(stdout, "\nrules:\n  - names: [a]\n    group: g\n    automerge: true\n  - names: [a]\n    group: h\n    automerge: true\n  - names: [a]\n    group: g\n") {
+		!strings.Contains(stdout, "\nrules:\n  - names: [a]\n    automerge: true\n    group: g\n  - names: [a]\n    automerge: true\n    group: h\n  - names: [a]\n    automerge: true\n    group: g\n") {
 		t.Fatalf("anchors: exit %d, stderr %q\n%s", code, stderr, stdout)
 	}
 	shown := t.TempDir()

@@ -916,10 +916,12 @@ func readLocks(root string, managers []manager.Manager, found [][]string, ex []e
 
 // maintenanceUpdates returns one lock file maintenance update (lockFileMaintenance) per lock
 // root of each manager.LockMaintainer, over the files it extracted without error. It carries
-// the lockFileMaintenance schedule, the top-level automerge settings and PR templates (the
-// title stays fixed, see GroupUpdates); rules do not apply.
+// the lockFileMaintenance schedule and the top-level automerge settings, PR templates and
+// PR metadata (config.DefaultPolicy; the title stays fixed, see GroupUpdates); rules do not
+// apply.
 func maintenanceUpdates(cfg *config.Config, root string, managers []manager.Manager, found [][]string, ex []extracted) []dep.Update {
 	var out []dep.Update
+	p := cfg.DefaultPolicy()
 	for i, part := range partition(found, ex) {
 		m := managers[i]
 		lm, ok := m.(manager.LockMaintainer)
@@ -937,16 +939,16 @@ func maintenanceUpdates(cfg *config.Config, root string, managers []manager.Mana
 				Dep:               dep.Dep{Manager: m.Name(), File: lr.Manifest, Name: lr.Lockfile},
 				Type:              dep.LockFileMaintenance,
 				Schedule:          cfg.LockFileMaintenanceSchedule(),
-				Automerge:         cfg.Automerge,
-				AutomergeStrategy: cmp.Or(cfg.AutomergeStrategy, config.StrategyAuto),
-				AutomergeType:     cmp.Or(cfg.AutomergeType, config.AutomergeTypePR),
-				DashboardApproval: cfg.DashboardApproval,
-				DraftPR:           cfg.DraftPR,
-				PRCreation:        cmp.Or(cfg.PRCreation, config.PRCreationImmediate),
-				Templates:         cfg.PRTemplates(),
-				Labels:            cfg.Labels,
-				Reviewers:         cfg.Reviewers,
-				Assignees:         cfg.Assignees,
+				Automerge:         p.Automerge,
+				AutomergeStrategy: p.AutomergeStrategy,
+				AutomergeType:     p.AutomergeType,
+				DashboardApproval: p.DashboardApproval,
+				DraftPR:           p.DraftPR,
+				PRCreation:        p.PRCreation,
+				Templates:         p.Templates,
+				Labels:            p.Labels,
+				Reviewers:         p.Reviewers,
+				Assignees:         p.Assignees,
 			})
 		}
 	}
