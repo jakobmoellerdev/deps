@@ -22,8 +22,9 @@ import (
 )
 
 // summary is the end-of-run overview of plan, apply and run: the updates grouped by PR (the
-// bot's grouping), the PR outcome per group for run, held-back releases, skip reasons and
-// errors. It is rendered as text to stderr and as markdown to the CI step summary.
+// bot's grouping), the PR outcome per group for run, held-back releases, skip reasons,
+// rate-limited lookups and errors. It is rendered as text to stderr and as markdown to the CI
+// step summary.
 type summary struct {
 	Command string // "plan", "apply", "run" or "run --dry-run"
 	Run     bool   // Actions are PR outcomes; plan/apply show what run would open
@@ -34,7 +35,8 @@ type summary struct {
 	prs         map[string]int
 	grouped     map[string]bool
 	Actions     []bot.Action // run only
-	Errors      []error      // engine and build/bot errors
+	Errors      []error      // engine and build/bot errors, without RateLimited
+	RateLimited []error      // lookups that failed on an exhausted rate limit (engine.RateLimited): warnings
 	Elapsed     time.Duration
 	ShowSkipped bool           // text lists the held-back releases, not only their count
 	Report      string         // --report file; "" = none
@@ -49,6 +51,9 @@ type summary struct {
 
 // plain is the style of markdown: no colors.
 var plain logx.Style
+
+// rateLimitHint says what happens to rate-limited lookups and how to avoid them.
+const rateLimitHint = "the next run looks them up again; a token for the host raises its limit, see deps help environment"
 
 // skipReason is one aggregated skip reason.
 type skipReason struct {
@@ -245,9 +250,10 @@ func plural(n int, one, many string) string {
 	return fmt.Sprintf("%d %s", n, many)
 }
 
-// headline is the one-line overview, or the empty-case sentence; st paints the errors red.
+// headline is the one-line overview, or the empty-case sentence; st paints the rate-limited
+// count yellow and the errors red.
 func (s *summary) headline(st logx.Style) string {
-	if len(s.Res.Updates) == 0 && len(s.Errors) == 0 && len(s.others()) == 0 {
+	if len(s.Res.Updates) == 0 && len(s.Errors) == 0 && len(s.RateLimited) == 0 && len(s.others()) == 0 {
 		return fmt.Sprintf("No updates: %s up to date, %d skipped.", plural(s.deps()-len(s.Res.Skipped), "dependency", "dependencies"), len(s.Res.Skipped))
 	}
 	parts := []string{
@@ -266,7 +272,11 @@ func (s *summary) headline(st logx.Style) string {
 	if len(s.Errors) > 0 {
 		errs = st.Paint(logx.Red, errs)
 	}
-	parts = append(parts, fmt.Sprintf("%d skipped", len(s.Res.Skipped)), errs)
+	parts = append(parts, fmt.Sprintf("%d skipped", len(s.Res.Skipped)))
+	if len(s.RateLimited) > 0 {
+		parts = append(parts, st.Paint(logx.Yellow, fmt.Sprintf("%d rate limited", len(s.RateLimited))))
+	}
+	parts = append(parts, errs)
 	return strings.Join(parts, ", ") + " (" + s.Elapsed.Round(time.Millisecond).String() + ")"
 }
 
@@ -381,7 +391,7 @@ func (s *summary) unusedRules() (own []unusedRule, other int) {
 
 // writeText writes the warnings about unused rules and the summary block for stderr. It goes
 // before the counts line, so that line stays last. Skip reasons are counts only: --show-skipped prints the
-// per-dep skip lines; errors are already printed as error lines.
+// per-dep skip lines; rate-limited lookups and errors are already printed as warn and error lines.
 func (s *summary) writeText(w io.Writer) {
 	own, other := s.unusedRules()
 	for _, u := range own {
@@ -432,6 +442,9 @@ func (s *summary) writeText(w io.Writer) {
 		for _, d := range s.Res.Warnings {
 			fmt.Fprintf(w, "      %s  %s:%d  %s: %s\n", d.Dep.Name, d.Dep.File, d.Dep.Line, d.Kind, d.Reason)
 		}
+	}
+	if len(s.RateLimited) > 0 {
+		fmt.Fprintf(w, "  Rate limited: %s (%s)\n", plural(len(s.RateLimited), "lookup", "lookups"), rateLimitHint)
 	}
 	if rs := s.skipRows(); len(rs) > 0 {
 		fmt.Fprintln(w, "  Skipped (--show-skipped lists each dependency):")
@@ -619,6 +632,13 @@ func (s *summary) markdownAt(level int) string {
 			b.WriteString("\n")
 		}
 		b.WriteString("\n")
+	}
+	if len(s.RateLimited) > 0 {
+		fmt.Fprintf(&b, "### Rate limited\n\n%s skipped: %s.\n\n```\n", plural(len(s.RateLimited), "lookup", "lookups"), rateLimitHint)
+		for _, e := range s.RateLimited {
+			fmt.Fprintln(&b, e)
+		}
+		b.WriteString("```\n\n")
 	}
 	if len(s.Errors) > 0 {
 		b.WriteString("### Errors\n\n```\n")

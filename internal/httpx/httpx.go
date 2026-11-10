@@ -91,14 +91,25 @@ func DrainBody(resp *http.Response) {
 // ErrNotFound matches (errors.Is) a *StatusError for HTTP 404.
 var ErrNotFound = errors.New("not found")
 
-// StatusError is a GET answered with an unexpected status; it reads "GET <URL>: HTTP <Code>".
+// StatusError is a GET answered with an unexpected status; it reads "GET <URL>: HTTP <Code>",
+// followed by ": <Limit>" for a rate limit.
 type StatusError struct {
-	URL  string // redacted (Redact)
-	Code int
+	URL   string // redacted (Redact)
+	Code  int
+	Limit error // LimitError of the response: wraps ErrRateLimited; nil = no rate limit
 }
 
-func (e *StatusError) Error() string { return "GET " + e.URL + ": HTTP " + strconv.Itoa(e.Code) }
+func (e *StatusError) Error() string {
+	s := "GET " + e.URL + ": HTTP " + strconv.Itoa(e.Code)
+	if e.Limit != nil {
+		s += ": " + e.Limit.Error()
+	}
+	return s
+}
 
 func (e *StatusError) Is(target error) bool {
 	return target == ErrNotFound && e.Code == http.StatusNotFound
 }
+
+// Unwrap returns Limit, so that a rate-limited response matches ErrRateLimited.
+func (e *StatusError) Unwrap() error { return e.Limit }

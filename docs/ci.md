@@ -921,7 +921,7 @@ jobs:
 Exit codes:
 
 - **2:** an invalid config; every problem is printed with its location.
-- **1:** an upstream lookup failed.
+- **1:** an upstream lookup failed. A lookup that failed on an exhausted rate limit is only a warning (`warn` line, `::warning` annotation): the dependency is skipped until the next run.
 
 To see why a dependency is or isn't updated, use `args: explain '<name glob>'`.
 
@@ -1082,7 +1082,7 @@ Run with `show-skipped: true` and `log-level: debug` to see every HTTP request, 
 | `deps: no token for <host>` | No `--token`, no `DEPS_TOKEN`/`GITHUB_TOKEN`/`GITEA_TOKEN`/`FORGEJO_TOKEN`, and no git credential. In a workflow, check that the `token` input isn't an empty secret. |
 | `403` on `POST …/pulls` or on push (Gitea/Forgejo) | The job token lacks permissions: add `contents: write` and `pull-requests: write`, check the maximum in *Settings → Actions → General*, or use a PAT. |
 | `ls-refs https://host/owner/repo: HTTP 401` or `HTTP 404` | A private action repository. Grant cross-repository access (Gitea) or use a token that can read it; for github.com from Gitea/Forgejo set `DEPS_GITHUB_COM_TOKEN`. |
-| `rate limited by api.github.com until <time>` | Anonymous github.com lookups from a non-GitHub runner. Set `DEPS_GITHUB_COM_TOKEN`. |
+| `warn    <file>:<line>: <name>: … rate limited by api.github.com until <time>` | Anonymous github.com lookups from a non-GitHub runner (shared IP, 60 requests per hour). The dependency is skipped until the next run; the exit code stays 0, and `run` keeps its open PRs. Set `DEPS_GITHUB_COM_TOKEN`. |
 
 **Checkout and platform:**
 

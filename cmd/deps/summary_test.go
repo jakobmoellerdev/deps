@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
 func summaryFixture() *engine.Result {
@@ -163,6 +165,15 @@ func TestSummaryRender(t *testing.T) {
 					"  - managers: [npm]\n    names: [react]\n    automerge: true\n")},
 			textExact: "warn    rule .deps.yaml:9 matched no dependency (managers=[npm] names=[react])\n\nSummary:",
 			md:        []string{"### Warnings\n\n- rule `.deps.yaml:9` matched no dependency (`managers=[npm] names=[react]`)\n\n"},
+		},
+		{
+			name: "rate-limited lookups are warnings",
+			s: summary{Command: "plan", Res: &engine.Result{Deps: res.Deps[:1]}, RateLimited: []error{&engine.DepError{File: ".env", Line: 6, Name: "golangci/golangci-lint",
+				Err: fmt.Errorf("releases golangci/golangci-lint: HTTP 403: %w by api.github.com until 2026-11-10T14:33:49Z", httpx.ErrRateLimited)}}},
+			textExact: "\nSummary: 1 dependency, 0 updates in 0 PRs, 0 skipped, 1 rate limited, 0 errors (0s)\n" +
+				"  Rate limited: 1 lookup (the next run looks them up again; a token for the host raises its limit, see deps help environment)\n",
+			md: []string{"### Rate limited\n\n1 lookup skipped: the next run looks them up again; a token for the host raises its limit, see deps help environment.\n\n" +
+				"```\n.env:6: golangci/golangci-lint: releases golangci/golangci-lint: HTTP 403: rate limited by api.github.com until 2026-11-10T14:33:49Z\n```\n\n"},
 		},
 	}
 	for _, tc := range tests {

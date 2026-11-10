@@ -55,7 +55,7 @@ type progress struct {
 	groups    *annotator    // non-nil: a log group per phase
 	heartbeat time.Duration // 0 = no heartbeat lines
 
-	done, errs atomic.Int64
+	done, errs, limited atomic.Int64 // limited: items that failed on a rate limit (engine.RateLimited)
 
 	mu           sync.Mutex // guards the fields below; taken inside the Writer's lock by Draw
 	phase        engine.Phase
@@ -108,6 +108,7 @@ func (p *progress) Start(ph engine.Phase, total int) {
 	p.mu.Unlock()
 	p.done.Store(0)
 	p.errs.Store(0)
+	p.limited.Store(0)
 	// The PR phase has no group of its own: each PR's records are a group (prLog), and
 	// workflow command groups do not nest.
 	if p.groups != nil && ph != engine.PhasePRs && (ph != engine.PhaseExtract || !p.grouped) {
@@ -158,7 +159,10 @@ func (p *progress) loop(redraw, beat *time.Ticker, stop, stopped chan struct{}) 
 
 func (p *progress) Done(_ engine.Phase, err error) {
 	p.done.Add(1)
-	if err != nil {
+	switch {
+	case engine.RateLimited(err):
+		p.limited.Add(1)
+	case err != nil:
 		p.errs.Add(1)
 	}
 }
@@ -235,6 +239,8 @@ func (p *progress) ListDeps(deps []engine.DepReport) {
 	for _, d := range deps {
 		var outcome string
 		switch {
+		case errors.Is(d.Err, httpx.ErrRateLimited):
+			outcome = "skipped: " + limitReason(d.Err)
 		case d.Err != nil:
 			outcome = "error: " + shortError(d.Err)
 		case d.Skip != "":
@@ -265,6 +271,19 @@ func shortError(err error) string {
 	}
 	msg, _, _ := strings.Cut(err.Error(), "\n")
 	return truncate(msg, maxErrorText)
+}
+
+// limitReason is the part of the rate-limited err that names the limit: "rate limited by
+// <host> until <reset>", the innermost error wrapping httpx.ErrRateLimited (the last one
+// above the leaf of its single-wrap chain).
+func limitReason(err error) string {
+	for {
+		next := errors.Unwrap(err)
+		if next == nil || errors.Unwrap(next) == nil {
+			return err.Error()
+		}
+		err = next
+	}
 }
 
 // maxErrorText is the length of an error in a listing line.
@@ -447,8 +466,8 @@ func (p *progress) bar(done, total, n int) string {
 	return p.style.Paint(logx.Cyan, strings.Repeat("━", filled)) + p.style.Paint(logx.Dim, strings.Repeat("─", n-filled))
 }
 
-// details is the rate-limit wait, error count and elapsed time of the running phase, each
-// after " · ".
+// details is the rate-limit wait, the counts of rate-limited items and errors and the elapsed
+// time of the running phase, each after " · ".
 func (p *progress) details() string {
 	p.mu.Lock()
 	now := p.now()
@@ -458,6 +477,9 @@ func (p *progress) details() string {
 		fmt.Fprintf(&b, " · rate limited by %s, %ds", p.limitedHost, int(p.limitedUntil.Sub(now).Round(time.Second)/time.Second))
 	}
 	p.mu.Unlock()
+	if n := p.limited.Load(); n > 0 {
+		fmt.Fprintf(&b, " · %d rate limited", n)
+	}
 	if n := p.errs.Load(); n > 0 {
 		fmt.Fprintf(&b, " · %d error", n)
 		if n > 1 {

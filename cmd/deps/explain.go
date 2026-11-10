@@ -22,6 +22,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/docgen"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/gitx"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
@@ -126,7 +127,7 @@ func explain(ctx context.Context, cmd *cli.Command, o *rootOpts, base string, gl
 	if len(unmatched) > 0 {
 		return fmt.Errorf("no dependency matches %s", strings.Join(unmatched, ", "))
 	}
-	if len(res.Errors) > 0 {
+	if errs, _ := splitRateLimited(res.Errors); len(errs) > 0 {
 		return errReported
 	}
 	return nil
@@ -232,6 +233,8 @@ func writeTrace(w io.Writer, cfg *config.Config, t engine.Trace) {
 	line("candidates", "%d", t.Candidates)
 	line("rejected", "%s", describeRejected(d.Versioning, t.Rejected))
 	switch {
+	case errors.Is(t.Err, httpx.ErrRateLimited):
+		line("result", "skipped: %s", limitReason(t.Err))
 	case t.Err != nil:
 		line("result", "error: %v", t.Err)
 	case t.Updates == nil:

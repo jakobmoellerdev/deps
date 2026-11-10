@@ -17,6 +17,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/actions"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
@@ -329,6 +330,7 @@ func TestRun(t *testing.T) {
 		git         fakeGit
 		pc          fakePC
 		engineErr   bool
+		limitedErr  bool         // a rate-limited lookup (engine.RateLimited) in the engine errors
 		extra       []dep.Update // appended to the fixture's updates
 		wantStatus  map[string]string
 		wantErrs    []string // substrings, one per returned error, in order
@@ -463,6 +465,16 @@ func TestRun(t *testing.T) {
 		{
 			name:       "obsolete PR kept on engine error",
 			engineErr:  true,
+			pc:         fakePC{open: []platform.PR{{Number: 9, Head: "deps/gomod/gone"}}},
+			wantStatus: map[string]string{branchA: StatusCreated, branchB: StatusCreated},
+			wantPushed: 2, wantCreated: 2,
+		},
+		{
+			// A rate-limited lookup is only a warning for the commands, but its dep may still
+			// own the PR: it is kept like on any lookup error.
+			name:       "obsolete PR and branch kept on rate-limited lookup",
+			limitedErr: true,
+			git:        fakeGit{branches: map[string]string{"refs/heads/deps/gomod/gone": "x"}},
 			pc:         fakePC{open: []platform.PR{{Number: 9, Head: "deps/gomod/gone"}}},
 			wantStatus: map[string]string{branchA: StatusCreated, branchB: StatusCreated},
 			wantPushed: 2, wantCreated: 2,
@@ -642,6 +654,13 @@ func TestRun(t *testing.T) {
 			root, res := fixture(t)
 			if tt.engineErr {
 				res.Errors = []error{errors.New("upstream down")}
+			}
+			if tt.limitedErr {
+				res.Errors = []error{&engine.DepError{File: "go.mod", Line: 3, Name: "example.com/gone",
+					Err: fmt.Errorf("HTTP 403: %w by api.github.com until 2026-11-10T14:33:49Z", httpx.ErrRateLimited)}}
+				if !engine.RateLimited(res.Errors[0]) {
+					t.Fatal("not a rate-limited lookup")
+				}
 			}
 			res.Updates = append(res.Updates, tt.extra...)
 			fpA := fingerprintOf(t, root, res, "a/x")

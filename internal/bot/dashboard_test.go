@@ -11,6 +11,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/engine"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/schedule"
 )
@@ -297,6 +298,25 @@ func TestDashboardErrorsAndSizeCap(t *testing.T) {
 	}
 	if strings.Count(body, "\n- `f") != dashboardMaxErrors || !strings.Contains(body, "- `f0.yml: 'boom' second line xxx") || strings.Contains(body, strings.Repeat("x", 300)) {
 		t.Errorf("errors not flattened and truncated:\n%s", body[:3000])
+	}
+}
+
+// Rate-limited lookups are listed apart from the errors, as a warning.
+func TestDashboardRateLimited(t *testing.T) {
+	limited := &engine.DepError{File: ".env", Line: 6, Name: "golangci/golangci-lint",
+		Err: fmt.Errorf("HTTP 403: %w by api.github.com until 2026-11-10T14:33:49Z", httpx.ErrRateLimited)}
+	body := renderDashboard([]dashboardSection{{}}, []error{limited, errBoom})
+	for _, want := range []string{
+		"## Rate-limited lookups\n\nThe last run skipped these lookups because their host's rate limit was exhausted; the next run looks them up again.\n\n" +
+			"- `.env:6: golangci/golangci-lint: HTTP 403: rate limited by api.github.com until 2026-11-10T14:33:49Z`\n",
+		"## Errors\n\nThe last run reported these errors.\n\n- `boom`\n",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body lacks %q:\n%s", want, body)
+		}
+	}
+	if body := renderDashboard([]dashboardSection{{}}, []error{limited}); strings.Contains(body, "## Errors") {
+		t.Errorf("errors section without errors:\n%s", body)
 	}
 }
 

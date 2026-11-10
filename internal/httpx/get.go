@@ -53,7 +53,7 @@ func (g Getter) Open(ctx context.Context, target string) (*http.Response, error)
 		DrainBody(resp)
 		_ = resp.Body.Close()
 		release()
-		return nil, &StatusError{URL: Redact(target), Code: resp.StatusCode}
+		return nil, &StatusError{URL: Redact(target), Code: resp.StatusCode, Limit: LimitError(resp)}
 	}
 	limit := g.MaxBody
 	if limit == 0 {

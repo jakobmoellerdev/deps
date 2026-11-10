@@ -29,6 +29,7 @@ type jsonReport struct {
 	Warnings     []jsonWarning  `json:"warnings"`
 	Skipped      []jsonSkip     `json:"skipped"`
 	UnusedRules  []int          `json:"unusedRules"`
+	RateLimited  []jsonError    `json:"rateLimited"`
 	Errors       []jsonError    `json:"errors"`
 	Counts       map[string]int `json:"counts"`
 }
@@ -110,7 +111,8 @@ func reportUpdate(u dep.Update) jsonUpdate {
 
 // counts are the numbers of the step outputs: updates, PRs and, for run, PR outcomes.
 func (s *summary) counts() map[string]int {
-	c := map[string]int{"updates": len(s.Res.Updates), "prs": len(s.Groups), "skipped": len(s.Res.Skipped), "heldBack": len(s.Res.Pending), "errors": len(s.Errors)}
+	c := map[string]int{"updates": len(s.Res.Updates), "prs": len(s.Groups), "skipped": len(s.Res.Skipped), "heldBack": len(s.Res.Pending),
+		"rateLimited": len(s.RateLimited), "errors": len(s.Errors)}
 	if !s.Run {
 		return c
 	}
@@ -160,7 +162,8 @@ func countActions(actions []bot.Action) outcomes {
 func (s *summary) report() jsonReport {
 	r := jsonReport{
 		Command: s.Command, Repository: s.Repository, Dependencies: s.deps(), DurationMS: s.Elapsed.Milliseconds(),
-		PRs: []jsonPR{}, Other: []jsonAction{}, Pending: []jsonPending{}, Warnings: []jsonWarning{}, Skipped: []jsonSkip{}, UnusedRules: []int{}, Errors: []jsonError{},
+		PRs: []jsonPR{}, Other: []jsonAction{}, Pending: []jsonPending{}, Warnings: []jsonWarning{}, Skipped: []jsonSkip{}, UnusedRules: []int{},
+		RateLimited: []jsonError{}, Errors: []jsonError{},
 		Counts: s.counts(),
 	}
 	for _, g := range s.Groups {
@@ -186,16 +189,24 @@ func (s *summary) report() jsonReport {
 		r.Skipped = append(r.Skipped, jsonSkip{Reason: sr.Reason, Count: len(sr.Deps)})
 	}
 	r.UnusedRules = append(r.UnusedRules, s.Unused...)
+	for _, e := range s.RateLimited {
+		r.RateLimited = append(r.RateLimited, jsonErrorOf(e))
+	}
 	for _, e := range s.Errors {
-		je := jsonError{Message: e.Error()}
-		if de, ok := errors.AsType[*engine.DepError](e); ok {
-			je.File, je.Line = de.File, de.Line
-		} else if fe, ok := errors.AsType[*engine.FileError](e); ok {
-			je.File = fe.File
-		}
-		r.Errors = append(r.Errors, je)
+		r.Errors = append(r.Errors, jsonErrorOf(e))
 	}
 	return r
+}
+
+// jsonErrorOf is e in the report, located at the file (and line) of a FileError (DepError).
+func jsonErrorOf(e error) jsonError {
+	je := jsonError{Message: e.Error()}
+	if de, ok := errors.AsType[*engine.DepError](e); ok {
+		je.File, je.Line = de.File, de.Line
+	} else if fe, ok := errors.AsType[*engine.FileError](e); ok {
+		je.File = fe.File
+	}
+	return je
 }
 
 // writeJSON writes the JSON document v to path (replacing it).
@@ -225,7 +236,7 @@ func writeOutputs(path string, c map[string]int) error {
 }
 
 // outputNames orders the step outputs.
-var outputNames = []string{"updates", "prs", "created", "updated", "closed", "upToDate", "automerged", "prsSkipped", "heldBack", "skipped", "errors"}
+var outputNames = []string{"updates", "prs", "created", "updated", "closed", "upToDate", "automerged", "prsSkipped", "heldBack", "skipped", "rateLimited", "errors"}
 
 func kebab(s string) string {
 	var b strings.Builder

@@ -160,6 +160,17 @@ func TestRetryStatuses(t *testing.T) {
 			attempts: 2, sleeps: []time.Duration{0}, status: 200,
 		},
 		{
+			// GitHub restores the quota up to a second after its reset: wait 1s, then 2s.
+			name:     "rate limit still exhausted after reset",
+			replies:  []reply{{code: 403, hdr: limited(epoch(20 * s))}, {code: 403, hdr: limited(epoch(20 * s))}, {code: 403, hdr: limited(epoch(20 * s))}, {code: 200}},
+			attempts: 4, sleeps: []time.Duration{20 * s, s, 2 * s}, status: 200,
+		},
+		{
+			name:     "rate limit exhausted after every retry returns the response",
+			replies:  []reply{{code: 403, hdr: limited(epoch(20 * s))}},
+			attempts: 4, sleeps: []time.Duration{20 * s, s, 2 * s}, status: 403,
+		},
+		{
 			name:     "403 retry-after (secondary limit)",
 			replies:  []reply{{code: 403, hdr: map[string]string{"Retry-After": "5"}}, {code: 200}},
 			attempts: 2, sleeps: []time.Duration{5 * s}, status: 200,
@@ -231,6 +242,39 @@ func TestRetryStatuses(t *testing.T) {
 			}
 			if !reflect.DeepEqual(clk.sleeps, tt.sleeps) {
 				t.Errorf("sleeps = %v, want %v", clk.sleeps, tt.sleeps)
+			}
+		})
+	}
+}
+
+// Responses still rate limited once the retries gave up wrap ErrRateLimited, so that callers
+// can tell them from other failures.
+func TestResponseErrorRateLimit(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "https://api.github.com/repos/o/r/releases", http.NoBody)
+	for _, tt := range []struct {
+		name string
+		code int
+		hdr  map[string]string
+		want string
+	}{
+		{"exhausted 403", 403, map[string]string{"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "1793707200"}, "HTTP 403: rate limited by api.github.com until 2026-11-03T12:00:00Z"},
+		{"secondary 403", 403, map[string]string{"Retry-After": "60"}, "HTTP 403: rate limited by api.github.com until "},
+		{"429 without reset", 429, nil, "HTTP 429: rate limited by api.github.com"},
+		{"plain 403", 403, nil, "HTTP 403"},
+		{"exhausted 500", 500, map[string]string{"X-RateLimit-Remaining": "0"}, "HTTP 500"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := &http.Response{StatusCode: tt.code, Header: http.Header{}, Request: req}
+			for k, v := range tt.hdr {
+				resp.Header.Set(k, v)
+			}
+			limited := strings.Contains(tt.want, "rate limited")
+			if err := ResponseError(resp); !strings.HasPrefix(err.Error(), tt.want) || errors.Is(err, ErrRateLimited) != limited {
+				t.Errorf("ResponseError = %v, want %q (rate limited: %t)", err, tt.want, limited)
+			}
+			se := &StatusError{URL: "https://api.github.com/x", Code: tt.code, Limit: LimitError(resp)}
+			if errors.Is(se, ErrRateLimited) != limited || errors.Is(se, ErrNotFound) || !strings.HasPrefix(se.Error(), "GET https://api.github.com/x: "+tt.want) {
+				t.Errorf("StatusError = %v", se)
 			}
 		})
 	}

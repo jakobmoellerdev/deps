@@ -15,6 +15,8 @@ import (
 	"github.com/oras-project/oras-go/v3/errdef"
 	"github.com/oras-project/oras-go/v3/registry/remote"
 	"github.com/oras-project/oras-go/v3/registry/remote/errcode"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
 // tagMeta is what a tags/list `manifest` map says about a tag: the digest of the manifest it
@@ -282,7 +284,7 @@ func nextLink(resp *http.Response) (string, error) {
 const maxErrorBytes = 8 << 10
 
 // responseError is the error for a non-200 response, as oras-go reports it: method, URL,
-// status and the `errors` of the body.
+// status and the `errors` of the body; a rate limit also wraps httpx.LimitError.
 func responseError(resp *http.Response) error {
 	e := &errcode.ErrorResponse{Method: resp.Request.Method, URL: resp.Request.URL, StatusCode: resp.StatusCode}
 	var body struct {
@@ -290,6 +292,9 @@ func responseError(resp *http.Response) error {
 	}
 	if err := json.UnmarshalRead(io.LimitReader(resp.Body, maxErrorBytes), &body); err == nil {
 		e.Errors = body.Errors
+	}
+	if le := httpx.LimitError(resp); le != nil {
+		return fmt.Errorf("%w: %w", e, le)
 	}
 	return e
 }

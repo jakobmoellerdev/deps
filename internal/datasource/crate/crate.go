@@ -432,7 +432,7 @@ func (s *Source) get(ctx context.Context, r *registry, u string) (io.ReadCloser,
 		case http.StatusNotFound, http.StatusGone:
 			err = errNotFound
 		default:
-			err = fmt.Errorf("GET %s: HTTP %d", u, resp.StatusCode)
+			err = fmt.Errorf("GET %s: %w", u, httpx.ResponseError(resp))
 		}
 		closeBody(resp)
 		release()

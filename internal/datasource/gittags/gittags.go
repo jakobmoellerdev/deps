@@ -627,7 +627,7 @@ func (l *Lister) getJSON(ctx context.Context, u *url.URL, path string, v any) (f
 	case resp.StatusCode == http.StatusNotFound:
 		return false, nil
 	case resp.StatusCode < 200 || resp.StatusCode > 299:
-		return false, fmt.Errorf("HTTP %d", resp.StatusCode)
+		return false, httpx.ResponseError(resp)
 	}
 	if json.UnmarshalRead(io.LimitReader(resp.Body, 16<<20), v) != nil {
 		return false, nil
@@ -931,7 +931,7 @@ func (s *session) do(ctx context.Context, method, target string, body []byte) (*
 		}
 		if resp.StatusCode < 200 || resp.StatusCode > 299 {
 			closeBody(resp)
-			return nil, fmt.Errorf("ls-refs %s: HTTP %d", s.url, resp.StatusCode)
+			return nil, fmt.Errorf("ls-refs %s: %w", s.url, httpx.ResponseError(resp))
 		}
 		return resp, nil
 	}

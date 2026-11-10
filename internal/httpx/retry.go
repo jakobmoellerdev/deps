@@ -15,7 +15,8 @@ import (
 )
 
 // ErrRateLimited is wrapped by the error returned when a server's rate limit resets later than
-// deps is willing to wait.
+// deps is willing to wait, and by the errors of responses still rate limited once the retries
+// gave up (LimitError).
 var ErrRateLimited = errors.New("rate limited")
 
 type idempotentKey struct{}
@@ -41,13 +42,17 @@ const (
 	backoffBase      = 500 * time.Millisecond
 	backoffCap       = 10 * time.Second
 	maxRateLimitWait = 60 * time.Second
-	drainLimit       = 64 << 10 // bytes read from a discarded body so the connection can be reused
+	// resetLag is the first wait when a rate limit is still exhausted after its reset (GitHub
+	// restores the quota up to about a second late); it doubles per further attempt.
+	resetLag   = time.Second
+	drainLimit = 64 << 10 // bytes read from a discarded body so the connection can be reused
 )
 
 // retryTransport retries idempotent requests on connection errors and on 429, 500, 502, 503
 // and 504 with exponential backoff and full jitter, honoring Retry-After. Rate limits (429, or
 // 403 with an exhausted X-RateLimit-Remaining or Retry-After) are waited out when they reset
-// within maxWait; later resets fail fast with ErrRateLimited.
+// within maxWait; later resets fail fast with ErrRateLimited. A limit still exhausted after its
+// reset is retried after resetLag, doubled per attempt.
 type retryTransport struct {
 	next    http.RoundTripper
 	maxWait time.Duration
@@ -76,8 +81,7 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			slog.DebugContext(ctx, "http retry", "method", req.Method, "url", req.URL.Redacted(), "attempt", attempt, "wait", wait, "err", err)
 		} else {
 			h := resp.Header
-			limited := resp.StatusCode == http.StatusTooManyRequests ||
-				resp.StatusCode == http.StatusForbidden && (exhausted(h) || h.Get("Retry-After") != "")
+			limited := rateLimited(resp.StatusCode, h)
 			if !limited && !retryStatus(resp.StatusCode) {
 				return resp, nil
 			}
@@ -95,6 +99,9 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			}
 			discard(resp)
 			if limited && hinted {
+				if attempt > 1 && wait < resetLag {
+					wait = min(resetLag<<(attempt-2), t.maxWait)
+				}
 				slog.InfoContext(ctx, "rate limited, waiting", "host", req.URL.Hostname(), "wait", wait, "until", until.UTC().Format(time.RFC3339))
 				if fn, ok := ctx.Value(rateLimitHookKey{}).(func(string, time.Time)); ok {
 					fn(req.URL.Hostname(), t.now().Add(wait))
@@ -126,14 +133,19 @@ func (t *retryTransport) backoff(attempt int) time.Duration {
 	return t.jitter(min(backoffCap, backoffBase<<(attempt-1)))
 }
 
-// hint returns when the server asks to be retried: Retry-After (seconds or HTTP date), or for
-// rate-limited responses X-RateLimit-Reset (epoch seconds), else the end of the quota window of
-// an exhausted `RateLimit-Remaining: 0;w=<seconds>` (Docker Hub sends no reset time, so the
-// window length is the latest the quota can recover).
+// hint returns when the server asks to be retried (retryHint at t's clock).
 func (t *retryTransport) hint(h http.Header, limited bool) (time.Time, bool) {
+	return retryHint(h, limited, t.now())
+}
+
+// retryHint returns when the server asks to be retried: Retry-After (seconds or HTTP date), or
+// for rate-limited responses X-RateLimit-Reset (epoch seconds), else the end of the quota
+// window of an exhausted `RateLimit-Remaining: 0;w=<seconds>` (Docker Hub sends no reset time,
+// so the window length is the latest the quota can recover).
+func retryHint(h http.Header, limited bool, now time.Time) (time.Time, bool) {
 	if v := h.Get("Retry-After"); v != "" {
 		if sec, err := strconv.ParseInt(v, 10, 64); err == nil && sec >= 0 {
-			return t.now().Add(time.Duration(sec) * time.Second), true
+			return now.Add(time.Duration(sec) * time.Second), true
 		}
 		if at, err := http.ParseTime(v); err == nil {
 			return at, true
@@ -146,9 +158,43 @@ func (t *retryTransport) hint(h http.Header, limited bool) (time.Time, bool) {
 		return time.Unix(sec, 0), true
 	}
 	if left, window := quota(h); left == "0" && window > 0 {
-		return t.now().Add(time.Duration(window) * time.Second), true
+		return now.Add(time.Duration(window) * time.Second), true
 	}
 	return time.Time{}, false
+}
+
+// rateLimited reports whether a response with status code and header h is a rate limit: a 429,
+// or a 403 with an exhausted quota or a Retry-After (GitHub's secondary limits).
+func rateLimited(code int, h http.Header) bool {
+	return code == http.StatusTooManyRequests || code == http.StatusForbidden && (exhausted(h) || h.Get("Retry-After") != "")
+}
+
+// LimitError returns the error of resp when it is a rate limit (a 429, or a 403 with an
+// exhausted quota or Retry-After) that the retries could not wait out: "rate limited by <host>
+// until <reset>" wrapping ErrRateLimited, without "by" when resp has no request and without
+// "until" when the server names no reset. It is nil for any other response.
+func LimitError(resp *http.Response) error {
+	if !rateLimited(resp.StatusCode, resp.Header) {
+		return nil
+	}
+	by := ""
+	if resp.Request != nil && resp.Request.URL != nil {
+		by = " by " + resp.Request.URL.Hostname()
+	}
+	until, ok := retryHint(resp.Header, true, time.Now())
+	if !ok {
+		return fmt.Errorf("%w%s", ErrRateLimited, by)
+	}
+	return fmt.Errorf("%w%s until %s", ErrRateLimited, by, until.UTC().Format(time.RFC3339))
+}
+
+// ResponseError describes a response with an unexpected status: "HTTP <code>", followed for a
+// rate limit by ": " and its LimitError, which it wraps.
+func ResponseError(resp *http.Response) error {
+	if err := LimitError(resp); err != nil {
+		return fmt.Errorf("HTTP %d: %w", resp.StatusCode, err)
+	}
+	return fmt.Errorf("HTTP %d", resp.StatusCode)
 }
 
 // quota parses the requests left from X-RateLimit-Remaining or RateLimit-Remaining: GitHub

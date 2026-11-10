@@ -160,9 +160,15 @@ func writePRTable(b *strings.Builder, p previewPR) {
 }
 
 // markdown renders the preview; errs are the lookup errors of the PR's checkout, baseErrs
-// those of the base checkout, base the line naming the base branch and its config files
-// (previewBases), "" when unknown.
+// those of the base checkout (rate-limited lookups among either are listed apart, as
+// warnings), base the line naming the base branch and its config files (previewBases), ""
+// when unknown.
 func (d previewDiff) markdown(errs, baseErrs []error, base string) string {
+	errs, limited := splitRateLimited(errs)
+	baseErrs, baseLimited := splitRateLimited(baseErrs)
+	for _, e := range baseLimited {
+		limited = append(limited, fmt.Errorf("base checkout: %w", e))
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "## deps preview\n\n**%s**\n\n", d.headline())
 	if base != "" {
@@ -198,6 +204,13 @@ func (d previewDiff) markdown(errs, baseErrs []error, base string) string {
 			fmt.Fprintf(&b, "- %s (`%s`)\n", p.Title, p.Branch)
 		}
 		b.WriteString("\n")
+	}
+	if len(limited) > 0 {
+		fmt.Fprintf(&b, "### Rate limited\n\n%s skipped: %s.\n\n```\n", plural(len(limited), "lookup", "lookups"), rateLimitHint)
+		for _, e := range limited {
+			fmt.Fprintln(&b, e)
+		}
+		b.WriteString("```\n")
 	}
 	if len(errs) > 0 {
 		b.WriteString("### Errors\n\n```\n")
@@ -298,7 +311,8 @@ func preview(ctx context.Context, cmd *cli.Command, o *rootOpts, baseDir, branch
 		}
 	}
 	fmt.Fprintf(stderr, "%s (%s)\n", d.headline(), time.Since(start).Round(time.Millisecond))
-	if len(headRes.Errors) > 0 {
+	// Rate-limited lookups are warnings (reportError): they do not fail the preview.
+	if headErrs, _ := splitRateLimited(headRes.Errors); len(headErrs) > 0 {
 		return errReported
 	}
 	return nil

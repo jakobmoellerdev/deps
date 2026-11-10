@@ -235,12 +235,12 @@ func TestReleasesErrors(t *testing.T) {
 		{name: "not found", dep: "o/r", want: "releases o/r: HTTP 404", h: func(w http.ResponseWriter, _ *http.Request) {
 			http.NotFound(w, nil)
 		}},
-		{name: "rate limited", dep: "o/r", want: "releases o/r: HTTP 403: rate limit exceeded (resets 2026-11-03T12:00:00Z)", h: func(w http.ResponseWriter, _ *http.Request) {
+		{name: "rate limited", dep: "o/r", want: "releases o/r: HTTP 403: rate limited by 127.0.0.1 until 2026-11-03T12:00:00Z", h: func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("X-RateLimit-Remaining", "0")
 			w.Header().Set("X-RateLimit-Reset", "1793707200")
 			w.WriteHeader(http.StatusForbidden)
 		}},
-		{name: "rate limited bad reset", dep: "o/r", want: "HTTP 429: rate limit exceeded (resets soon)", h: func(w http.ResponseWriter, _ *http.Request) {
+		{name: "rate limited bad reset", dep: "o/r", want: "releases o/r: HTTP 429: rate limited by 127.0.0.1", h: func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("X-RateLimit-Remaining", "0")
 			w.Header().Set("X-RateLimit-Reset", "soon")
 			w.WriteHeader(http.StatusTooManyRequests)
@@ -270,7 +270,7 @@ func TestReleasesErrors(t *testing.T) {
 			}
 			s, _ := newSource(t, h, nil)
 			rels, err := s.Releases(context.Background(), dep.Dep{Name: c.dep}, "")
-			if err == nil || rels != nil || !strings.Contains(err.Error(), c.want) {
+			if err == nil || rels != nil || !strings.Contains(err.Error(), c.want) || errors.Is(err, httpx.ErrRateLimited) != strings.HasPrefix(c.name, "rate limited") {
 				t.Errorf("got %v, %v; want error containing %q", rels, err, c.want)
 			}
 		})

@@ -22,6 +22,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/actions"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/bazel"
@@ -68,6 +69,15 @@ func (e *DepError) Error() string {
 }
 
 func (e *DepError) Unwrap() error { return e.Err }
+
+// RateLimited reports whether err is a DepError whose lookup failed on an exhausted rate limit
+// (httpx.ErrRateLimited). The commands report such a dep as a warning that does not fail them;
+// it stays in Result.Errors, so the bot treats the dep as unresolved like any failed lookup
+// (it keeps the dep's open PRs and branches).
+func RateLimited(err error) bool {
+	de, ok := errors.AsType[*DepError](err)
+	return ok && errors.Is(de.Err, httpx.ErrRateLimited)
+}
 
 // FileError is the extraction error of one dependency file.
 type FileError struct {
@@ -596,7 +606,17 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 		listed = depReports(todo, outs, pend, res.Updates, upAt, ups)
 	}
 	sortUpdates(res.Updates)
-	slog.InfoContext(ctx, "dependencies resolved", "updates", len(res.Updates), "errors", len(res.Errors), "duration", time.Since(start))
+	limited := 0
+	for _, err := range res.Errors {
+		if RateLimited(err) {
+			limited++
+		}
+	}
+	attrs := []any{"updates", len(res.Updates), "errors", len(res.Errors) - limited}
+	if limited > 0 {
+		attrs = append(attrs, "rateLimited", limited)
+	}
+	slog.InfoContext(ctx, "dependencies resolved", append(attrs, "duration", time.Since(start))...)
 	if lister != nil {
 		lister.ListDeps(listed)
 	}

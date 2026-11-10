@@ -4638,7 +4638,7 @@ A later custom entry whose match covers exactly the same version bytes, with the
 
 - All network calls share one HTTP/2 client. Concurrent requests are limited per upstream with `--concurrency` n (default 32): the npm registry and OSV get 2n slots each, container registries (Docker Hub, GHCR, Helm OCI charts) n/2, and everything else (Go proxy, GitHub, git tags, Helm repositories, custom datasources) shares n. A busy upstream doesn't hold up the others.
 - Idempotent requests are retried up to 3 times on connection errors and 429/500/502/503/504, with jittered exponential backoff, honoring `Retry-After`.
-- Rate limits that reset within 60s are waited out. Longer ones fail fast with `rate limited by <host> until <time>`.
+- Rate limits that reset within 60s are waited out; one still exhausted after its reset is retried after 1s, then 2s. Longer ones fail fast with `rate limited by <host> until <time>`. A lookup that fails on a rate limit is a warning: the dependency is skipped until the next run and the exit code stays 0.
 - Lookups are deduped within a run. There is no persistent cache.
 
 | Datasource | Dep name | Endpoints | Auth | Release times |

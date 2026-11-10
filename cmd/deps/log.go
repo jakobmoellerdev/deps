@@ -33,6 +33,9 @@ type terminal struct {
 // errorLabel starts an error line: "error", red with colors.
 func (t terminal) errorLabel() string { return t.style.Paint(logx.Red, "error") }
 
+// warnLabel starts a warning line: "warn", yellow with colors.
+func (t terminal) warnLabel() string { return t.style.Paint(logx.Yellow, "warn") }
+
 // setupLogger installs the default slog logger writing to w and returns how the results on
 // w are rendered. tty tells whether w is a terminal, outTTY whether stdout is. An empty level
 // is warn.

@@ -510,7 +510,7 @@ func (s *Source) get(ctx context.Context, target, name, accept string) (*http.Re
 		return nil, errNotAcceptable
 	case resp.StatusCode < 200 || resp.StatusCode > 299:
 		closeBody(resp)
-		return nil, fmt.Errorf("pypi %s: HTTP %d", httpx.Redact(target), resp.StatusCode)
+		return nil, fmt.Errorf("pypi %s: %w", httpx.Redact(target), httpx.ResponseError(resp))
 	}
 	return resp, nil
 }

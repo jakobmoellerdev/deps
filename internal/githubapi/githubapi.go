@@ -170,17 +170,14 @@ func (c *Client) restDo(ctx context.Context, r Repo, path string, logRate bool, 
 	return decode(resp.Body)
 }
 
-// statusError describes a non-2xx REST or GraphQL response: a 404 wraps ErrNotFound and an
-// exhausted rate limit names its reset time.
+// statusError describes a non-2xx REST or GraphQL response: a 404 wraps ErrNotFound and a
+// rate limit (a 429, or a 403 with an exhausted quota or Retry-After) wraps
+// httpx.ErrRateLimited, naming its host and reset time.
 func statusError(resp *http.Response) error {
-	h := resp.Header
-	switch {
-	case resp.StatusCode == http.StatusNotFound:
+	if resp.StatusCode == http.StatusNotFound {
 		return fmt.Errorf("HTTP %d: %w", resp.StatusCode, ErrNotFound)
-	case h.Get("X-RateLimit-Remaining") == "0":
-		return fmt.Errorf("HTTP %d: rate limit exceeded (resets %s)", resp.StatusCode, resetTime(h.Get("X-RateLimit-Reset")))
 	}
-	return fmt.Errorf("HTTP %d", resp.StatusCode)
+	return httpx.ResponseError(resp)
 }
 
 // gqlError is one entry of a GraphQL `errors` array.

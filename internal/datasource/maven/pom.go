@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 )
 
 // maxPOM bounds the size of a POM document.
@@ -220,7 +221,7 @@ func (s *Source) fetchPOM(ctx context.Context, u string, a *auth) (*pomXML, bool
 	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone:
 		return nil, true, nil
 	case resp.StatusCode != http.StatusOK:
-		return nil, false, fmt.Errorf("GET %s: HTTP %d", u, resp.StatusCode)
+		return nil, false, fmt.Errorf("GET %s: %w", u, httpx.ResponseError(resp))
 	}
 	p := &pomXML{}
 	dec := xml.NewDecoder(io.LimitReader(resp.Body, maxPOM))

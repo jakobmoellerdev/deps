@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -53,8 +54,61 @@ func TestPlanReportAndOutputs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "updates=3\nprs=2\nheld-back=0\nskipped=2\nerrors=1\n"; string(got) != want {
+	if want := "updates=3\nprs=2\nheld-back=0\nskipped=2\nrate-limited=0\nerrors=1\n"; string(got) != want {
 		t.Errorf("outputs = %q, want %q", got, want)
+	}
+}
+
+// A lookup that fails on an exhausted rate limit is a warning: listed apart from the errors,
+// annotated as a warning and not failing plan.
+func TestPlanRateLimitedIsWarning(t *testing.T) {
+	cleanEnv(t)
+	f := newFakeNet(t)
+	f.mux.HandleFunc("GET proxy.test/example.com/limited/@v/list", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "3600")
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{"go.mod": gomodSrc + "require example.com/limited v1.0.0\n"})
+	out := filepath.Join(t.TempDir(), "out")
+	t.Setenv("GITHUB_OUTPUT", out)
+	t.Setenv("GITHUB_ACTIONS", "true")
+	report := filepath.Join(t.TempDir(), "report.json")
+
+	_, stderr, code := execute(t, "plan", "--dir", dir, "--report", report)
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	for _, want := range []string{
+		"warn\x1b[0m    go.mod:6: example.com/limited: GET https://proxy.test/example.com/limited/@v/list: HTTP 429: rate limited by proxy.test until ",
+		"go.mod,line=6,title=deps::example.com/limited: ",
+		"::warning file=",
+		"  example.com/limited  skipped: rate limited by proxy.test until ",
+		"1 skipped, \x1b[33m1 rate limited\x1b[0m, 0 errors (",
+		"  Rate limited: 1 lookup (the next run looks them up again",
+		"1 updates in 1 files, 1 skipped, 1 rate limited, 0 errors\n",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr lacks %q:\n%s", want, stderr)
+		}
+	}
+	if strings.Contains(stderr, "::error") || strings.Contains(stderr, "error:") || strings.Contains(stderr, "\x1b[31merror") {
+		t.Errorf("rate limit reported as an error:\n%s", stderr)
+	}
+	b, err := os.ReadFile(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r jsonReport
+	if err := json.Unmarshal(b, &r); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Errors) != 0 || len(r.RateLimited) != 1 || r.RateLimited[0].File != "go.mod" || r.RateLimited[0].Line != 6 ||
+		r.Counts["rateLimited"] != 1 || r.Counts["errors"] != 0 {
+		t.Errorf("report = %s", b)
+	}
+	if got, _ := os.ReadFile(out); !strings.Contains(string(got), "rate-limited=1\nerrors=0\n") {
+		t.Errorf("outputs = %q", got)
 	}
 }
 
@@ -99,7 +153,7 @@ func TestRunCounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ := os.ReadFile(p)
-	want := "updates=3\nprs=3\ncreated=1\nupdated=1\nclosed=1\nup-to-date=2\nautomerged=2\nprs-skipped=1\nheld-back=1\nskipped=3\nerrors=1\n"
+	want := "updates=3\nprs=3\ncreated=1\nupdated=1\nclosed=1\nup-to-date=2\nautomerged=2\nprs-skipped=1\nheld-back=1\nskipped=3\nrate-limited=0\nerrors=1\n"
 	if string(got) != want {
 		t.Errorf("outputs:\n%s\nwant:\n%s", got, want)
 	}
@@ -125,7 +179,7 @@ func TestMultiRunCountsAllFailed(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ := os.ReadFile(p)
-	want := "updates=0\nprs=0\ncreated=0\nupdated=0\nclosed=0\nup-to-date=0\nautomerged=0\nprs-skipped=0\nheld-back=0\nskipped=0\nerrors=1\n"
+	want := "updates=0\nprs=0\ncreated=0\nupdated=0\nclosed=0\nup-to-date=0\nautomerged=0\nprs-skipped=0\nheld-back=0\nskipped=0\nrate-limited=0\nerrors=1\n"
 	if string(got) != want {
 		t.Errorf("outputs:\n%s\nwant:\n%s", got, want)
 	}

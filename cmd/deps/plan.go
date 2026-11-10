@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -232,7 +233,8 @@ func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error
 	if write {
 		cmdName = "apply"
 	}
-	sum := summary{Command: cmdName, Res: res, Groups: engine.GroupUpdates(res.Updates, s.cfg.Prefix()), Errors: errs, Elapsed: time.Since(start), ShowSkipped: o.showSkipped,
+	errs, limited := splitRateLimited(errs)
+	sum := summary{Command: cmdName, Res: res, Groups: engine.GroupUpdates(res.Updates, s.cfg.Prefix()), Errors: errs, RateLimited: limited, Elapsed: time.Since(start), ShowSkipped: o.showSkipped,
 		Unused: s.cfg.UnusedRules(res.Deps), Config: s.cfg, Report: o.report, Style: o.term.style}
 	sum.write(stderr)
 	reportErr := sum.writeMachine(stderr, o.report)
@@ -242,12 +244,35 @@ func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error
 		for _, u := range res.Updates {
 			files[u.Dep.File] = true
 		}
-		fmt.Fprintf(stderr, "%d updates in %d files, %d skipped, %d errors\n", len(res.Updates), len(files), len(res.Skipped), len(errs))
+		fmt.Fprintf(stderr, "%d updates in %d files, %d skipped, %s%d errors\n", len(res.Updates), len(files), len(res.Skipped), rateLimitedCount(limited), len(errs))
 	}
 	if len(errs) > 0 {
 		return errReported
 	}
 	return reportErr
+}
+
+// splitRateLimited splits errs into the errors and the lookups that failed on an exhausted
+// rate limit (engine.RateLimited): those are warnings, retried by the next run, and do not
+// fail the command.
+func splitRateLimited(errs []error) (failed, limited []error) {
+	for _, e := range errs {
+		if engine.RateLimited(e) {
+			limited = append(limited, e)
+		} else {
+			failed = append(failed, e)
+		}
+	}
+	return failed, limited
+}
+
+// rateLimitedCount is "<n> rate limited, " for the counts lines, "" without rate-limited
+// lookups.
+func rateLimitedCount(limited []error) string {
+	if len(limited) == 0 {
+		return ""
+	}
+	return strconv.Itoa(len(limited)) + " rate limited, "
 }
 
 // report prints update, skip (--show-skipped) and error lines. separate (nil for run) marks the
@@ -296,9 +321,14 @@ func report(w io.Writer, t terminal, showSkipped bool, res *engine.Result, errs 
 	}
 }
 
-// reportError prints the error line of e and annotates e.
+// reportError prints the error line of e and annotates e; a rate-limited lookup
+// (engine.RateLimited) gets a warning line and annotation instead.
 func reportError(w io.Writer, t terminal, e error) {
-	fmt.Fprintf(w, "%s   %v\n", t.errorLabel(), e)
+	if engine.RateLimited(e) {
+		fmt.Fprintf(w, "%s    %v\n", t.warnLabel(), e)
+	} else {
+		fmt.Fprintf(w, "%s   %v\n", t.errorLabel(), e)
+	}
 	actionsLog.error(e)
 }
 

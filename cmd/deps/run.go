@@ -442,9 +442,12 @@ func runRepo(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts, sh 
 		reportError(stderr, o.term, e)
 	}
 	res, groups := runResult(botBases, s.cfg.Prefix(), multiBase, resErrs)
-	nErr := len(res.Errors) + len(botErrs)
+	// Rate-limited lookups stay in res.Errors (the bot kept their deps' PRs and branches) but
+	// are warnings: they do not fail the run.
+	errs, limited := splitRateLimited(append(append([]error(nil), res.Errors...), botErrs...))
+	nErr := len(errs)
 	sum := summary{Command: "run", Run: true, Res: res, Groups: groups, Actions: actions,
-		Errors: append(append([]error(nil), res.Errors...), botErrs...), Elapsed: time.Since(start), ShowSkipped: o.showSkipped, Unused: unused, Config: s.cfg, Report: o.report, Style: o.term.style}
+		Errors: errs, RateLimited: limited, Elapsed: time.Since(start), ShowSkipped: o.showSkipped, Unused: unused, Config: s.cfg, Report: o.report, Style: o.term.style}
 	if r.dryRun {
 		sum.Command = "run --dry-run"
 	}
@@ -457,7 +460,7 @@ func runRepo(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts, sh 
 	if multi == nil {
 		reportErr = sum.writeMachine(stderr, sum.Report)
 	}
-	fmt.Fprintf(stderr, "%d created, %d updated, %d closed, %d up-to-date, %d skipped, %d automerge, %d errors", n.created, n.updated, n.closed, n.upToDate, n.skipped, n.automerged, nErr)
+	fmt.Fprintf(stderr, "%d created, %d updated, %d closed, %d up-to-date, %d skipped, %d automerge, %s%d errors", n.created, n.updated, n.closed, n.upToDate, n.skipped, n.automerged, rateLimitedCount(limited), nErr)
 	if r.dryRun {
 		fmt.Fprintf(stderr, " (dry run: %d would change, %d would automerge)", n.would, n.wouldAutomerge)
 	}

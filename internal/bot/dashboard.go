@@ -183,8 +183,9 @@ func dashboardItems(actions []Action) dashboardLists {
 // renderDashboard renders the dashboard body: per base branch (headed by it when sections name
 // it) updates awaiting approval, pending PRs (schedule, limits), ignored or blocked updates,
 // branches waiting for branch automerge or for their checks (prCreation), open PRs and
-// deprecated and abandoned dependencies, then the errors and the detected dependencies of
-// each base. It is deterministic, so an unchanged run does not edit the issue, and bounded to
+// deprecated and abandoned dependencies, then the rate-limited lookups among errs
+// (engine.RateLimited, warnings), the other errors and the detected dependencies of each base.
+// It is deterministic, so an unchanged run does not edit the issue, and bounded to
 // dashboardMaxBytes; every checkbox is unticked again.
 func renderDashboard(sections []dashboardSection, errs []error) string {
 	w := &budget{left: dashboardMaxBytes - len(dashboardMarker) - 2}
@@ -211,16 +212,16 @@ func renderDashboard(sections []dashboardSection, errs []error) string {
 		w.section(level, "Abandoned dependencies", "These dependencies had no release within `abandonmentThreshold`.", l.abandoned)
 	}
 
-	if len(errs) > 0 {
-		lines := make([]string, 0, min(len(errs), dashboardMaxErrors)+1)
-		for _, e := range errs[:min(len(errs), dashboardMaxErrors)] {
-			lines = append(lines, "- `"+oneLine(e.Error(), dashboardErrorLen)+"`")
+	var limited, failed []error
+	for _, e := range errs {
+		if engine.RateLimited(e) {
+			limited = append(limited, e)
+		} else {
+			failed = append(failed, e)
 		}
-		if n := len(errs) - dashboardMaxErrors; n > 0 {
-			lines = append(lines, fmt.Sprintf("- … and %d more (see the run log)", n))
-		}
-		w.section("##", "Errors", "The last run reported these errors.", lines)
 	}
+	w.section("##", "Rate-limited lookups", "The last run skipped these lookups because their host's rate limit was exhausted; the next run looks them up again.", errorLines(limited))
+	w.section("##", "Errors", "The last run reported these errors.", errorLines(failed))
 	const detected = "## Detected dependencies"
 	headed := false
 	for _, sec := range sections {
@@ -238,6 +239,21 @@ func renderDashboard(sections []dashboardSection, errs []error) string {
 	}
 	w.b.WriteString("\n" + dashboardMarker + "\n")
 	return w.b.String()
+}
+
+// errorLines renders errs as list items, at most dashboardMaxErrors of them; nil without errs.
+func errorLines(errs []error) []string {
+	if len(errs) == 0 {
+		return nil
+	}
+	lines := make([]string, 0, min(len(errs), dashboardMaxErrors)+1)
+	for _, e := range errs[:min(len(errs), dashboardMaxErrors)] {
+		lines = append(lines, "- `"+oneLine(e.Error(), dashboardErrorLen)+"`")
+	}
+	if n := len(errs) - dashboardMaxErrors; n > 0 {
+		lines = append(lines, fmt.Sprintf("- … and %d more (see the run log)", n))
+	}
+	return lines
 }
 
 // warningLines renders the warnings of kind, one line per dep name and reason with the files

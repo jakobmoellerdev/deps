@@ -340,7 +340,7 @@ func (s *Source) OpenArtifact(ctx context.Context, d dep.Dep, u string) (io.Read
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		closeBody(resp)
-		return nil, fmt.Errorf("GET %s: HTTP %d", target, resp.StatusCode)
+		return nil, fmt.Errorf("GET %s: %w", target, httpx.ResponseError(resp))
 	}
 	slog.DebugContext(ctx, "maven artifact opened", "url", target, "authenticated", a != nil)
 	return resp.Body, nil
@@ -395,7 +395,7 @@ func (s *Source) fetchMetadata(ctx context.Context, u string, a *auth) (versions
 	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone:
 		return nil, true, nil
 	case resp.StatusCode != http.StatusOK:
-		return nil, false, fmt.Errorf("GET %s: HTTP %d", u, resp.StatusCode)
+		return nil, false, fmt.Errorf("GET %s: %w", u, httpx.ResponseError(resp))
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, maxMetadata))
 	if err != nil {

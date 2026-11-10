@@ -178,7 +178,7 @@ func TestGraphQLErrors(t *testing.T) {
 		"limited":      "releases o/limited: rate limited by github.com until 2026-11-03T12:00:00Z: API rate limit exceeded for user ID 1.",
 		"other":        "releases o/other: graphql: Field 'x' doesn't exist; boom",
 		"unauthorized": "releases o/unauthorized: HTTP 401",
-		"exhausted":    "releases o/exhausted: HTTP 403: rate limit exceeded (resets 2026-11-03T12:00:00Z)",
+		"exhausted":    "releases o/exhausted: HTTP 403: rate limited by 127.0.0.1 until 2026-11-03T12:00:00Z",
 		"html":         "releases o/html: malformed response: jsontext: invalid character '<' at start of value",
 	} {
 		r := Repo{Scheme: "https", Host: "github.com", Owner: "o", Name: name}
@@ -187,7 +187,7 @@ func TestGraphQLErrors(t *testing.T) {
 			if err == nil || !strings.HasPrefix(err.Error(), want) {
 				t.Errorf("%s: err = %v, want %q", name, err, want)
 			}
-			if errors.Is(err, ErrNotFound) != (name == "missing" || name == "null") || errors.Is(err, httpx.ErrRateLimited) != (name == "limited") {
+			if errors.Is(err, ErrNotFound) != (name == "missing" || name == "null") || errors.Is(err, httpx.ErrRateLimited) != (name == "limited" || name == "exhausted") {
 				t.Errorf("%s: error kind of %v", name, err)
 			}
 		}

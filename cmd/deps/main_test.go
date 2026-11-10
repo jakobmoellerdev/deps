@@ -66,7 +66,9 @@ func (f *fakeNet) RoundTrip(req *http.Request) (*http.Response, error) {
 	req.Host = req.URL.Host
 	rec := httptest.NewRecorder()
 	f.mux.ServeHTTP(rec, req)
-	return rec.Result(), nil
+	resp := rec.Result()
+	resp.Request = req // as net/http's transport sets it
+	return resp, nil
 }
 
 func newFakeNet(t *testing.T) *fakeNet {

@@ -124,8 +124,9 @@ func (a *annotator) command(kind, file string, line, col int, msg string) {
 	fmt.Fprintf(a.w, "::%s %s::%s\n", kind, strings.Join(props, ","), escapeData(msg))
 }
 
-// error annotates err: a dependency error at its file and line, a file error at its file, a
-// config error at each problem's line in the config file, anything else without a location.
+// error annotates err: a dependency error at its file and line (a warning when its lookup was
+// rate limited, engine.RateLimited), a file error at its file, a config error at each
+// problem's line in the config file, anything else without a location.
 func (a *annotator) error(err error) {
 	if a == nil || !a.on {
 		return
@@ -135,7 +136,11 @@ func (a *annotator) error(err error) {
 	var fe *engine.FileError
 	switch {
 	case errors.As(err, &de):
-		a.command("error", a.path(a.dir, de.File), de.Line, 0, de.Name+": "+de.Err.Error())
+		kind := "error"
+		if engine.RateLimited(err) {
+			kind = "warning"
+		}
+		a.command(kind, a.path(a.dir, de.File), de.Line, 0, de.Name+": "+de.Err.Error())
 	case errors.As(err, &fe):
 		a.command("error", a.path(a.dir, fe.File), 0, 0, fe.Err.Error())
 	case errors.As(err, &ce) && len(ce.Problems()) > 0:
