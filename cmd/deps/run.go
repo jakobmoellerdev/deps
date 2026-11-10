@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
+
 	"errors"
 	"fmt"
 	"log/slog"
@@ -11,10 +11,8 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/urfave/cli/v3"
 
@@ -250,14 +248,20 @@ func runBot(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts) erro
 	default:
 		return &usageError{fmt.Errorf("--platform: invalid value %q", r.platform)}
 	}
-	repos := r.repositories
-	if !cmd.IsSet("repositories") {
-		repos = strings.FieldsFunc(os.Getenv(flagEnv("repositories")), func(c rune) bool { return c == ',' || unicode.IsSpace(c) })
+	specs, err := parseRepoSpecs(repositoryEntries(cmd, r.repositories))
+	if err != nil {
+		return err
 	}
-	if err := validateRepositories(repos); err != nil {
-		return &usageError{err}
+	for i := range specs {
+		switch {
+		case specs[i].URL:
+			return &usageError{fmt.Errorf("--repositories: %q: run needs owner/name entries on its forge, not a git URL", specs[i].Repo)}
+		case specs[i].Ref != "":
+			return &usageError{fmt.Errorf("--repositories: %q: run reads the base branch; use --base", specs[i].Repo+"#"+specs[i].Ref)}
+		}
+		specs[i].Ref = r.base
 	}
-	if len(repos) > 0 && r.repo != "" {
+	if len(specs) > 0 && r.repo != "" {
 		return &usageError{errors.New("--repo and --repositories are mutually exclusive")}
 	}
 	trigger, err := detectTrigger(ctx, r.triggerSchedule, flagSource(cmd, "trigger-schedule"), r.scheduleTime, flagSource(cmd, "schedule-time"), os.Getenv)
@@ -283,22 +287,22 @@ func runBot(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts) erro
 	}
 	remote, err := gitx.Repo{Dir: dir}.RemoteURL(ctx)
 	if err != nil {
-		if len(repos) == 0 {
+		if len(specs) == 0 {
 			return err
 		}
 		remote = "" // the forge must come from the CI environment
 	}
 	info, err := platform.Detect(ctx, os.Getenv, remote, ov, sh.client)
 	if err != nil {
-		if len(repos) > 0 && remote == "" {
+		if len(specs) > 0 && remote == "" {
 			return fmt.Errorf("--repositories: no forge in the CI environment and no origin remote in %s to detect it from: %w", dir, err)
 		}
 		return err
 	}
 	if info.Kind != platform.GitLab {
-		for _, e := range repos {
-			if owner, _ := splitRepository(e); strings.Contains(owner, "/") {
-				return &usageError{fmt.Errorf("--repositories: %q: %s repositories are owner/name; nested group paths exist only on GitLab", e, info.Kind)}
+		for _, s := range specs {
+			if owner, _ := splitRepository(s.Repo); strings.Contains(owner, "/") {
+				return &usageError{fmt.Errorf("--repositories: %q: %s repositories are owner/name; nested group paths exist only on GitLab", s.Repo, info.Kind)}
 			}
 		}
 	}
@@ -315,8 +319,9 @@ func runBot(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts) erro
 	if sh.token == "" && !r.dryRun {
 		return fmt.Errorf("no token for %s", info.Host)
 	}
-	if len(repos) > 0 {
-		return runRepositories(ctx, cmd, o, r, sh, info, repos)
+	if len(specs) > 0 {
+		src := &remoteSource{specs: specs, info: info, token: sh.token, client: sh.client}
+		return runRepositories(ctx, cmd, o, r, sh, src)
 	}
 
 	s, err := newSession(ctx, o, info, sh.token, sh.client, cmd.Root().ErrWriter)
@@ -471,19 +476,12 @@ func runRepo(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts, sh 
 	return reportErr
 }
 
-// validateRepositories checks the --repositories entries: owner/name, or owner/<glob> with
-// path.Match globs in the path after the owner, where ** matches any number of path
-// segments. GitLab's owner can be a group path (group/sub/name, group/sub/*, group/**).
-func validateRepositories(repos []string) error {
-	for _, e := range repos {
-		owner, pattern := splitRepository(e)
-		if owner == "" || pattern == "" || slices.Contains(strings.Split(e, "/"), "") {
-			return fmt.Errorf("--repositories: %q must be owner/name or owner/<glob>", e)
-		}
-		for seg := range strings.SplitSeq(pattern, "/") {
-			if _, err := path.Match(seg, ""); seg != "**" && err != nil {
-				return fmt.Errorf("--repositories: %q: %w", e, err)
-			}
+// validateGlob checks the name pattern of a --repositories entry: path.Match globs per path
+// segment, where ** matches any number of segments.
+func validateGlob(pattern string) error {
+	for seg := range strings.SplitSeq(pattern, "/") {
+		if _, err := path.Match(seg, ""); seg != "**" && err != nil {
+			return fmt.Errorf("%q: %w", pattern, err)
 		}
 	}
 	return nil
@@ -573,103 +571,30 @@ func expandRepositories(ctx context.Context, info platform.Info, token string, c
 // of its base branch in a temporary directory, authenticated with the token, and the config
 // found there (or --config). The datasources are shared, so a release list is fetched once
 // for all of them. A failing repository does not stop the others.
-func runRepositories(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts, sh *runShared, info platform.Info, entries []string) error {
+func runRepositories(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts, sh *runShared, src *remoteSource) error {
 	start := time.Now()
 	stderr := cmd.Root().ErrWriter
-	names, err := expandRepositories(ctx, info, sh.token, sh.client, entries)
-	if err != nil {
-		return err
-	}
-	if len(names) == 0 {
-		return fmt.Errorf("--repositories: no repository matches %s", strings.Join(entries, ", "))
-	}
-	work, err := os.MkdirTemp("", "deps-repositories-*")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(work)
 	command := "run"
 	if r.dryRun {
 		command = "run --dry-run"
 	}
 	multi := newMultiRun(command)
-	header := gitAuthHeader(sh.token)
-	var base *session // the first session; later repositories share its datasources
-	defer func() {
-		if base != nil {
-			base.close()
+	var sessions repoSessions
+	defer sessions.close()
+	total, failed, err := src.eachRepository(ctx, o, stderr, multi, func(dir, _ string, info platform.Info) error {
+		s, err := sessions.open(ctx, o, dir, info, sh.token, sh.client, stderr)
+		if err != nil {
+			return err
 		}
-		actionsLog.setRepo("")
-	}()
-	failed := 0
-	for i, name := range names {
-		fmt.Fprintf(stderr, "repository %s\n", name)
-		actionsLog.setRepo(name)
-		ri := info
-		ri.Repo = name
-		dir := filepath.Join(work, strconv.Itoa(i))
-		err := func() error {
-			defer os.RemoveAll(dir)
-			if err := cloneRepository(ctx, ri, header, r.base, dir); err != nil {
-				return err
-			}
-			var s *session
-			var err error
-			if base == nil {
-				ro := *o
-				ro.dir = dir
-				if s, err = newSession(ctx, &ro, ri, sh.token, sh.client, stderr); err == nil {
-					base = s
-				}
-			} else if s, err = base.forCheckout(ctx, dir, o.config, ri); err == nil {
-				printLint(stderr, s.cfg)
-			}
-			if err != nil {
-				return err
-			}
-			return runRepo(ctx, cmd, o, r, sh, s, time.Now(), multi)
-		}()
-		if err == nil {
-			continue
-		}
-		failed++
-		if !errors.Is(err, errReported) {
-			reportError(stderr, o.term, fmt.Errorf("%s: %w", name, err))
-			multi.fail(name, err)
-		}
-		if ctx.Err() != nil {
-			break
-		}
+		return runRepo(ctx, cmd, o, r, sh, s, time.Now(), multi)
+	})
+	if err != nil {
+		return err
 	}
-	actionsLog.setRepo("")
 	reportErr := multi.write(stderr, o.report, time.Since(start))
-	fmt.Fprintf(stderr, "%d repositories, %d failed\n", len(names), failed)
+	fmt.Fprintf(stderr, "%d repositories, %d failed\n", total, failed)
 	if failed > 0 {
 		return errReported
 	}
 	return reportErr
-}
-
-// gitAuthHeader is the http.extraheader that authenticates git with token as Basic
-// credentials, as actions/checkout sets it; "" without a token. The token and the encoded
-// credentials are masked in the CI log.
-func gitAuthHeader(token string) string {
-	if token == "" {
-		return ""
-	}
-	creds := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
-	actionsLog.mask(token)
-	actionsLog.mask(creds)
-	return "AUTHORIZATION: basic " + creds
-}
-
-// cloneRepository clones the base branch (default: the default branch) of the repository
-// info.Repo into dir with the git auth header for the forge, which the clone keeps for the
-// pushes of the run.
-func cloneRepository(ctx context.Context, info platform.Info, header, base, dir string) error {
-	scope := strings.TrimSuffix(info.ServerURL, "/") + "/"
-	if err := gitx.Clone(ctx, scope+info.Repo+".git", dir, base, scope, header); err != nil {
-		return fmt.Errorf("clone: %w", err)
-	}
-	return nil
 }

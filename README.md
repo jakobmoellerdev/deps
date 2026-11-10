@@ -310,7 +310,7 @@ flowchart LR
 - **Release notes in every PR:** notes, release ages and a compare link.
 - **Fast and light.** One directory walk, deduplicated lookups, commits without a checkout or worktree. See the numbers below.
 - **Runs anywhere.** Same binary on your laptop, in GitHub, Gitea or Forgejo Actions and in GitLab CI; the forge is detected automatically.
-- **Scales to an organisation.** Several base branches per repository (`baseBranches`, each with its own config via `useBaseBranchConfig`), shared config through `extends`, and one job for many repositories (`run --repositories my-org/*`, also GitLab groups).
+- **Scales to an organisation.** Several base branches per repository (`baseBranches`, each with its own config via `useBaseBranchConfig`), shared config through `extends`, and one job for many repositories (`run --repositories my-org/*`, also GitLab groups). `plan` and `explain` take the same flag and clone the repositories themselves, so `deps plan --repositories my-org/*` reports a whole organisation read-only, without a checkout.
 
 ### Compared with Renovate and Dependabot
 

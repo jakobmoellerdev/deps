@@ -379,6 +379,8 @@ The header names the manager, dep type, datasource and versioning. The other lin
 
 Config warnings (`warn    <config>: <field>: <msg>`) and errors go to stderr; see `deps help output`. A glob that matches no dependency fails with `no dependency matches <globs>` (exit 1). No globs, or an invalid glob, exits 2.
 
+**Remote repositories.** `--repositories` reads clones of the listed repositories instead of the checkout in `--dir`, with the entry grammar and behaviour of `deps plan` (see `deps help plan`).
+
 ### deps explain examples
 
 ```sh
@@ -396,6 +398,7 @@ deps explain --base release/1.x 'actions/*'
 | `--config` | string | `""` | config file, which must exist (when not set: \<dir>/.deps.yaml, then .deps.yml, else built-in defaults); a Renovate file name (renovate.json, .renovaterc, …) turns on --renovate |
 | `--dir` | string | `"."` | repository directory to scan |
 | `--renovate` | bool | `false` | compatibility mode: translate the Renovate config (renovate.json, .github/renovate.json5, …, or --config) instead of reading .deps.yaml; deps migrate writes the same translation |
+| `--repositories` | strings | `[]` | explain these repositories one after another instead of the checkout in --dir, each cloned into a temporary directory with the token: owner/name, a git URL, or owner/\<glob> (e.g. `my-org/*`, `my-org/svc-*`) for the repositories of an organization or user the token can list (GitLab: group/sub/name, a glob covers subgroups, \*\* any number of path segments), without archived ones and mirrors; an entry may name a directory to scan and the ref to read, \<repo>//\<dir>#\<ref> (repeatable, comma-separated) |
 
 ## deps init
 
@@ -495,6 +498,7 @@ deps plan --config ci/deps.yaml --log-level info
 | `--dir` | string | `"."` | repository directory to scan |
 | `--renovate` | bool | `false` | compatibility mode: translate the Renovate config (renovate.json, .github/renovate.json5, …, or --config) instead of reading .deps.yaml; deps migrate writes the same translation |
 | `--report` | string | `""` | also write the result as JSON to this file (see deps help output) |
+| `--repositories` | strings | `[]` | plan these repositories one after another instead of the checkout in --dir, each cloned into a temporary directory with the token: owner/name, a git URL, or owner/\<glob> (e.g. `my-org/*`, `my-org/svc-*`) for the repositories of an organization or user the token can list (GitLab: group/sub/name, a glob covers subgroups, \*\* any number of path segments), without archived ones and mirrors; an entry may name a directory to scan and the ref to read, \<repo>//\<dir>#\<ref> (repeatable, comma-separated) |
 | `--show-skipped` | bool | `false` | also print skipped dependencies (skip lines) |
 
 ## deps preview
@@ -760,7 +764,7 @@ Every flag reads its value from `DEPS_<FLAG>` (the flag name in upper case, `-` 
 | `DEPS_GIT_AUTHOR` | `run` | commit author `Name <email>`; between the `--author-*` flags and the config key `git.author`; ignored for platform commits |
 | `DEPS_ALLOW_TASKS` | `apply`, `run` | default of `--allow-tasks`: the `postUpgradeTasks` commands that may run (repository code), one pattern per line, `*` matching any text without `;`, `&`, `|`, backticks, `$(` or line breaks (`go generate ./...`, `make *`; `*` alone allows everything). Commands get the environment without `DEPS_TOKEN`, `GITHUB_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN`, `GITLAB_TOKEN`, `DEPS_GITHUB_COM_TOKEN`, `DEPS_GITLAB_TOKEN`, `CI_JOB_TOKEN`, `DEPS_SIGNING_KEY`, and without `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES` and `GIT_CEILING_DIRECTORIES`, so their git uses the repository they run in |
 | `DEPS_PLATFORM_COMMIT` | `run` | `auto`, `enabled` or `disabled`; overrides the config key `git.platformCommit` (commits through the GitHub API, see `deps help run`). Renovate's `RENOVATE_PLATFORM_COMMIT` |
-| `DEPS_REPOSITORIES` | `run` | the `--repositories` variable: `owner/name` and `owner/<glob>` entries separated by whitespace or commas |
+| `DEPS_REPOSITORIES` | `run`, `plan`, `explain` | the `--repositories` variable, entries separated by whitespace or commas: `owner/name` and `owner/<glob>`, for `plan` and `explain` also git URLs and `<repo>//<dir>#<ref>` |
 | `GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH` | `run` | run trigger and its payload (cron of `schedule` events); set by GitHub, Gitea and Forgejo runners |
 | `RUNNER_DEBUG` | all | `1` (an Actions re-run with debug logging) makes `debug` the default `--log-level`; the flag and its variable (listed below) still win |
 | `NO_COLOR`, `TERM=dumb`, `CLICOLOR_FORCE`, `FORCE_COLOR` | all | with `--color auto`: `NO_COLOR` (any value) or `TERM=dumb` turn colors off on a terminal; `CLICOLOR_FORCE` or `FORCE_COLOR` (any value but `0` or `false`) turn them on, also when piped and over `NO_COLOR`. `--color always`/`never` ignore them |

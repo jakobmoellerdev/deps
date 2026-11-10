@@ -80,19 +80,20 @@ import (
 )
 
 type rootOpts struct {
-	dir         string
-	config      string
-	showSkipped bool
-	showDiff    bool // plan --diff: print the diff also when stdout is a terminal
-	log         logOpts
-	term        terminal     // set up with the logger
-	stderr      *logx.Writer // stderr of the command, set up with the logger
-	rawStderr   io.Writer    // the writer behind stderr (the terminal's file)
-	prof        profiler
-	concurrency int
-	report      string   // --report: JSON result file of plan, apply and run
-	allowTasks  []string // --allow-tasks of apply and run
-	renovate    bool     // --renovate: compatibility mode (renovateMode)
+	dir          string
+	config       string
+	showSkipped  bool
+	showDiff     bool // plan --diff: print the diff also when stdout is a terminal
+	log          logOpts
+	term         terminal     // set up with the logger
+	stderr       *logx.Writer // stderr of the command, set up with the logger
+	rawStderr    io.Writer    // the writer behind stderr (the terminal's file)
+	prof         profiler
+	concurrency  int
+	report       string   // --report: JSON result file of plan, apply and run
+	allowTasks   []string // --allow-tasks of apply and run
+	renovate     bool     // --renovate: compatibility mode (renovateMode)
+	repositories []string // --repositories of plan and explain: remote repositories to scan
 }
 
 // allowTasksFlag is --allow-tasks of apply and run.

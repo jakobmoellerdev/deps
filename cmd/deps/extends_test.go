@@ -237,10 +237,10 @@ func TestRunRepositoriesErrors(t *testing.T) {
 		code int
 		want string
 	}{
-		{args: []string{"--repositories", "o"}, code: 2, want: `--repositories: "o" must be owner/name or owner/<glob>`},
-		{args: []string{"--repositories", "*/r"}, code: 2, want: `must be owner/name or owner/<glob>`},
+		{args: []string{"--repositories", "o"}, code: 2, want: `--repositories: "o" must be owner/name, owner/<glob> or a git URL`},
+		{args: []string{"--repositories", "*/r"}, code: 2, want: `must be owner/name, owner/<glob> or a git URL`},
 		{args: []string{"--repositories", "o/["}, code: 2, want: `syntax error in pattern`},
-		{args: []string{"--repositories", "o//r"}, code: 2, want: `must be owner/name or owner/<glob>`},
+		{args: []string{"--repositories", "o//r"}, code: 2, want: `must be owner/name, owner/<glob> or a git URL`},
 		{args: []string{"--repositories", "o/sub/r"}, code: 2, want: `"o/sub/r": gitea repositories are owner/name; nested group paths exist only on GitLab`},
 		{args: []string{"--repositories", "o/r", "--repo", "o/r"}, code: 2, want: "--repo and --repositories are mutually exclusive"},
 		{args: []string{"--repositories", "none/*"}, code: 1, want: "--repositories: no repository matches none/*"},

@@ -31,13 +31,24 @@ var (
 	extendRefRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._/+-]*$`)
 )
 
+// ValidRef reports whether s is a ref an entry may name after '#': a git ref name or commit.
+func ValidRef(s string) bool {
+	return extendRefRe.MatchString(s) && !strings.Contains(s, "..")
+}
+
+// ValidPath reports whether s is a path an entry may name after '//': a clean relative
+// slash path inside the repository.
+func ValidPath(s string) bool {
+	return s != "" && !path.IsAbs(s) && path.Clean(s) == s && s != ".." && !strings.HasPrefix(s, "../")
+}
+
 // Parse parses an extends entry.
 func Parse(s string) (Extend, error) {
 	rest := strings.TrimSpace(s)
 	var e Extend
 	if i := strings.LastIndexByte(rest, '#'); i >= 0 {
 		rest, e.Ref = rest[:i], rest[i+1:]
-		if !extendRefRe.MatchString(e.Ref) || strings.Contains(e.Ref, "..") {
+		if !ValidRef(e.Ref) {
 			return Extend{}, fmt.Errorf("invalid ref %q after '#'", e.Ref)
 		}
 	}
@@ -48,7 +59,7 @@ func Parse(s string) (Extend, error) {
 	e.Path = DefaultPath
 	if i := strings.Index(rest[start:], "//"); i >= 0 {
 		rest, e.Path = rest[:start+i], rest[start+i+2:]
-		if e.Path == "" || path.IsAbs(e.Path) || path.Clean(e.Path) != e.Path || e.Path == ".." || strings.HasPrefix(e.Path, "../") {
+		if !ValidPath(e.Path) {
 			return Extend{}, fmt.Errorf("invalid path %q after '//': must be a clean relative slash path", e.Path)
 		}
 	}

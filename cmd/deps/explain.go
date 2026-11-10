@@ -45,6 +45,7 @@ func newExplain(o *rootOpts) *cli.Command {
 		},
 		Flags: append(scanFlags(o, scanSession),
 			&cli.StringFlag{Name: "base", Destination: &base, Usage: "explain base branch <base> as run resolves it: from the tip of origin's branch (a temporary work tree unless the checkout is at it), its rules[].baseBranches matching it, with useBaseBranchConfig its config merged over the checkout's"},
+			repositoriesFlag(&o.repositories, "explain"),
 		),
 	}
 }
@@ -65,12 +66,47 @@ func globArgs(_ context.Context, cmd *cli.Command) error {
 // explain traces the deps matching globs; base, when set, is the base branch to explain
 // (openBase, session.baseSession), named with the config files applied on stderr.
 func explain(ctx context.Context, cmd *cli.Command, o *rootOpts, base string, globs []string) error {
+	if entries := repositoryEntries(cmd, o.repositories); len(entries) > 0 {
+		return explainRepositories(ctx, cmd, o, base, globs, entries)
+	}
 	info, _ := platform.FromEnv(os.Getenv)
 	s, err := newSession(ctx, o, info, envToken(), newHTTPClient(), cmd.Root().ErrWriter)
 	if err != nil {
 		return err
 	}
 	defer s.close()
+	return explainSession(ctx, cmd, o, s, base, globs)
+}
+
+// explainRepositories explains each repository of --repositories in turn, on a clone of it,
+// with shared datasources. A failing repository does not stop the others.
+func explainRepositories(ctx context.Context, cmd *cli.Command, o *rootOpts, base string, globs, entries []string) error {
+	stderr := cmd.Root().ErrWriter
+	client := newHTTPClient()
+	src, err := newRemoteSource(ctx, o, entries, platform.Overrides{}, envToken(), client)
+	if err != nil {
+		return err
+	}
+	var sessions repoSessions
+	defer sessions.close()
+	_, failed, err := src.eachRepository(ctx, o, stderr, nil, func(dir, _ string, info platform.Info) error {
+		s, err := sessions.open(ctx, o, dir, info, src.token, client, stderr)
+		if err != nil {
+			return err
+		}
+		return explainSession(ctx, cmd, o, s, base, globs)
+	})
+	if err != nil {
+		return err
+	}
+	if failed > 0 {
+		return errReported
+	}
+	return nil
+}
+
+// explainSession explains the deps of session s matching globs.
+func explainSession(ctx context.Context, cmd *cli.Command, o *rootOpts, s *session, base string, globs []string) error {
 	stderr := cmd.Root().ErrWriter
 	if base != "" {
 		repo := gitx.Repo{Dir: s.root}

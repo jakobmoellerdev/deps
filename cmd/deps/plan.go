@@ -57,7 +57,8 @@ func newPlan(o *rootOpts) *cli.Command {
 			return local(ctx, cmd, o, false)
 		},
 		Flags: append(scanFlags(o, scanResults), &cli.BoolFlag{Name: "diff", Destination: &o.showDiff,
-			Usage: "print the diff when stdout is a terminal too (piped stdout always gets it)"}),
+			Usage: "print the diff when stdout is a terminal too (piped stdout always gets it)"},
+			repositoriesFlag(&o.repositories, "plan")),
 	}
 }
 
@@ -90,16 +91,63 @@ func colorDiff(st logx.Style, d string) string {
 	return b.String()
 }
 
-// local implements plan (write=false) and apply (write=true).
+// local implements plan (write=false) and apply (write=true): on the checkout of --dir, or,
+// for plan with --repositories, on each remote repository in turn (planRepositories).
 func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error {
 	start := time.Now()
 	stderr := cmd.Root().ErrWriter
+	if !write {
+		if entries := repositoryEntries(cmd, o.repositories); len(entries) > 0 {
+			return planRepositories(ctx, cmd, o, entries)
+		}
+	}
 	info, _ := platform.FromEnv(os.Getenv)
 	s, err := newSession(ctx, o, info, envToken(), newHTTPClient(), stderr)
 	if err != nil {
 		return err
 	}
 	defer s.close()
+	return planSession(ctx, cmd, o, s, write, nil, "", start)
+}
+
+// planRepositories plans each repository of --repositories in turn, sharing the datasources
+// between them, and writes one report over all of them. A failing repository does not stop
+// the others.
+func planRepositories(ctx context.Context, cmd *cli.Command, o *rootOpts, entries []string) error {
+	start := time.Now()
+	stderr := cmd.Root().ErrWriter
+	client := newHTTPClient()
+	src, err := newRemoteSource(ctx, o, entries, platform.Overrides{}, envToken(), client)
+	if err != nil {
+		return err
+	}
+	multi := newMultiRun("plan")
+	var sessions repoSessions
+	defer sessions.close()
+	total, failed, err := src.eachRepository(ctx, o, stderr, multi, func(dir, name string, info platform.Info) error {
+		s, err := sessions.open(ctx, o, dir, info, src.token, client, stderr)
+		if err != nil {
+			return err
+		}
+		return planSession(ctx, cmd, o, s, false, multi, name, time.Now())
+	})
+	if err != nil {
+		return err
+	}
+	reportErr := multi.write(stderr, o.report, time.Since(start))
+	fmt.Fprintf(stderr, "%d repositories, %d failed\n", total, failed)
+	if failed > 0 {
+		return errReported
+	}
+	return reportErr
+}
+
+// planSession plans (write=false) or applies (write=true) the updates of session s. In a
+// multi-repository plan (multi non-nil) repo names the repository: its summary carries the
+// name, its result is added to multi instead of written, and the diff paths are prefixed
+// with it, so one stream tells the repositories apart.
+func planSession(ctx context.Context, cmd *cli.Command, o *rootOpts, s *session, write bool, multi *multiRun, repo string, start time.Time) error {
+	stderr := cmd.Root().ErrWriter
 	res, err := s.resolve(ctx)
 	if err != nil {
 		return err
@@ -145,12 +193,16 @@ func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error
 		}
 	case !write && !diffHidden:
 		out := cmd.Root().Writer
+		prefix := ""
+		if repo != "" {
+			prefix = repo + "/"
+		}
 		for _, c := range changes {
 			from, to := string(c.Old), string(c.New)
 			if c.Gitlink {
 				from, to = "Subproject commit "+from+"\n", "Subproject commit "+to+"\n"
 			}
-			if _, err := io.WriteString(out, colorDiff(o.term.diff, diff.Unified("a/"+c.Path, "b/"+c.Path, from, to))); err != nil {
+			if _, err := io.WriteString(out, colorDiff(o.term.diff, diff.Unified("a/"+prefix+c.Path, "b/"+prefix+c.Path, from, to))); err != nil {
 				return fmt.Errorf("write diff: %w", err)
 			}
 		}
@@ -236,8 +288,15 @@ func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error
 	errs, limited := splitRateLimited(errs)
 	sum := summary{Command: cmdName, Res: res, Groups: engine.GroupUpdates(res.Updates, s.cfg.Prefix()), Errors: errs, RateLimited: limited, Elapsed: time.Since(start), ShowSkipped: o.showSkipped,
 		Unused: s.cfg.UnusedRules(res.Deps), Config: s.cfg, Report: o.report, Style: o.term.style}
+	var reportErr error
+	if multi != nil {
+		sum.Repository = repo
+		multi.add(&sum)
+	}
 	sum.write(stderr)
-	reportErr := sum.writeMachine(stderr, o.report)
+	if multi == nil {
+		reportErr = sum.writeMachine(stderr, o.report)
+	}
 	// The counts line is for scripts and logs; on a terminal the summary headline says the same.
 	if !o.term.tty {
 		files := map[string]bool{}

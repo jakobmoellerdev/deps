@@ -30,3 +30,5 @@ The header names the manager, dep type, datasource and versioning. The other lin
 **Base branch.** `--base <branch>` explains a base branch as `deps run` resolves it: from the tip of origin's branch (a temporary linked work tree, unless the checkout is at that tip), with its `rules[].baseBranches` matching it and, under `useBaseBranchConfig: merge`, the branch's own config file merged over the checkout's. stderr names the base and the config files applied (`base    release/1.x  config .deps.yaml + release/1.x:.deps.yaml`), and the base's rules read `(from release/1.x:.deps.yaml:<line>)`. A branch origin lacks exits 2.
 
 Config warnings (`warn    <config>: <field>: <msg>`) and errors go to stderr; see `deps help output`. A glob that matches no dependency fails with `no dependency matches <globs>` (exit 1). No globs, or an invalid glob, exits 2.
+
+**Remote repositories.** `--repositories` reads clones of the listed repositories instead of the checkout in `--dir`, with the entry grammar and behaviour of `deps plan` (see `deps help plan`).
