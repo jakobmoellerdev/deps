@@ -455,7 +455,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	// advisories.
 	resolveOne := func(i int, d dep.Dep, t *Trace, free func()) ([]dep.Update, *resolver) {
 		r := &resolver{ctx: ctx, root: root, d: d, cur: d.Version, pol: pols[i], ds: o.Datasources[d.Datasource], cs: o.Checksums, trace: o.Trace != nil, now: now,
-			rewriter: rewriters[d.Manager], ranger: rangers[d.Manager], renamer: renamers[d.Manager], names: names}
+			rewriter: rewriters[d.Manager], ranger: rangers[d.Manager], renamer: renamers[d.Manager], names: names, skipGomodPaths: env.SkipGomodImportPaths}
 		u := r.run(t, func() []Vuln {
 			if !sec.ready() {
 				free()
@@ -1308,6 +1308,8 @@ type resolver struct {
 	cs    ChecksumSource
 	trace bool
 	now   time.Time
+	// skipGomodPaths turns off majorPathUpdates (manager.Env.SkipGomodImportPaths).
+	skipGomodPaths bool
 	// base is ds before extractVersion wrapping: the head of a commit pin (commitUpdates).
 	base Datasource
 
