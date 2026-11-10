@@ -1210,7 +1210,7 @@ Pushing a `v*` tag runs `.gitea/workflows/ci.yml`. Its `check` job (`task check`
    The completions come from `deps completion <shell>` of the build machine's Linux binary (`packaging/common.sh`). The archives are byte-reproducible on any host: entries sorted, modes fixed, owner `root` (uid and gid 0), every mtime `SOURCE_DATE_EPOCH` (the commit time of the tag), and Go compresses them ([ulikunitz/xz](https://github.com/ulikunitz/xz) and `compress/flate`, pinned by `go.mod`), not the host's `xz`, whose output differs between versions. That keeps the GitHub and Gitea builds identical, which the attestations rely on. Releases up to v0.6.0 have no archives; they ship the bare binaries `deps_<os>_<arch>`.
 2. Each Linux binary in `dist/bin/` is checked to be static: `readelf -l` must not show `Requesting program interpreter`, because the action runs it on arbitrary runner images.
 3. `task release:notes` runs [git-cliff](https://git-cliff.org) with `cliff.toml` and writes the notes of the tag, `git-cliff --latest --strip header`, to `dist/RELEASE_NOTES.md`.
-   - git-cliff is pinned to v2.14.2, installed and sha512-verified by `task changelog:install`.
+   - git-cliff is pinned in `.env` (`GIT_CLIFF_VERSION` and a sha512 per architecture), installed and verified by `task changelog:install`.
    - The checkout uses `fetch-depth: 0`, so git-cliff sees all commits and tags.
 4. `task release:packages VERSION=<tag>` builds the Debian, RPM, Arch Linux and Alpine packages from the binaries in `dist/bin/` (`release:deb`, `release:rpm`, `release:arch` and `release:apk`), then rewrites `dist/checksums.txt` to cover the archives, the packages and `deps.schema.json` (`task release:checksums`):
    - `dist/deps_<version>_amd64.deb` and `dist/deps_<version>_arm64.deb`, by `packaging/nfpm/build.sh deb`;
@@ -1229,7 +1229,7 @@ git-cliff is installed from its GitHub release instead of through `orhun/git-cli
 
 | | Debian | RPM | Arch Linux | Alpine |
 |---|---|---|---|---|
-| Built by | [nfpm](https://nfpm.goreleaser.com) v2.48.0 (`packaging/nfpm/nfpm.yaml`) | nfpm | nfpm | nfpm |
+| Built by | [nfpm](https://nfpm.goreleaser.com) (`packaging/nfpm/nfpm.yaml`) | nfpm | nfpm | nfpm |
 | Architectures | `amd64`, `arm64` | `x86_64`, `aarch64` | `x86_64`, `aarch64` | `x86_64`, `aarch64` |
 | Version of `v1.2.3` | `1.2.3` | `1.2.3-1` | `1.2.3-1` | `1.2.3-r0` |
 | Version of `v1.2.3-rc.1` | `1.2.3~rc.1` | `1.2.3~rc.1-1` | `1.2.3rc.1-1` | `1.2.3_rc1-r0` |
@@ -1242,7 +1242,7 @@ git-cliff is installed from its GitHub release instead of through `orhun/git-cli
   - Arch Linux: the `-` is dropped, because pacman reserves it for the package release (`pkgrel`, always `1`). The pre-release must start with a letter: vercmp sorts `1.2.3rc.1` before `1.2.3`, but `1.2.3.1` after it.
   - Alpine: only `alpha`, `beta`, `pre` and `rc`, optionally numbered, become the suffixes `_alpha`, `_beta`, `_pre` and `_rc`. Any other pre-release fails the build, since Alpine has no other suffixes that sort before the release.
 - **Reproducible.** Every mtime is `SOURCE_DATE_EPOCH`, by default the commit time of the tag (of `HEAD` if the tag does not exist). nfpm sets owners to root:root and modes are fixed, so rebuilding a tag gives byte-identical packages.
-- **nfpm** is pinned to v2.48.0, installed and sha256-verified by `task nfpm:install` (a matching `nfpm` on `PATH` is used as is).
+- **nfpm** is pinned in `.env` (`NFPM_VERSION` and a sha256 per architecture), installed and verified by `task nfpm:install` (a matching `nfpm` on `PATH` is used as is).
 - **Signing.** The packages are unsigned. Gitea signs the Arch Linux packages and database on upload (with the owner's key from `/api/packages/<owner>/arch/repository.key`), the Alpine `APKINDEX.tar.gz` (key at `/api/packages/<owner>/alpine/key`) and the RPM `repomd.xml` (key at `/api/packages/<owner>/rpm/repository.key`), but not the RPMs themselves. apk trusts an unsigned package through its checksum in the signed index, and so does dnf with `gpgcheck=0` and `repo_gpgcheck=1`: the `.repo` file Gitea serves sets `gpgcheck=1`, which rejects the unsigned packages, so the [install guide](install.md#packages) writes its own. apk finds its key by its file name, `<owner>@<sha256 of the key>.rsa.pub`, so the install guide names it explicitly.
 - **Registries.** The Alpine branch is a name only: one `stable` branch serves every Alpine release, because the binary is static (installs verified on Alpine 3.22 with apk-tools 2 and 3.24 with apk-tools 3). The Arch repository is named after the owner, because its name is also the `pacman.conf` section, which must not clash with `core` or `extra`.
 - **Token.** The uploads are `PUT <server>/api/packages/<owner>/debian/pool/stable/main/upload`, `PUT …/rpm/upload`, `PUT …/arch/jakobmoellerdev` and `PUT …/alpine/stable/main`, with HTTP Basic auth. The job token cannot write packages: Gitea gives the Actions user read access to a user's registry only. The job therefore uses the repository secret `PACKAGES_TOKEN`, a token of `jakobmoellerdev` named `deps-release-packages` with only the `write:package` scope.
@@ -1284,7 +1284,7 @@ Workflows that use the action at `@main`, or without a release ref, pick up a ne
 
 Users verify downloads with `gh attestation verify` or cosign ([Verify a download](install.md#verify-a-download)). The chain:
 
-1. **GitHub signs.** After `task release:packages`, `.github/workflows/release.yml` runs `task release:sbom`: [syft](https://github.com/anchore/syft) v1.56.0 (installed and sha256-verified by `task syft:install`) writes an SPDX 2.3 SBOM of each Linux binary in `dist/bin/` to `dist/attest/deps_linux_<arch>.tar.xz.spdx.json`, named after the archive that ships the binary. Then [`actions/attest`](https://github.com/actions/attest) v4.2.2 (pinned by commit) creates, keyless with the job's OIDC token, Fulcio and the public Rekor log:
+1. **GitHub signs.** After `task release:packages`, `.github/workflows/release.yml` runs `task release:sbom`: [syft](https://github.com/anchore/syft) (pinned in `.env`, installed and sha256-verified by `task syft:install`) writes an SPDX 2.3 SBOM of each Linux binary in `dist/bin/` to `dist/attest/deps_linux_<arch>.tar.xz.spdx.json`, named after the archive that ships the binary. Then [`actions/attest`](https://github.com/actions/attest) v4.2.2 (pinned by commit) creates, keyless with the job's OIDC token, Fulcio and the public Rekor log:
    - one SLSA build provenance attestation (`https://slsa.dev/provenance/v1`) whose subjects are the six archives, all eight packages, `deps.schema.json` and `checksums.txt`;
    - one SBOM attestation (`https://spdx.dev/Document/v2.3`) per Linux binary, whose subject is its archive `deps_linux_<arch>.tar.xz`.
 
@@ -1296,7 +1296,7 @@ Users verify downloads with `gh attestation verify` or cosign ([Verify a downloa
    - the public Fulcio trusts only known OIDC issuers, and no Gitea instance is one of them;
    - Gitea has no attestations API, so `gh attestation verify` without `--bundle` works only against GitHub.
 
-   Both forges build the same commit reproducibly, so the files are byte-identical and GitHub's attestations hold for the Gitea files as well. `packaging/attest-from-github.sh <tag> [dir]` (via `task release:attest-from-github`, which installs cosign v3.1.4 and verifies its sha256):
+   Both forges build the same commit reproducibly, so the files are byte-identical and GitHub's attestations hold for the Gitea files as well. `packaging/attest-from-github.sh <tag> [dir]` (via `task release:attest-from-github`, which installs cosign at the version and sha256 pinned in `.env`):
    1. checks the Gitea files (`dir`, or downloaded from the Gitea release with `gt release download`) against their `checksums.txt`;
    2. polls `https://github.com/jakobmoellerdev/deps/releases/download/<tag>/<asset>` anonymously every 30 s (`ATTEST_INTERVAL`) for up to 30 min (`ATTEST_TIMEOUT`) until every bundle and SBOM exists. The tag first has to reach GitHub through the push mirror, and the GitHub build takes a few minutes;
    3. verifies every bundle against the Gitea file with `cosign verify-blob-attestation` (`--type slsaprovenance1` for provenance, `--type https://spdx.dev/Document/v2.3` for SBOMs), checks that each SBOM asset equals the attested predicate, and fails before uploading anything if one doesn't match. A pass also proves that both builders produced the same bytes;

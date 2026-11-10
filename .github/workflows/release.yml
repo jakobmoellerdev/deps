@@ -49,13 +49,16 @@ jobs:
           done
       - run: task release:packages VERSION="$TAG"
       # Older tags (republished with workflow_dispatch) lack release:sbom, so the SBOM task comes
-      # from the Taskfile of this workflow's revision; the build above used the tag's.
+      # from the Taskfile of this workflow's revision; the build above used the tag's. Task reads
+      # .env relative to --dir (the tag's checkout), so the tooling's .env is exported instead.
       - uses: actions/checkout@v7.0.1
         with:
           path: .release-tooling
-          sparse-checkout: Taskfile.yml
+          sparse-checkout: |
+            Taskfile.yml
+            .env
           sparse-checkout-cone-mode: false
-      - run: task --taskfile "$GITHUB_WORKSPACE/.release-tooling/Taskfile.yml" --dir "$GITHUB_WORKSPACE" release:sbom
+      - run: set -a && . .release-tooling/.env && set +a && task --taskfile "$GITHUB_WORKSPACE/.release-tooling/Taskfile.yml" --dir "$GITHUB_WORKSPACE" release:sbom
       - name: Attest build provenance
         id: provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2

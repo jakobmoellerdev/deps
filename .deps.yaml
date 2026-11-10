@@ -2,8 +2,9 @@
 # deps' own config. Everything else is the default; .gitea/workflows/deps.yml has issues: write for the dashboard.
 version: 1
 dependencyDashboard: true
-# The deps release pinned in the examples of the README and the docs. All share the name of the
-# action pin in .gitea/workflows/deps.yml, so each release gets one docs PR next to that one.
+# The deps release pinned in the examples of the README and the docs. They share the name of the
+# action pin in .gitea/workflows/deps.yml, Formula/deps.rb and flake.nix, so a deps release is
+# one PR across all of them.
 # Sentences about older releases ("up to v0.6.0", the backfill example) don't match.
 custom:
   # `uses: …/deps@vX.Y.Z`, `go install …/cmd/deps@vX.Y.Z` and the `@<sha> # vX.Y.Z` form.
@@ -18,3 +19,57 @@ custom:
     datasource: gitea-releases
     registryUrl: https://git.jakob-moeller.cloud
     name: jakobmoellerdev/deps
+  # Tool versions in .env (loaded by the Taskfile). Each checksum is its own entry over the shared
+  # version line, so a release moves the version and every per-architecture checksum in one PR.
+  - files: [.env]
+    match: 'GOLANGCI_LINT_VERSION=(?P<version>\S+)'
+    datasource: github-releases
+    name: golangci/golangci-lint
+  - files: [.env]
+    match: 'GIT_CLIFF_VERSION=(?P<version>\S+)\n(?:.*\n)*?GIT_CLIFF_SHA512_LINUX_X86_64=(?P<checksum>[0-9a-f]+)'
+    datasource: github-releases
+    name: orhun/git-cliff
+    checksum:
+      url: 'https://github.com/orhun/git-cliff/releases/download/v{{version}}/git-cliff-{{version}}-x86_64-unknown-linux-gnu.tar.gz.sha512'
+  - files: [.env]
+    match: 'GIT_CLIFF_VERSION=(?P<version>\S+)\n(?:.*\n)*?GIT_CLIFF_SHA512_LINUX_AARCH64=(?P<checksum>[0-9a-f]+)'
+    datasource: github-releases
+    name: orhun/git-cliff
+    checksum:
+      url: 'https://github.com/orhun/git-cliff/releases/download/v{{version}}/git-cliff-{{version}}-aarch64-unknown-linux-gnu.tar.gz.sha512'
+  - files: [.env]
+    match: 'NFPM_VERSION=(?P<version>\S+)\n(?:.*\n)*?NFPM_SHA256_LINUX_X86_64=(?P<checksum>[0-9a-f]+)'
+    datasource: github-releases
+    name: goreleaser/nfpm
+    checksum:
+      asset: 'nfpm_{{version}}_Linux_x86_64.tar.gz'
+  - files: [.env]
+    match: 'NFPM_VERSION=(?P<version>\S+)\n(?:.*\n)*?NFPM_SHA256_LINUX_ARM64=(?P<checksum>[0-9a-f]+)'
+    datasource: github-releases
+    name: goreleaser/nfpm
+    checksum:
+      asset: 'nfpm_{{version}}_Linux_arm64.tar.gz'
+  - files: [.env]
+    match: 'SYFT_VERSION=(?P<version>\S+)\n(?:.*\n)*?SYFT_SHA256_LINUX_AMD64=(?P<checksum>[0-9a-f]+)'
+    datasource: github-releases
+    name: anchore/syft
+    checksum:
+      asset: 'syft_{{version}}_linux_amd64.tar.gz'
+  - files: [.env]
+    match: 'SYFT_VERSION=(?P<version>\S+)\n(?:.*\n)*?SYFT_SHA256_LINUX_ARM64=(?P<checksum>[0-9a-f]+)'
+    datasource: github-releases
+    name: anchore/syft
+    checksum:
+      asset: 'syft_{{version}}_linux_arm64.tar.gz'
+  - files: [.env]
+    match: 'COSIGN_VERSION=(?P<version>\S+)\n(?:.*\n)*?COSIGN_SHA256_LINUX_AMD64=(?P<checksum>[0-9a-f]+)'
+    datasource: github-releases
+    name: sigstore/cosign
+    checksum:
+      asset: cosign-linux-amd64
+  - files: [.env]
+    match: 'COSIGN_VERSION=(?P<version>\S+)\n(?:.*\n)*?COSIGN_SHA256_LINUX_ARM64=(?P<checksum>[0-9a-f]+)'
+    datasource: github-releases
+    name: sigstore/cosign
+    checksum:
+      asset: cosign-linux-arm64

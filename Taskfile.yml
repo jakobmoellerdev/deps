@@ -1,9 +1,11 @@
 version: "3"
 
+# Tool versions and their checksums; deps updates them there.
+dotenv: [.env]
+
 vars:
   VERSION:
     sh: git describe --tags --always --dirty 2>/dev/null || echo dev
-  GOLANGCI_LINT_VERSION: 2.15.0
   # Pinned copy installed by lint:install when no matching golangci-lint is on PATH.
   GOLANGCI_LINT_BIN:
     sh: echo "${TMPDIR:-/tmp}/deps-tools/golangci-lint-{{.GOLANGCI_LINT_VERSION}}"
@@ -14,7 +16,6 @@ vars:
       else
         echo "${TMPDIR:-/tmp}/deps-tools/golangci-lint-{{.GOLANGCI_LINT_VERSION}}"
       fi
-  GIT_CLIFF_VERSION: 2.14.2
   # Pinned git-cliff (release notes / CHANGELOG.md), installed by changelog:install unless the
   # same version is on PATH.
   GIT_CLIFF:
@@ -24,7 +25,6 @@ vars:
       else
         echo "${TMPDIR:-/tmp}/deps-tools/git-cliff-{{.GIT_CLIFF_VERSION}}/git-cliff"
       fi
-  NFPM_VERSION: 2.48.0
   # Pinned nfpm (Debian, RPM, Arch Linux and Alpine packages), installed by nfpm:install unless
   # the same version is on PATH.
   NFPM:
@@ -34,7 +34,6 @@ vars:
       else
         echo "${TMPDIR:-/tmp}/deps-tools/nfpm-{{.NFPM_VERSION}}/nfpm"
       fi
-  SYFT_VERSION: 1.56.0
   # Pinned syft (SBOMs of the release binaries), installed by syft:install unless the same version
   # is on PATH.
   SYFT:
@@ -44,7 +43,6 @@ vars:
       else
         echo "${TMPDIR:-/tmp}/deps-tools/syft-{{.SYFT_VERSION}}/syft"
       fi
-  COSIGN_VERSION: 3.1.4
   # Pinned cosign (verifies the GitHub attestations before they are attached to the Gitea
   # release), installed by cosign:install unless the same version is on PATH.
   COSIGN:
@@ -138,8 +136,8 @@ tasks:
       - |
         set -eu
         case "$(uname -m)" in
-          x86_64|amd64) arch=x86_64; sum=26d1f7c8ea2400f2ccb0b2e7f321635f600b583bf4cd1f7afaa5e8c24068ad1088a2504e0a4d9f4333d4bb20a80329327d9462634343ee3af91e1a7fbdc6f18a ;;
-          aarch64|arm64) arch=aarch64; sum=fd27768ea76fea8c3ba3f3247fef2f6604988b629f15e48bf40be5eaa08b8fef2e4087cc9c8af16bc522bc19cc369611fa7692101b513f63469ad58522708600 ;;
+          x86_64|amd64) arch=x86_64; sum=$GIT_CLIFF_SHA512_LINUX_X86_64 ;;
+          aarch64|arm64) arch=aarch64; sum=$GIT_CLIFF_SHA512_LINUX_AARCH64 ;;
           *) echo "git-cliff: unsupported architecture $(uname -m)" >&2; exit 1 ;;
         esac
         name="git-cliff-{{.GIT_CLIFF_VERSION}}-$arch-unknown-linux-gnu.tar.gz"
@@ -284,8 +282,8 @@ tasks:
       - |
         set -eu
         case "$(uname -m)" in
-          x86_64|amd64) arch=x86_64; sum=6d7f9a28b2f397934403950fcbba83f598b08d02edbe79a0815b3b4897341750 ;;
-          aarch64|arm64) arch=arm64; sum=a9a75213763783b7669719e505474c748c5ad7dc66591a195619deb50f85c2f4 ;;
+          x86_64|amd64) arch=x86_64; sum=$NFPM_SHA256_LINUX_X86_64 ;;
+          aarch64|arm64) arch=arm64; sum=$NFPM_SHA256_LINUX_ARM64 ;;
           *) echo "nfpm: unsupported architecture $(uname -m)" >&2; exit 1 ;;
         esac
         name="nfpm_{{.NFPM_VERSION}}_Linux_$arch.tar.gz"
@@ -306,8 +304,8 @@ tasks:
       - |
         set -eu
         case "$(uname -m)" in
-          x86_64|amd64) arch=amd64; sum=1c2493cfcf52d3367d6cb25780d9190c111c2219c34c820574c43e8bae15c528 ;;
-          aarch64|arm64) arch=arm64; sum=ace61b9397ae28189c674ae332d67a8074dafd71e87724dfb8b22412d8253bb5 ;;
+          x86_64|amd64) arch=amd64; sum=$SYFT_SHA256_LINUX_AMD64 ;;
+          aarch64|arm64) arch=arm64; sum=$SYFT_SHA256_LINUX_ARM64 ;;
           *) echo "syft: unsupported architecture $(uname -m)" >&2; exit 1 ;;
         esac
         name="syft_{{.SYFT_VERSION}}_linux_$arch.tar.gz"
@@ -328,8 +326,8 @@ tasks:
       - |
         set -eu
         case "$(uname -m)" in
-          x86_64|amd64) arch=amd64; sum=424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa ;;
-          aarch64|arm64) arch=arm64; sum=ade83b7aac62e131cacfe96d958948b2150cc9efec46a570a2649b8e27dedad2 ;;
+          x86_64|amd64) arch=amd64; sum=$COSIGN_SHA256_LINUX_AMD64 ;;
+          aarch64|arm64) arch=arm64; sum=$COSIGN_SHA256_LINUX_ARM64 ;;
           *) echo "cosign: unsupported architecture $(uname -m)" >&2; exit 1 ;;
         esac
         tmp=$(mktemp -d)
