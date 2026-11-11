@@ -31,6 +31,9 @@ type semverGroup struct {
 	// Masterminds admits every prerelease once one comparator names one, so that
 	// `>=1.0.0-alpha.1 <2.0.0` would admit 1.5.0-rc.1.
 	pre [][3]uint64
+	// tildeZero marks a Masterminds alternative with a `~0.0.0` comparator, which Masterminds
+	// admits every version of; npm reads it as `>=0.0.0 <0.1.0` (see tilde).
+	tildeZero bool
 }
 
 // semverComparator is one Masterminds constraint: op (constraintOps' key) applied to con,
@@ -108,6 +111,9 @@ func (r *SemverRange) check(v semverVersion, mv *msemver.Version) bool {
 			continue
 		}
 		if g.ms != nil {
+			if g.tildeZero && (v.major != 0 || v.minor != 0) {
+				continue // `~0.0.0` is `>=0.0.0 <0.1.0`, whatever Masterminds makes of it
+			}
 			if mv == nil {
 				mv = v.semver()
 			}
@@ -196,27 +202,40 @@ func parseSemverGroup(s string) (g semverGroup, ok bool) {
 // its own prerelease rule (semverGroup.pre).
 func semverFallback(c *msemver.Constraints) semverGroup {
 	c.IncludePrerelease = true
-	return semverGroup{ms: c, pre: semverFallbackPre(c)}
+	g := semverGroup{ms: c}
+	g.pre, g.tildeZero = semverFallbackComparators(c)
+	return g
 }
 
-// semverFallbackPre reads the comparators of the Masterminds constraint c back from its
-// String (each the operator and the version as written, blanks between) and returns the
+// semverFallbackComparators reads the comparators of the Masterminds constraint c back from
+// its String (each the operator and the version as written, blanks between): the
 // [major, minor, patch] of those naming a prerelease, a missing or wildcard part counting as
-// zero as parseConstraint fills it in. Masterminds keeps no comparator a caller could read,
-// and semverGroup.pre needs the releases of an alternative outside the hand-parsed grammar
-// as much as of one inside it.
-func semverFallbackPre(c *msemver.Constraints) [][3]uint64 {
-	var pre [][3]uint64
+// zero as parseConstraint fills it in, and whether one of them is a `~0.0.0`. Masterminds
+// keeps no comparator a caller could read, and an alternative outside the hand-parsed
+// grammar needs both as much as one inside it.
+func semverFallbackComparators(c *msemver.Constraints) (pre [][3]uint64, tildeZero bool) {
 	for tok := range strings.FieldsSeq(c.String()) {
 		ver := strings.TrimLeft(tok, "=!<>~^")
+		op := tok[:len(tok)-len(ver)]
 		if ver != "" && (ver[0] == 'v' || ver[0] == 'V') {
 			ver = ver[1:]
 		}
-		if t, rest, ok := semverFallbackRelease(ver); ok && strings.HasPrefix(rest, "-") {
+		t, rest, ok := semverFallbackRelease(ver)
+		if !ok {
+			continue
+		}
+		if strings.HasPrefix(rest, "-") {
 			pre = append(pre, t)
 		}
+		// Masterminds only admits everything for a `~0.0.0` whose three parts are all
+		// written out, a wildcard or a missing part making it an ordinary tilde range.
+		base := ver[:len(ver)-len(rest)]
+		if (op == "~" || op == "~>") && t == [3]uint64{} &&
+			strings.Count(base, ".") == 2 && !strings.ContainsAny(base, "xX*") {
+			tildeZero = true
+		}
 	}
-	return pre
+	return pre, tildeZero
 }
 
 // semverFallbackRelease reads the one to three dot-separated parts of ver, each a run of the
@@ -362,12 +381,15 @@ func (c *semverComparator) check(v semverVersion) bool {
 	return c.caret(v) // "^"
 }
 
-// tilde is Masterminds' constraintTilde.
+// tilde is Masterminds' constraintTilde, without its `~0.0.0` special case for a version
+// written out, which admits every version: npm reads `~0.0.0` as `>=0.0.0 <0.1.0` like any
+// other tilde range (node-semver's replaceTilde, its README "Tilde Ranges"). A wildcard
+// major (`*`, `x`, `~x`), which Masterminds also parses as 0.0.0, does admit every version.
 func (c *semverComparator) tilde(v semverVersion) bool {
 	switch {
 	case compareSemver(v, c.con) < 0:
 		return false
-	case c.con.major == 0 && c.con.minor == 0 && c.con.patch == 0 && !c.minorDirty && !c.patchDirty:
+	case c.dirty && !c.minorDirty && !c.patchDirty:
 		return true
 	}
 	return v.major == c.con.major && (v.minor == c.con.minor || c.minorDirty)

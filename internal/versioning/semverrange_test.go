@@ -74,9 +74,9 @@ func readSemverRanges(t testing.TB) []string {
 
 // checkSemverRangeParity compares NewSemverRange and semverScheme.MatchRange for rng against
 // Masterminds, the oracle: the same error, and per version the same Check, and the same match
-// as the engine's Masterminds path (NewConstraint, Scheme.Semver, Check). A prerelease of a
-// range naming one is left to TestSemverPrerelease, Masterminds admitting more of them than
-// npm (semverGroup.pre).
+// as the engine's Masterminds path (NewConstraint, Scheme.Semver, Check). The two npm rules
+// Masterminds does not follow are left to TestSemverPrerelease and TestSemverTildeZero: a
+// prerelease of a range naming one, and a range with a `~0.0.0`.
 func checkSemverRangeParity(t testing.TB, rng string, versions []string) {
 	t.Helper()
 	want, wantErr := msemver.NewConstraint(rng)
@@ -94,6 +94,9 @@ func checkSemverRangeParity(t testing.TB, rng string, versions []string) {
 	pre := false
 	for i := range got.groups {
 		pre = pre || len(got.groups[i].pre) > 0
+		if tildeZero(&got.groups[i]) {
+			return
+		}
 	}
 	s := schemes["semver"]
 	for _, v := range versions {
@@ -122,6 +125,65 @@ func handParsed(r *SemverRange) bool {
 		}
 	}
 	return true
+}
+
+// tildeZero reports whether g has a `~0.0.0` comparator, which Masterminds admits every
+// version of.
+func tildeZero(g *semverGroup) bool {
+	if g.ms != nil {
+		return g.tildeZero
+	}
+	for _, c := range g.cmps {
+		if (c.op == "~" || c.op == "~>") && !c.minorDirty && !c.patchDirty &&
+			c.con.major == 0 && c.con.minor == 0 && c.con.patch == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// TestSemverTildeZero checks that `~0.0.0` is `>=0.0.0 <0.1.0` as every other tilde range
+// (node-semver's replaceTilde; `new semver.Range('~0.0.0').range` is `<0.1.0-0`), not the
+// Masterminds special case that admits every version. The expected values are
+// `semver -r <range> <version>` of node-semver 7.
+func TestSemverTildeZero(t *testing.T) {
+	for _, c := range []struct {
+		rng, v string
+		want   bool
+	}{
+		{"~0.0.0", "5.0.0", false}, // Masterminds admits it
+		{"~0.0.0", "0.1.0", false},
+		{"~0.0.0", "0.0.5", true},
+		{"~0.0.0", "0.0.0", true},
+		{"~>0.0.0", "1.0.0", false},
+		{"~0.0.0 || ^2.0.0", "2.1.0", true},
+		{"~0.0", "0.0.5", true}, // a partial version keeps the ordinary tilde range
+		{"~0", "0.5.0", true},
+		{"~0", "1.0.0", false},
+		// An alternative Masterminds parses, `!=` being outside the grammar of the package.
+		{"~0.0.0 !=0.0.3", "5.0.0", false},
+		{"~0.0.0 !=0.0.3", "0.0.4", true},
+		{"~0.0.0 !=0.0.3", "0.0.3", false},
+	} {
+		r, err := NewSemverRange(c.rng)
+		if err != nil {
+			t.Fatalf("NewSemverRange(%q): %v", c.rng, err)
+		}
+		v, ok := parseSemver(c.v)
+		if !ok {
+			t.Fatalf("parseSemver(%q) failed", c.v)
+		}
+		if got := r.Check(v.semver()); got != c.want {
+			t.Errorf("NewSemverRange(%q).Check(%q) = %v, want %v", c.rng, c.v, got, c.want)
+		}
+		match, err := schemes["semver"].(RangeMatcher).MatchRange(c.rng)
+		if err != nil {
+			t.Fatalf("MatchRange(%q): %v", c.rng, err)
+		}
+		if got := match(c.v); got != c.want {
+			t.Errorf("MatchRange(%q)(%q) = %v, want %v", c.rng, c.v, got, c.want)
+		}
+	}
 }
 
 // TestSemverRangeParity checks the hand-parsed ranges against Masterminds over real-world
