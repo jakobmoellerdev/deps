@@ -2,6 +2,7 @@ package diff
 
 import (
 	"math/rand/v2"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -106,4 +107,109 @@ func apply(t *testing.T, old, d string) string {
 		}
 	}
 	return strings.Join(append(out, src[pos:]...), "")
+}
+
+// TestSplitShortest checks the linear-space search against the greedy one: it has to find
+// a script of the same length and that script has to describe the same two texts.
+func TestSplitShortest(t *testing.T) {
+	r := rand.New(rand.NewPCG(3, 5))
+	gen := func(alpha int) []string {
+		l := make([]string, r.IntN(30))
+		for i := range l {
+			l[i] = string(rune('a'+r.IntN(alpha))) + "\n"
+		}
+		return l
+	}
+	for range 20000 {
+		alpha := 2 + r.IntN(4)
+		a, b := gen(alpha), gen(alpha)
+		got := split(a, b)
+		want, ok := greedy(a, b)
+		if !ok {
+			t.Fatal("greedy gave up on a tiny input")
+		}
+		replay(t, a, b, got)
+		if edits(got) != edits(want) {
+			t.Fatalf("split needs %d edits, greedy %d\na = %q\nb = %q", edits(got), edits(want), a, b)
+		}
+	}
+}
+
+// TestRewriteFallsBack pins where the greedy search hands over: a rewritten lockfile is
+// past the trace budget, and the script for it is still the shortest one.
+func TestRewriteFallsBack(t *testing.T) {
+	const n = 3000
+	old, updated := lockfile(n, 1)
+	a, b := lines(old), lines(updated)
+	if _, ok := greedy(a, b); ok {
+		t.Fatal("greedy kept the trace for a rewritten file")
+	}
+	ops := script(a, b)
+	replay(t, a, b, ops)
+	if got := edits(ops); got != 2*n {
+		t.Errorf("%d edits, want %d", got, 2*n)
+	}
+}
+
+// TestUnifiedBoundedMemory diffs a rewritten file, which the greedy search would have
+// walked with a trace of 800 MiB (and of tens of GiB for a regenerated 30k-line lockfile).
+func TestUnifiedBoundedMemory(t *testing.T) {
+	old, updated := lockfile(5000, 1)
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	d := Unified("o", "n", old, updated)
+	runtime.ReadMemStats(&after)
+	if mib := (after.TotalAlloc - before.TotalAlloc) >> 20; mib > 64 {
+		t.Errorf("allocated %d MiB, want at most 64", mib)
+	}
+	if got := apply(t, old, d); got != updated {
+		t.Error("the diff does not apply back")
+	}
+}
+
+func edits(ops []op) int {
+	n := 0
+	for _, o := range ops {
+		if o.kind != equal {
+			n++
+		}
+	}
+	return n
+}
+
+// replay walks a script with the cursors it claims, which checks its line indexes, its
+// line texts and that it covers both inputs.
+func replay(t *testing.T, a, b []string, ops []op) {
+	t.Helper()
+	x, y, prev := 0, 0, equal
+	for i, o := range ops {
+		if o.oldIdx != x || o.newIdx != y {
+			t.Fatalf("op %d %q: at (%d,%d), want (%d,%d)", i, o.kind, o.oldIdx, o.newIdx, x, y)
+		}
+		if prev == insert && o.kind == del {
+			t.Fatalf("op %d: a deletion after an insertion of the same change", i)
+		}
+		prev = o.kind
+		switch o.kind {
+		case equal:
+			if o.line != a[x] || a[x] != b[y] {
+				t.Fatalf("op %d: %q is not %q and %q", i, o.line, a[x], b[y])
+			}
+			x, y = x+1, y+1
+		case del:
+			if o.line != a[x] {
+				t.Fatalf("op %d: deletes %q, not %q", i, o.line, a[x])
+			}
+			x++
+		case insert:
+			if o.line != b[y] {
+				t.Fatalf("op %d: inserts %q, not %q", i, o.line, b[y])
+			}
+			y++
+		}
+	}
+	if x != len(a) || y != len(b) {
+		t.Fatalf("script ends at (%d,%d), want (%d,%d)", x, y, len(a), len(b))
+	}
 }

@@ -24,7 +24,7 @@ func BenchmarkUnified(b *testing.B) {
 	for _, c := range []struct {
 		name    string
 		n, step int
-	}{{"small", 40, 10}, {"lockfile", 30000, 60}} {
+	}{{"small", 40, 10}, {"lockfile", 30000, 60}, {"rewrite", 2000, 1}} {
 		old, updated := lockfile(c.n, c.step)
 		b.Run(c.name, func(b *testing.B) {
 			b.ReportAllocs()
