@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -300,6 +301,30 @@ func TestPoetryV1(t *testing.T) {
 		if got := poetryV1(out); got != want {
 			t.Errorf("poetryV1(%q) = %v", out, got)
 		}
+	}
+}
+
+// TestPoetryCmdCaches reads the version of a poetry binary once: a repository with many
+// poetry projects otherwise spawns `poetry --version` per lock root.
+func TestPoetryCmdCaches(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not in PATH")
+	}
+	bin, log := t.TempDir(), filepath.Join(t.TempDir(), "log")
+	script := "#!" + sh + "\necho \"probe $POETRY_NO_INTERACTION $DEPS_TOKEN\" >> '" + log + "'\necho 'Poetry (version 1.8.3)'\n"
+	if err := os.WriteFile(filepath.Join(bin, "poetry"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	t.Setenv("DEPS_TOKEN", "secret")
+	for range 3 {
+		if c := poetryCmd(t.Context()); !slices.Contains(c.args, "--no-update") {
+			t.Fatalf("args = %v", c.args)
+		}
+	}
+	if got := readLog(t, log); got != "probe 1 \n" {
+		t.Errorf("probes = %q", got)
 	}
 }
 

@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bmatcuk/doublestar/v4"
@@ -603,17 +604,37 @@ func uvCmd() cmdSpec {
 	return cmdSpec{tool: "uv", args: []string{"lock", "--no-progress"}}
 }
 
+// poetryV1s caches by path whether a poetry binary is a 1.x, so that the probe runs once per
+// process instead of once per lock root.
+var poetryV1s sync.Map
+
 // poetryCmd keeps the locked versions: Poetry 1 needs --no-update, Poetry 2 removed the flag
 // and keeps them by default. A poetry found only through uvx is the latest, so Poetry 2.
 func poetryCmd(ctx context.Context) cmdSpec {
 	c := poetryTool()
-	if p, err := exec.LookPath("poetry"); err == nil {
-		out, err := exec.CommandContext(ctx, p, "--version").Output()
-		if err == nil && poetryV1(string(out)) {
-			c.args = append(c.args, "--no-update")
-		}
+	p, err := exec.LookPath("poetry")
+	if err != nil {
+		return c
+	}
+	v1, ok := poetryV1s.Load(p)
+	if !ok {
+		v1 = readPoetryV1(ctx, p, c.env)
+		poetryV1s.Store(p, v1)
+	}
+	if v1.(bool) {
+		c.args = append(c.args, "--no-update")
 	}
 	return c
+}
+
+// readPoetryV1 reports whether `bin --version` names a 1.x version; a version that cannot be
+// read counts as Poetry 2.
+func readPoetryV1(ctx context.Context, bin string, env []string) bool {
+	cmd, cancel := toolrun.Command(ctx, bin, "--version")
+	defer cancel()
+	cmd.Env = toolrun.Env(env...)
+	out, err := cmd.Output()
+	return err == nil && poetryV1(string(out))
 }
 
 func poetryTool() cmdSpec {
