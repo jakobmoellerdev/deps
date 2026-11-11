@@ -23,6 +23,8 @@ func TestJSONataVersions(t *testing.T) {
 		`{"releases": $map($, function($v){ {"version": $v} })}`,
 		`{"releases": $map($.r, function($v){ {"version": $uppercase($v)} })}`,
 		`$.releases`,
+		`{"releases": [ $.versions.{ "version": name } }`, // only an opening bracket
+		`{"releases": $.versions.{ "version": name } ]}`,  // only a closing bracket
 	} {
 		if v, re, ok := jsonataVersions(in); ok {
 			t.Errorf("jsonataVersions(%s) = %q, %q, want no translation", in, v, re)

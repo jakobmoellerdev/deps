@@ -15,8 +15,9 @@ import (
 // <list> is <path>, $keys(<path>) or $distinct(<list>); <value> is $v, $v.<field> or
 // $replace(<that>, /^v/, "").
 var (
-	jsonataMapRe   = regexp.MustCompile(`^\{"releases":\$map\((.+),function\(\$(\w+)\)\{\{"version":(.+)\}\}\)\}$`)
-	jsonataPathRe  = regexp.MustCompile(`^\{"releases":\[?(\$?[\w.$]*)\.\{"version":([\w.]+)\}\]?\}$`)
+	jsonataMapRe = regexp.MustCompile(`^\{"releases":\$map\((.+),function\(\$(\w+)\)\{\{"version":(.+)\}\}\)\}$`)
+	// The brackets are optional as a pair, so an expression with only one of them does not match.
+	jsonataPathRe  = regexp.MustCompile(`^\{"releases":(?:\[(\$?[\w.$]*)\.\{"version":([\w.]+)\}\]|(\$?[\w.$]*)\.\{"version":([\w.]+)\})\}$`)
 	jsonataStripRe = regexp.MustCompile(`^\$replace\((.+),/\^v/,(""|'')\)$`)
 	jsonataFieldRe = regexp.MustCompile(`^[A-Za-z_]\w*(\.[A-Za-z_]\w*)*$`)
 )
@@ -30,11 +31,15 @@ const stripV = `^v?(?P<version>.+)$`
 func jsonataVersions(expr string) (versions, versionRegex string, ok bool) {
 	e := strings.Join(strings.Fields(expr), "")
 	if m := jsonataPathRe.FindStringSubmatch(e); m != nil {
-		p, ok := jsonataPath(m[1])
-		if !ok || p == "" || !jsonataFieldRe.MatchString(m[2]) {
+		path, field := m[1], m[2]
+		if path == "" && field == "" {
+			path, field = m[3], m[4]
+		}
+		p, ok := jsonataPath(path)
+		if !ok || p == "" || !jsonataFieldRe.MatchString(field) {
 			return "", "", false
 		}
-		return p + "[]." + m[2], "", true
+		return p + "[]." + field, "", true
 	}
 	m := jsonataMapRe.FindStringSubmatch(e)
 	if m == nil {
