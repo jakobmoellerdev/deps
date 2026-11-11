@@ -9,8 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -515,20 +517,59 @@ const (
 	maxMod  = 16 << 20
 )
 
-// stream GETs url with a body cap of limit bytes and passes the body to read, holding a
-// request slot until the body is read and closed; notFound reports a 404 or 410.
-func (s *Source) stream(ctx context.Context, url string, limit int64, read func(io.Reader) error) (notFound bool, err error) {
+// stream reads target with a body cap of limit bytes and passes the body to read: a `file://`
+// entry from the directory it names, every other URL with a GET holding a request slot until
+// the body is read and closed. notFound reports a 404 or 410, or a missing file.
+func (s *Source) stream(ctx context.Context, target string, limit int64, read func(io.Reader) error) (notFound bool, err error) {
+	if strings.HasPrefix(target, fileScheme) {
+		return readFileProxy(target, limit, read)
+	}
 	g := s.getter
 	g.MaxBody = limit
-	err = g.Stream(ctx, url, read)
+	err = g.Stream(ctx, target, read)
 	se, ok := errors.AsType[*httpx.StatusError](err)
 	return ok && (se.Code == http.StatusNotFound || se.Code == http.StatusGone), err
 }
 
-// fetch GETs a proxy list endpoint; notFound reports a 404 or 410.
-func (s *Source) fetch(ctx context.Context, url string) (versions []string, notFound bool, err error) {
+// fileScheme prefixes a GOPROXY entry served from a local directory, which the go command
+// accepts as well (`GOPROXY=file:///var/cache/goproxy`): its layout is the one of the module
+// cache's download directory, so the endpoints are files below it.
+const fileScheme = "file://"
+
+// readFileProxy serves target, a fileScheme URL, from the local file it names, capped at limit
+// bytes (0 = httpx.DefaultMaxBody). A missing file is notFound, so that the GOPROXY walk falls
+// through to the next entry as it does for a 404.
+func readFileProxy(target string, limit int64, read func(io.Reader) error) (notFound bool, err error) {
+	u, err := url.Parse(target)
+	if err != nil {
+		return false, fmt.Errorf("%s: %w", target, err)
+	}
+	if u.Host != "" && !strings.EqualFold(u.Host, "localhost") {
+		return false, fmt.Errorf("%s: file proxy on another host", target)
+	}
+	path := u.Path
+	// A Windows path arrives as /C:/dir, whose volume name follows the leading slash.
+	if filepath.Separator == '\\' && len(path) > 2 && path[0] == '/' && path[2] == ':' {
+		path = path[1:]
+	}
+	f, err := os.Open(filepath.FromSlash(path))
+	if err != nil {
+		return errors.Is(err, fs.ErrNotExist), err
+	}
+	defer f.Close()
+	if limit <= 0 {
+		limit = httpx.DefaultMaxBody
+	}
+	if err := read(io.LimitReader(f, limit)); err != nil {
+		return false, fmt.Errorf("read %s: %w", path, err)
+	}
+	return false, nil
+}
+
+// fetch reads a proxy list endpoint; notFound reports a 404 or 410, or a missing file.
+func (s *Source) fetch(ctx context.Context, target string) (versions []string, notFound bool, err error) {
 	var data []byte
-	notFound, err = s.stream(ctx, url, 0, func(r io.Reader) (err error) {
+	notFound, err = s.stream(ctx, target, 0, func(r io.Reader) (err error) {
 		data, err = io.ReadAll(r)
 		return err
 	})

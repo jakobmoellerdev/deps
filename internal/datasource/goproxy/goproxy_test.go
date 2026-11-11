@@ -774,3 +774,85 @@ func TestMajorPaths(t *testing.T) {
 		t.Errorf("probes must be deduped: %d new requests, %v", hits.Load()-before, err)
 	}
 }
+
+// fileProxyURL is the `file://` GOPROXY entry serving dir.
+func fileProxyURL(dir string) string {
+	p := filepath.ToSlash(dir)
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	return "file://" + p
+}
+
+// TestFileProxy: a `file://` GOPROXY entry is served from the directory it names, as the go
+// command serves one, and a module it does not have falls through to the next entry.
+func TestFileProxy(t *testing.T) {
+	dir := t.TempDir()
+	write := func(escaped, name, content string) {
+		t.Helper()
+		at := filepath.Join(dir, filepath.FromSlash(escaped), "@v")
+		if err := os.MkdirAll(at, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(at, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("example.com/m", "list", "v1.0.0\nv1.1.0 2024-01-01T00:00:00Z\n")
+	write("example.com/m", "v1.1.0.info", `{"Version":"v1.1.0","Time":"2024-01-01T00:00:00Z"}`)
+	write("github.com/!masterminds/semver/v3", "list", "v3.2.1\n")
+	file := fileProxyURL(dir)
+
+	for _, tt := range []struct {
+		name, proxy, modPath string
+		want                 []string
+		wantHits             map[string]int32
+	}{
+		{name: "file proxy answers", proxy: file, modPath: "example.com/m", want: []string{"v1.0.0", "v1.1.0"}},
+		{name: "escaped path", proxy: file, modPath: "github.com/Masterminds/semver/v3", want: []string{"v3.2.1"}},
+		{
+			name: "missing module falls through", proxy: file + ",{}/ok", modPath: "example.com/other",
+			want: []string{"v1.0.0", "v1.1.0", "example.com/other/@v/list"}, wantHits: map[string]int32{"ok": 1},
+		},
+		{name: "missing module exhausts the list", proxy: file, modPath: "example.com/other"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			hits := map[string]*atomic.Int32{"ok": {}, "nf": {}, "gone": {}, "err": {}}
+			srv := proxyServer(t, hits)
+			s := New(srv.Client(), make(chan struct{}, 1))
+			s.env = func(context.Context) (gotool.GoEnv, error) {
+				return gotool.GoEnv{Proxy: strings.ReplaceAll(tt.proxy, "{}", srv.URL)}, nil
+			}
+			s.list = func(context.Context, string, string) ([]string, error) {
+				t.Error("a file proxy must not run go list")
+				return nil, nil
+			}
+			got, err := s.Versions(t.Context(), tt.modPath, "/mod/dir")
+			if tt.want == nil {
+				if err == nil || !strings.Contains(err.Error(), "no proxy has "+tt.modPath) {
+					t.Fatalf("err = %v, want no proxy has", err)
+				}
+			} else if err != nil || !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("Versions = %q, %v; want %q", got, err, tt.want)
+			}
+			for name, want := range tt.wantHits {
+				if got := hits[name].Load(); got != want {
+					t.Errorf("hits[%s] = %d, want %d", name, got, want)
+				}
+			}
+		})
+	}
+
+	// A version's .info is read from the file proxy as well.
+	s := New(http.DefaultClient, make(chan struct{}, 1))
+	s.env = func(context.Context) (gotool.GoEnv, error) { return gotool.GoEnv{Proxy: file}, nil }
+	s.info = func(context.Context, string, string, string) (time.Time, error) {
+		t.Error("a file proxy must not run go list -m")
+		return time.Time{}, nil
+	}
+	var timer datasource.Timer = s
+	got, err := timer.ReleaseTime(t.Context(), dep.Dep{Name: "example.com/m"}, "v1.1.0")
+	if want := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC); err != nil || !got.Equal(want) {
+		t.Errorf("ReleaseTime = %v, %v; want %v", got, err, want)
+	}
+}
