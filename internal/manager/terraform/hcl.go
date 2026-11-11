@@ -46,9 +46,13 @@ type block struct {
 	body   body
 }
 
-// parseHCL parses src as an HCL body.
+// parseHCL parses src as an HCL body. A leading byte order mark is skipped rather than
+// trimmed, so every offset stays an offset of src.
 func parseHCL(src []byte) (body, error) {
 	p := hclParser{src: src}
+	if bytes.HasPrefix(src, bom) {
+		p.pos = len(bom)
+	}
 	b, err := p.body(0)
 	if err != nil {
 		return body{}, err

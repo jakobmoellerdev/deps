@@ -375,6 +375,46 @@ func TestEdits(t *testing.T) {
 	}
 }
 
+// TestBOM covers configurations written with a UTF-8 byte order mark: the mark belongs to
+// neither the first block type nor the JSON document, so they yield the deps of the same file
+// without it, with spans into the original bytes.
+func TestBOM(t *testing.T) {
+	for _, tt := range []struct{ file, src string }{
+		{"versions.tf", "terraform {\n  required_providers {\n    aws = {\n      source  = \"hashicorp/aws\"\n      version = \"5.83.0\"\n    }\n  }\n}\n"},
+		{"main.tf.json", "{\n  \"terraform\": {\n    \"required_providers\": {\n      \"aws\": {\"source\": \"hashicorp/aws\", \"version\": \"5.83.0\"}\n    }\n  }\n}\n"},
+	} {
+		t.Run(tt.file, func(t *testing.T) {
+			want := extract(t, New(), tt.file, []byte(tt.src))
+			if len(want) == 0 {
+				t.Fatal("no deps without a byte order mark")
+			}
+			src := []byte("\ufeff" + tt.src)
+			if got := extract(t, New(), tt.file, src); !slices.Equal(got, want) {
+				t.Fatalf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+			}
+			deps, err := New().Extract(tt.file, src, manager.Env{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var edits []patch.Edit
+			for _, d := range deps {
+				e, err := New().Edits(dep.Update{Dep: d, NewVersion: "6.0.0"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				edits = append(edits, e...)
+			}
+			out, err := patch.Apply(src, edits)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if w := "\ufeff" + strings.Replace(tt.src, "5.83.0", "6.0.0", 1); string(out) != w {
+				t.Errorf("patched:\n%q\nwant\n%q", out, w)
+			}
+		})
+	}
+}
+
 func TestVersionFile(t *testing.T) {
 	for _, tt := range []struct{ src, want string }{
 		{"1.9.5\n", "1 terraform-version github-releases hashicorp/terraform https://github.com/hashicorp/terraform 1.9.5 hashicorp"},

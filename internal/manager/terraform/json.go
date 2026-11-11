@@ -41,7 +41,7 @@ type jsonMember struct {
 // body an object member is both an object attribute and a nested block, an array of objects
 // repeated nested blocks. "//" members are comments.
 func parseJSON(src []byte) (body, error) {
-	dec := jsontext.NewDecoder(bytes.NewReader(src), jsontext.AllowDuplicateNames(true))
+	dec := jsontext.NewDecoder(bytes.NewReader(blankBOM(src)), jsontext.AllowDuplicateNames(true))
 	root, err := readJSON(dec)
 	if err == nil {
 		_, err = dec.ReadToken()

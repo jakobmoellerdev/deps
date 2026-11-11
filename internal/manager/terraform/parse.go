@@ -1,6 +1,28 @@
 package terraform
 
-import "strings"
+import (
+	"bytes"
+	"slices"
+	"strings"
+)
+
+// bom is the UTF-8 byte order mark, which editors on Windows write before a configuration's
+// first byte; Terraform skips it.
+var bom = []byte("\ufeff")
+
+// blankBOM returns src with a leading byte order mark replaced by blanks, which a JSON
+// decoder reads as the whitespace before the document. Blanking rather than trimming keeps
+// every byte offset, and so every span, that of src.
+func blankBOM(src []byte) []byte {
+	if !bytes.HasPrefix(src, bom) {
+		return src
+	}
+	out := slices.Clone(src)
+	for i := range bom {
+		out[i] = ' '
+	}
+	return out
+}
 
 // isConfigFile reports whether name is a configuration file of the terraform manager
 // (.tf, .tofu, .tf.json, .tofu.json).
