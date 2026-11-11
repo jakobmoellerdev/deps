@@ -393,20 +393,169 @@ func prefix(s string, limit int) string {
 	return s[:limit]
 }
 
-// cutBody caps a sanitized body at maxBody. cut reports that the stored body was already cut
-// (and ends in "…"). A code fence left open by the cut is closed within the cap.
+// cutBody caps a sanitized body at maxBody and makes it safe to quote inside the pull
+// request's own <details> block: cut reports that the stored body was already cut (and ends
+// in "…"). A closing tag of the body that closes nothing of it would close that block, so it
+// is escaped, and a <details>, <summary> or code fence the body or the cut leaves open is
+// closed within the cap, so that the rest of the pull request body stays visible.
 func cutBody(body string, cut bool) string {
-	const fence = "\n```"
-	if !cut && len(body) <= maxBody {
-		return body
+	body = escapeStrayTags(body)
+	tail := closeTags(body)
+	if !cut && len(body)+len(tail) <= maxBody {
+		return body + tail
 	}
 	body = strings.TrimSuffix(body, ellipsis)
-	out := prefix(body, maxBody-len(ellipsis)) + ellipsis
-	if strings.Count(out, "```")%2 == 1 {
-		out = prefix(body, maxBody-len(ellipsis)-len(fence)) + ellipsis + fence
+	limit := maxBody - len(ellipsis)
+	out := prefix(body, limit)
+	tail = closeTags(out)
+	// Cutting shorter to make room for the closing tags can open or close others, so the
+	// limit is lowered until they fit. It only ever shrinks, so this ends.
+	for len(out)+len(ellipsis)+len(tail) > maxBody {
+		next := maxBody - len(ellipsis) - len(tail)
+		if next >= limit || next < 0 {
+			break // nested too deeply to close within the cap
+		}
+		limit, out = next, prefix(body, next)
+		tail = closeTags(out)
 	}
-	return out
+	return out + ellipsis + tail
 }
+
+// escapeStrayTags escapes the closing tags of body that close no tag of body itself: they
+// would close the <details> block the body is quoted in and hide the rest of the pull
+// request body.
+func escapeStrayTags(body string) string {
+	_, stray, _ := tagState(body)
+	if len(stray) == 0 {
+		return body
+	}
+	var b strings.Builder
+	b.Grow(len(body) + 3*len(stray))
+	last := 0
+	for _, i := range stray {
+		b.WriteString(body[last:i])
+		b.WriteString("&lt;")
+		last = i + 1
+	}
+	b.WriteString(body[last:])
+	return b.String()
+}
+
+// closeTags returns what body must be followed by to leave no code fence and no <details> or
+// <summary> block open, the innermost block first.
+func closeTags(body string) string {
+	open, _, fence := tagState(body)
+	if !fence && len(open) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	if fence {
+		b.WriteString("\n```")
+	}
+	for _, name := range slices.Backward(open) {
+		b.WriteString("\n</")
+		b.WriteString(name)
+		b.WriteString(">")
+	}
+	return b.String()
+}
+
+// htmlTag is a <details> or <summary> tag, or one of their closing tags, of a body.
+type htmlTag struct {
+	at      int    // offset of the '<'
+	name    string // "details" or "summary"
+	closing bool
+}
+
+// tagState walks the <details> and <summary> tags of body that GitHub reads as HTML (those
+// in a code fence or an inline code span are text) and returns the blocks left open
+// (outermost first), the offsets of the closing tags that close none of them, and whether
+// body ends inside a code fence.
+func tagState(body string) (open []string, stray []int, fence bool) {
+	var tags []htmlTag
+	for off := 0; off < len(body); {
+		line := body[off:]
+		if i := strings.IndexByte(line, '\n'); i >= 0 {
+			line = line[:i+1]
+		}
+		switch {
+		case strings.HasPrefix(strings.TrimSpace(line), "```"):
+			fence = !fence
+		case !fence:
+			// Even segments are outside inline `code`, as in sanitize.
+			at := off
+			for j, seg := range strings.Split(line, "`") {
+				if j%2 == 0 {
+					tags = appendTags(tags, seg, at)
+				}
+				at += len(seg) + 1
+			}
+		}
+		off += len(line)
+	}
+	for _, t := range tags {
+		switch {
+		case !t.closing:
+			open = append(open, t.name)
+		case len(open) > 0 && open[len(open)-1] == t.name:
+			open = open[:len(open)-1]
+		default:
+			stray = append(stray, t.at)
+		}
+	}
+	return open, stray, fence
+}
+
+// appendTags adds the tags of seg, which starts at offset at of its body, to dst.
+func appendTags(dst []htmlTag, seg string, at int) []htmlTag {
+	for i := 0; i < len(seg); i++ {
+		if seg[i] != '<' {
+			continue
+		}
+		name, closing, n := parseTag(seg[i:])
+		if n == 0 {
+			continue
+		}
+		dst = append(dst, htmlTag{at: at + i, name: name, closing: closing})
+		i += n - 1
+	}
+	return dst
+}
+
+// parseTag parses a <details> or <summary> tag, opening or closing and with any attributes,
+// at the start of s; a length of 0 reports that s starts with something else.
+func parseTag(s string) (name string, closing bool, n int) {
+	i := 1
+	if i < len(s) && s[i] == '/' {
+		closing, i = true, 2
+	}
+	j := i
+	for j < len(s) && isLetter(s[j]) {
+		j++
+	}
+	switch {
+	case strings.EqualFold(s[i:j], "details"):
+		name = "details"
+	case strings.EqualFold(s[i:j], "summary"):
+		name = "summary"
+	default:
+		return "", false, 0
+	}
+	end := strings.IndexByte(s[j:], '>')
+	switch {
+	case end < 0:
+		return "", false, 0
+	case closing && strings.TrimSpace(s[j:j+end]) != "": // "</details x>" is not a tag
+		return "", false, 0
+	case !closing && end > 0 && !isSpace(s[j]): // the name must end the tag or the attributes start
+		return "", false, 0
+	}
+	return name, closing, j + end + 1
+}
+
+func isLetter(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' }
+
+func isSpace(c byte) bool { return c == ' ' || c == '\t' || c == '\r' || c == '\n' }
 
 // redirect points github.com links at redirect.github.com, so a PR quoting them does not
 // create backlinks in the upstream issues and pull requests.

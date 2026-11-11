@@ -306,6 +306,7 @@ func TestTruncate(t *testing.T) {
 	long := strings.Repeat("a", maxBody+10)
 	multi := strings.Repeat("ä", maxBody) // 2 bytes per rune
 	fenced := "intro\n```\n" + strings.Repeat("code\n", maxBody)
+	collapsed := "<details>\n<summary>Changes</summary>\n\n" + strings.Repeat("entry\n", maxBody)
 	tests := []struct {
 		name      string
 		body      string
@@ -319,6 +320,7 @@ func TestTruncate(t *testing.T) {
 		{name: "runes", body: multi, wantEnd: "ä…"},
 		{name: "open fence closed within cap", body: fenced, wantEnd: "…\n```", wantFence: true},
 		{name: "stored body already cut", body: "abc…", cut: true, wantEnd: "abc…"},
+		{name: "open details closed within cap", body: collapsed, wantEnd: "…\n</details>"},
 	}
 	for _, tt := range tests {
 		got := cutBody(tt.body, tt.cut)
@@ -340,6 +342,34 @@ func TestTruncate(t *testing.T) {
 	}
 	if s, cut := truncate("héllo", 4); s != "h…" || !cut {
 		t.Errorf("truncate = %q, %v", s, cut)
+	}
+}
+
+// A release body is quoted inside a <details> block of the pull request body, so its own
+// blocks must be balanced: an open one hides the rest of the pull request body, a stray
+// closing one ends the block early.
+func TestCutBodyDetails(t *testing.T) {
+	for _, tt := range []struct{ name, body, want string }{
+		{"balanced block kept", "<details>\n<summary>s</summary>\nx\n</details>", "<details>\n<summary>s</summary>\nx\n</details>"},
+		{"open block closed", "<details open>\n<summary>s</summary>\nx", "<details open>\n<summary>s</summary>\nx\n</details>"},
+		{"open summary closed first", "<DETAILS>\n<summary>s", "<DETAILS>\n<summary>s\n</summary>\n</details>"},
+		{"stray closing tag escaped", "done\n</details>\nmore", "done\n&lt;/details>\nmore"},
+		{"mismatched nesting escaped", "<details><summary>s</details>", "<details><summary>s&lt;/details>\n</summary>\n</details>"},
+		{"tags in code are text", "```\n</details>\n```\nand `</details>`", "```\n</details>\n```\nand `</details>`"},
+		{"other tags untouched", "<detailsx>\n</div>\n<summaryfoo>", "<detailsx>\n</div>\n<summaryfoo>"},
+	} {
+		if got := cutBody(tt.body, false); got != tt.want {
+			t.Errorf("%s: cutBody(%q) =\n%q\nwant\n%q", tt.name, tt.body, got, tt.want)
+		}
+	}
+	// A body cut inside a block keeps the compare link and everything after it visible.
+	body := "<details>\n<summary>s</summary>\n" + strings.Repeat("x", maxBody)
+	got := cutBody(body, false)
+	if len(got) > maxBody || !strings.HasSuffix(got, "…\n</details>") {
+		t.Errorf("cut inside a block = %d bytes ending %q", len(got), got[max(0, len(got)-20):])
+	}
+	if o, c := strings.Count(got, "<details>"), strings.Count(got, "</details>"); o != c {
+		t.Errorf("details open %d, closed %d", o, c)
 	}
 }
 
