@@ -209,3 +209,46 @@ func BenchmarkResultSkipDep(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkTreeChanges compares the result of a vendoring post-processor, a tree of 2,000
+// unchanged files next to 200 manifests and siblings, with the working tree.
+func BenchmarkTreeChanges(b *testing.B) {
+	root := b.TempDir()
+	abs := filepath.Join(root, "m")
+	out := make(map[string][]byte, 2200)
+	content := []byte("package x\n")
+	for i := range 2000 {
+		rel := fmt.Sprintf("vendor/example.com/mod%d/file%d.go", i/20, i%20)
+		out[rel] = content
+		file := filepath.Join(abs, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+			b.Fatal(err)
+		}
+		if err := os.WriteFile(file, content, 0o644); err != nil {
+			b.Fatal(err)
+		}
+	}
+	var rels, names []string
+	for i := range 100 {
+		mod, sum := fmt.Sprintf("sub%d/go.mod", i), fmt.Sprintf("sub%d/go.sum", i)
+		out[mod], out[sum] = content, content
+		rels, names = append(rels, mod), append(names, sum)
+	}
+	for _, bb := range []struct {
+		name string
+		p    PostProcessor
+	}{
+		{"vendor", treePost{trees: []string{"vendor"}}},
+		{"no trees", postFunc{}},
+	} {
+		b.Run(bb.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				changes, err := treeChanges(root, "m", abs, bb.p, out, rels, names)
+				if err != nil || len(changes) != 0 {
+					b.Fatalf("changes = %d, err = %v", len(changes), err)
+				}
+			}
+		})
+	}
+}

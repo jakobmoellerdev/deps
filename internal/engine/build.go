@@ -563,16 +563,29 @@ func (s *postScope) process(ctx context.Context, root string, files []string, bu
 
 // treeChanges turns the results of p below its TreeRegenerator trees into changes against
 // the files in root; the old content is read for those files only. Results that are neither
-// a manifest (rels), a sibling (names) nor below a tree are ignored.
+// a manifest (rels), a sibling (names) nor below a tree are ignored. A regenerated tree
+// holds thousands of files (a Go module's vendor directory) and a scope hundreds of
+// manifests, so the manifests and siblings are looked up in a set built once.
 func treeChanges(root, dir, abs string, p PostProcessor, out map[string][]byte, rels, names []string) ([]FileChange, error) {
-	var trees []string
-	if tr, ok := p.(TreeRegenerator); ok {
-		trees = tr.Trees(abs)
+	tr, ok := p.(TreeRegenerator)
+	if !ok {
+		return nil, nil
+	}
+	trees := tr.Trees(abs)
+	if len(trees) == 0 {
+		return nil, nil
+	}
+	whole := slices.Contains(trees, ".") // the whole scope: every result is below a tree
+	scope := make(map[string]bool, len(rels)+len(names))
+	for _, n := range rels {
+		scope[n] = true
+	}
+	for _, n := range names {
+		scope[n] = true
 	}
 	var changes []FileChange
 	for rel, b := range out {
-		if slices.Contains(rels, rel) || slices.Contains(names, rel) ||
-			!slices.ContainsFunc(trees, func(t string) bool { return t == "." || strings.HasPrefix(rel, t+"/") }) {
+		if scope[rel] || !whole && !slices.ContainsFunc(trees, func(t string) bool { return strings.HasPrefix(rel, t+"/") }) {
 			continue
 		}
 		c := FileChange{Path: path.Join(dir, rel), Mode: 0o644, New: b}
