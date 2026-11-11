@@ -221,6 +221,16 @@ func TestExtractEdgeCases(t *testing.T) {
 	}
 }
 
+// TestExtractUnparsableDocument: a document that does not parse ends the file, but the
+// documents before it keep their deps.
+func TestExtractUnparsableDocument(t *testing.T) {
+	src := []byte("apiVersion: tekton.dev/v1\nkind: StepAction\nspec:\n  image: alpine:3.22\n" +
+		"---\napiVersion: tekton.dev/v1\nkind: Task\nspec: [\n")
+	check(t, extract(t, src), 1, map[int]want{
+		0: {line: 4, depT: TypeStepImage, ds: "docker", name: "alpine", version: "3.22"},
+	})
+}
+
 func TestPacKey(t *testing.T) {
 	for k, ok := range map[string]bool{
 		"pipelinesascode.tekton.dev/task":          true,

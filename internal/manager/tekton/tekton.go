@@ -56,8 +56,8 @@ func (tektonManager) Match(path string) bool {
 }
 
 // Extract returns the bundles, step images and annotation references of the Tekton resources
-// in every document of src. Documents without "tekton.dev" are not parsed; a file that does
-// not parse (a template) yields no deps.
+// in every document of src. Documents without "tekton.dev" are not parsed; a document that
+// does not parse (a template) ends the file, keeping the deps of the documents before it.
 func (tektonManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {
 	if !bytes.Contains(src, group) {
 		return nil, nil
@@ -71,8 +71,10 @@ func (tektonManager) Extract(file string, src []byte, env manager.Env) ([]dep.De
 			return x.Deps, nil
 		}
 		if err != nil {
+			// The documents parsed so far keep their deps: only the rest of the file, which
+			// the decoder cannot resynchronise on, is lost.
 			slog.Debug("skipping unparsable yaml", "file", file, "err", err)
-			return nil, nil
+			return x.Deps, nil
 		}
 		if len(doc.Content) == 1 {
 			x.resource(doc.Content[0])
