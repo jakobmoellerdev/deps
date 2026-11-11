@@ -96,13 +96,13 @@ var replacementIndex = func() map[string][]replacementMatcher {
 
 // replacementOf returns the first built-in replacement matching d that changes its name, or
 // nil. Entries match the dep's packageName.
-func (c *Config) replacementOf(d dep.Dep) *Replacement {
-	name := packageName(d)
+func (c *Config) replacementOf(d dep.Dep, vc *vcache) *Replacement {
+	name := packageName(&d)
 	for _, m := range replacementIndex[d.Manager] {
 		if !m.match(name) {
 			continue
 		}
-		if n := m.r.NewName(name); n != "" && n != name && (m.r.current == nil || c.currentMatches(m.r.current, d)) {
+		if n := m.r.NewName(name); n != "" && n != name && (m.r.current == nil || c.currentMatches(m.r.current, d, vc)) {
 			return m.r
 		}
 	}
@@ -112,7 +112,7 @@ func (c *Config) replacementOf(d dep.Dep) *Replacement {
 // packageName is the name Renovate's package rules see: Dep.Name, but for a helm chart from
 // an OCI registry the full reference without the scheme (ghcr.io/org/charts/cilium), which
 // helm replacements also accept as the new name.
-func packageName(d dep.Dep) string {
+func packageName(d *dep.Dep) string {
 	if repo, ok := strings.CutPrefix(d.Source, "oci://"); ok && d.Manager == "helm" {
 		return strings.TrimSuffix(repo, "/") + "/" + d.Name
 	}

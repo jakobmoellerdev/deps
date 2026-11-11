@@ -189,29 +189,37 @@ func (c *Config) HasUpdateTypeRules() bool {
 // a rule with currentAge matches d on its other selectors (updateTypes aside). Only then is
 // the release time of the current version worth a lookup.
 func (c *Config) WantsCurrentAge(d dep.Dep) bool {
+	var vc vcache
 	for i := range c.Rules {
-		if r := &c.Rules[i]; r.currentAge != nil && c.matchesDep(r, d) {
+		if r := &c.Rules[i]; r.currentAge != nil && c.matchesDep(r, d, &vc) {
 			return true
 		}
 	}
 	return false
 }
 
+// vcache memoizes the versioning scheme of one dep across the rules matched against it: every
+// currentVersion constraint converts with it, and resolving it walks every rule.
+type vcache struct {
+	v  string
+	ok bool
+}
+
 // matches reports whether r applies to d; kind "" skips rules with updateTypes, a negative
-// age those with currentAge.
-func (c *Config) matches(r *Rule, d dep.Dep, kind dep.UpdateType, age time.Duration) bool {
+// age those with currentAge. vc caches d's versioning scheme across the rules.
+func (c *Config) matches(r *Rule, d dep.Dep, kind dep.UpdateType, age time.Duration, vc *vcache) bool {
 	switch {
 	case len(r.UpdateTypes) > 0 && (kind == "" || !slices.Contains(r.UpdateTypes, string(kind))),
 		r.currentAge != nil && (age < 0 || !r.currentAge.matches(age)):
 		return false
 	}
-	return c.matchesDep(r, d)
+	return c.matchesDep(r, d, vc)
 }
 
 // matchesDep reports whether the match fields of r other than updateTypes and currentAge
 // match d on the base branch of c (ForBaseBranch; rules with baseBranches match nothing
 // without one).
-func (c *Config) matchesDep(r *Rule, d dep.Dep) bool {
+func (c *Config) matchesDep(r *Rule, d dep.Dep, vc *vcache) bool {
 	switch {
 	case len(r.Managers) > 0 && !slices.Contains(r.Managers, d.Manager),
 		len(r.Names) > 0 && !r.names.Match(d.Name),
@@ -221,14 +229,14 @@ func (c *Config) matchesDep(r *Rule, d dep.Dep) bool {
 		len(r.BaseBranches) > 0 && (c.baseBranch == "" || !matchBranches(r.baseBranches, c.baseBranch)):
 		return false
 	}
-	return r.currentVersion == nil || c.currentMatches(r.currentVersion, d)
+	return r.currentVersion == nil || c.currentMatches(r.currentVersion, d, vc)
 }
 
 // currentMatches reports whether d's current version (the locked one when known) satisfies a,
 // converted with the versioning scheme d is resolved with.
-func (c *Config) currentMatches(a *Allowed, d dep.Dep) bool {
+func (c *Config) currentMatches(a *Allowed, d dep.Dep, vc *vcache) bool {
 	return a.Check(cmp.Or(d.Locked, d.Version), func(v string) *semver.Version {
-		s, ok := versioning.Get(c.versioningOf(d))
+		s, ok := versioning.Get(c.versioningOf(d, vc))
 		if !ok {
 			return nil
 		}
@@ -237,15 +245,21 @@ func (c *Config) currentMatches(a *Allowed, d dep.Dep) bool {
 }
 
 // versioningOf is the versioning scheme d is resolved with: the last matching rule's
-// versioning, else d's own. Rules with versioning have neither currentVersion nor currentAge,
-// so matching them does not recurse.
-func (c *Config) versioningOf(d dep.Dep) string {
+// versioning, else d's own; vc holds it once resolved. Rules with versioning have neither
+// currentVersion nor currentAge, so matching them needs no versioning itself: the cache they
+// see answers with d's own.
+func (c *Config) versioningOf(d dep.Dep, vc *vcache) string {
+	if vc.ok {
+		return vc.v
+	}
 	v := d.Versioning
+	own := vcache{v: d.Versioning, ok: true}
 	for i := range c.Rules {
-		if r := &c.Rules[i]; r.Versioning != "" && c.matches(r, d, "", UnknownAge) {
+		if r := &c.Rules[i]; r.Versioning != "" && c.matches(r, d, "", UnknownAge, &own) {
 			v = r.Versioning
 		}
 	}
+	vc.v, vc.ok = v, true
 	return v
 }
 
@@ -257,9 +271,10 @@ func (c *Config) RegistryURLs(d dep.Dep) string {
 	if !slices.Contains(RegistryURLDatasources, d.Datasource) {
 		return ""
 	}
+	var vc vcache
 	var urls []string
 	for i := range c.Rules {
-		if r := &c.Rules[i]; len(r.RegistryURLs) > 0 && c.matches(r, d, "", UnknownAge) {
+		if r := &c.Rules[i]; len(r.RegistryURLs) > 0 && c.matches(r, d, "", UnknownAge, &vc) {
 			urls = r.RegistryURLs
 		}
 	}
@@ -276,7 +291,10 @@ func (c *Config) UnusedRules(deps []dep.Dep) []int {
 		if len(r.BaseBranches) > 0 && c.baseBranch == "" {
 			continue // without a base branch it cannot match; that says nothing about the rule
 		}
-		if !slices.ContainsFunc(deps, func(d dep.Dep) bool { return c.matchesDep(r, d) }) {
+		if !slices.ContainsFunc(deps, func(d dep.Dep) bool {
+			var vc vcache
+			return c.matchesDep(r, d, &vc)
+		}) {
 			out = append(out, i)
 		}
 	}
@@ -371,9 +389,10 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Polic
 			p.Registry, p.Group = VcpkgGroup, VcpkgGroup
 		}
 	}
+	var vc vcache
 	if c.ReplacementsEnabled() {
-		if rp := c.replacementOf(d); rp != nil {
-			p.Replacement, p.ReplacementName, p.ReplacementVersion = rp.Name, rp.NewName(packageName(d)), rp.Version
+		if rp := c.replacementOf(d, &vc); rp != nil {
+			p.Replacement, p.ReplacementName, p.ReplacementVersion = rp.Name, rp.NewName(packageName(&d)), rp.Version
 		}
 	}
 	switch {
@@ -385,14 +404,14 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Polic
 	}
 	for i := range c.Rules {
 		r := &c.Rules[i]
-		if !c.matches(r, d, kind, age) {
+		if !c.matches(r, d, kind, age, &vc) {
 			continue
 		}
 		p.Rules = append(p.Rules, i)
 		if r.ReplacementName != "" {
 			// The prefix matches the name Renovate's replacementNameTemplate sees (packageName),
 			// not Dep.Name: an OCI helm chart's Name is the chart alone.
-			if name := packageName(d); strings.HasPrefix(name, r.ReplacementPrefix) {
+			if name := packageName(&d); strings.HasPrefix(name, r.ReplacementPrefix) {
 				to := r.ReplacementName
 				if r.ReplacementPrefix != "" {
 					to += name[len(r.ReplacementPrefix):]
