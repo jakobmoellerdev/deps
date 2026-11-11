@@ -85,7 +85,7 @@ func hasTaskOperator(s string) bool {
 // taskTimeout bounds one postUpgradeTasks command.
 const taskTimeout = 15 * time.Minute
 
-// droppedEnv are kept from the commands' environment on top of toolrun.Secrets: the platform
+// droppedEnv are kept from the commands' environment on top of the credentials toolrun.Secret names: the platform
 // tokens deps reads, and the git variables that would point the commands' git elsewhere than
 // the repository they run in.
 var droppedEnv = []string{
