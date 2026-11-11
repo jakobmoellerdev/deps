@@ -126,7 +126,11 @@ func (p *json5Parser) value(depth int) (any, error) {
 		return p.number()
 	case r == 't' || r == 'f' || r == 'n':
 		start := p.pos
-		id := p.ident()
+		id, err := p.ident()
+		if err != nil {
+			p.pos = start
+			return nil, p.unexpected()
+		}
 		switch id {
 		case "true":
 			return true, nil
@@ -160,8 +164,12 @@ func (p *json5Parser) object(depth int) (any, error) {
 				return nil, err
 			}
 			key = k
-		case isIdentStart(r):
-			key = p.ident()
+		case isIdentStart(r) || r == '\\':
+			k, err := p.ident()
+			if err != nil {
+				return nil, err
+			}
+			key = k
 		default:
 			return nil, p.unexpected()
 		}
@@ -226,20 +234,58 @@ func (p *json5Parser) array(depth int) (any, error) {
 	}
 }
 
+// isIdentStart and isIdentPart approximate the ID_Start and ID_Continue properties JSON5 uses
+// for unquoted keys; the connector and combining characters they also allow are rare enough in
+// Renovate configuration to leave out.
 func isIdentStart(r rune) bool {
-	return r == '_' || r == '$' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
+	return r == '_' || r == '$' || unicode.IsLetter(r)
 }
 
-func (p *json5Parser) ident() string {
-	start := p.pos
-	for p.pos < len(p.src) {
-		c := rune(p.src[p.pos])
-		if !isIdentStart(c) && (c < '0' || c > '9') {
-			break
+func isIdentPart(r rune) bool {
+	return isIdentStart(r) || unicode.IsDigit(r)
+}
+
+// ident reads an unquoted key, which may spell any of its characters as \uXXXX.
+func (p *json5Parser) ident() (string, error) {
+	var b strings.Builder
+	for first := true; p.pos < len(p.src); first = false {
+		at := p.pos
+		r, n := p.peek()
+		if r == '\\' {
+			p.pos++
+			if c, _ := p.peek(); c != 'u' {
+				return "", p.errAt(at, "invalid escape in key")
+			}
+			p.pos++
+			v, ok := p.hex(4)
+			if !ok {
+				return "", p.errAt(at, "invalid \\u escape")
+			}
+			if utf16IsHigh(v) && p.pos+1 < len(p.src) && p.src[p.pos] == '\\' && p.src[p.pos+1] == 'u' {
+				save := p.pos
+				p.pos += 2
+				if lo, ok := p.hex(4); ok && lo >= 0xdc00 && lo <= 0xdfff {
+					v = (v-0xd800)<<10 + (lo - 0xdc00) + 0x10000
+				} else {
+					p.pos = save
+				}
+			}
+			r = v
+		} else {
+			if !isIdentPart(r) {
+				break
+			}
+			p.pos += n
 		}
-		p.pos++
+		if first && !isIdentStart(r) || !first && !isIdentPart(r) {
+			return "", p.errAt(at, fmt.Sprintf("invalid character %q in key", r))
+		}
+		b.WriteRune(r)
 	}
-	return string(p.src[start:p.pos])
+	if b.Len() == 0 {
+		return "", p.unexpected()
+	}
+	return b.String(), nil
 }
 
 func (p *json5Parser) number() (any, error) {
@@ -254,7 +300,11 @@ func (p *json5Parser) number() (any, error) {
 	rest := p.src[p.pos:]
 	switch {
 	case len(rest) > 0 && (rest[0] == 'I' || rest[0] == 'N'):
-		id := p.ident()
+		id, err := p.ident()
+		if err != nil {
+			p.pos = start
+			return nil, p.unexpected()
+		}
 		switch id {
 		case "Infinity":
 			return math.Inf(int(sign)), nil

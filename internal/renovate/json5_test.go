@@ -29,6 +29,9 @@ func TestParseJSON5(t *testing.T) {
 		{"nested", `{a: {b: [[], {}, [{c: 'd'}]]}}`,
 			map[string]any{"a": map[string]any{"b": []any{[]any{}, map[string]any{}, []any{map[string]any{"c": "d"}}}}}},
 		{"unicode space", "\ufeff\u00a0{a:\u2028 1}", map[string]any{"a": 1.0}},
+		{"unicode keys", `{ключ: 1, Ünïcode2: 2}`, map[string]any{"ключ": 1.0, "Ünïcode2": 2.0}},
+		{"escaped key", `{\u0063af\u00e9: 1, b\u0032: 2}`, map[string]any{"café": 1.0, "b2": 2.0}},
+		{"zero", `[0, 0.5, -0.0, 0e1]`, []any{0.0, 0.5, math.Copysign(0, -1), 0.0}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
