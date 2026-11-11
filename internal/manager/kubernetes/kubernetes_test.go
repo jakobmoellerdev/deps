@@ -98,6 +98,30 @@ func TestExtract(t *testing.T) {
 	}
 }
 
+// TestExtractBOM covers a manifest written with a UTF-8 byte order mark: the mark is no part
+// of the first line's key, so the first document keeps its dep, whose span points into the
+// original bytes.
+func TestExtractBOM(t *testing.T) {
+	src := []byte("\ufeffapiVersion: \"apps/v1beta2\"\nkind: Deployment\n---\napiVersion: policy/v1beta1\nkind: PodDisruptionBudget\n")
+	want := []got{{"Deployment", "apps/v1beta2", "apps/v1beta2", 1}, {"PodDisruptionBudget", "policy/v1beta1", "policy/v1beta1", 4}}
+	if g := extract(t, "d.yaml", src); !reflect.DeepEqual(g, want) {
+		t.Fatalf("deps =\n%+v\nwant\n%+v", g, want)
+	}
+	m := New()
+	deps, err := m.Extract("d.yaml", src, manager.Env{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	edits, err := m.Edits(dep.Update{Dep: deps[0], NewVersion: "apps/v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := patch.Apply(src, edits)
+	if w := "\ufeffapiVersion: \"apps/v1\"\nkind: Deployment\n---\napiVersion: policy/v1beta1\nkind: PodDisruptionBudget\n"; err != nil || string(out) != w {
+		t.Errorf("patched = %q, %v", out, err)
+	}
+}
+
 func TestMatchAndEdits(t *testing.T) {
 	m := New()
 	if m.Name() != Name {

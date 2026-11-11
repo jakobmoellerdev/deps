@@ -49,7 +49,11 @@ func (k8sManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, er
 	var deps []dep.Dep
 	var doc document
 	line := 0
-	for off := 0; off < len(src); {
+	off := 0
+	if bytes.HasPrefix(src, bom) {
+		off = len(bom) // the mark is not part of the first line's key
+	}
+	for off < len(src) {
 		end := bytes.IndexByte(src[off:], '\n')
 		if end < 0 {
 			end = len(src)
@@ -71,6 +75,10 @@ func (k8sManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, er
 	}
 	return doc.dep(file, deps), nil
 }
+
+// bom is the UTF-8 byte order mark, which editors on Windows write before a manifest's first
+// byte; the YAML parsers skip it.
+var bom = []byte("\ufeff")
 
 // document collects the top-level apiVersion and kind of one YAML document.
 type document struct {
