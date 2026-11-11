@@ -795,7 +795,7 @@ type Git interface {
     WriteTree(ctx context.Context, parent string, changes []engine.FileChange) (string, error) // local temporary index; equals the tree of Commit's commit
     Commit(ctx context.Context, parent string, changes []engine.FileChange, msg, name, email string) (string, error)
     Push(ctx context.Context, commit, branch, expected string) error // gitx.ErrStale (lease or non-fast-forward), gitx.ErrRejected (origin declined)
-    DeleteBranch(ctx context.Context, branch string) error
+    DeleteBranch(ctx context.Context, branch, expected string) error // expected = the commit the branch must still point at; "" = no lease
     BranchTip(ctx context.Context, branch string) (platform.Tip, error) // Tip{Author, Parents, Tree, Date}
 }
 type Options struct {

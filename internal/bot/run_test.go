@@ -47,6 +47,7 @@ type fakeGit struct {
 	pushed   []string // branches
 	pushes   []string // "<commit>:<branch>@<expected>"
 	deleted  []string
+	deletes  []string             // "<branch>@<expected>"
 	patterns []string             // LsRemote patterns
 	tips     []string             // BranchTip branches
 	dates    map[string]time.Time // BranchTip committer dates by branch; zero = unknown
@@ -126,11 +127,12 @@ func (g *fakeGit) Push(_ context.Context, commit, branch, expected string) error
 	g.pushes = append(g.pushes, commit+":"+branch+"@"+expected)
 	return nil
 }
-func (g *fakeGit) DeleteBranch(_ context.Context, branch string) error {
+func (g *fakeGit) DeleteBranch(_ context.Context, branch, expected string) error {
 	if err := fail(g.fail, "DeleteBranch", branch); err != nil {
 		return err
 	}
 	g.deleted = append(g.deleted, branch)
+	g.deletes = append(g.deletes, branch+"@"+expected)
 	return nil
 }
 func (g *fakeGit) BranchTip(_ context.Context, branch string) (platform.Tip, error) {
@@ -457,10 +459,18 @@ func TestRun(t *testing.T) {
 		},
 		{
 			name:       "obsolete PR closed",
-			git:        fakeGit{branches: map[string]string{"refs/heads/deps/gomod/gone": "x"}},
+			git:        fakeGit{branches: map[string]string{"refs/heads/deps/gomod/gone": "x"}, authors: map[string]string{"deps/gomod/gone": email}},
 			pc:         fakePC{open: []platform.PR{{Number: 9, Head: "deps/gomod/gone"}, {Number: 10, Head: "feature/x"}}},
 			wantStatus: map[string]string{branchA: StatusCreated, branchB: StatusCreated, "deps/gomod/gone": StatusClosed},
-			wantPushed: 2, wantCreated: 2, wantClosed: 1, wantDeleted: 1,
+			wantPushed: 2, wantCreated: 2, wantClosed: 1, wantDeleted: 1, wantTips: 1,
+		},
+		{
+			// A human's commits on an obsolete branch survive the PR being closed.
+			name:       "obsolete PR closed, foreign branch kept",
+			git:        fakeGit{branches: map[string]string{"refs/heads/deps/gomod/gone": "x"}, authors: map[string]string{"deps/gomod/gone": "dev@example.invalid"}},
+			pc:         fakePC{open: []platform.PR{{Number: 9, Head: "deps/gomod/gone"}}},
+			wantStatus: map[string]string{branchA: StatusCreated, branchB: StatusCreated, "deps/gomod/gone": StatusClosed},
+			wantPushed: 2, wantCreated: 2, wantClosed: 1, wantTips: 1,
 		},
 		{
 			name:       "obsolete PR kept on engine error",
@@ -557,11 +567,11 @@ func TestRun(t *testing.T) {
 		},
 		{
 			name:       "DeleteBranch failure still reports the closed PR",
-			git:        fakeGit{branches: map[string]string{"refs/heads/deps/gomod/gone": "x"}, fail: map[string]error{"DeleteBranch": errBoom}},
+			git:        fakeGit{branches: map[string]string{"refs/heads/deps/gomod/gone": "x"}, authors: map[string]string{"deps/gomod/gone": email}, fail: map[string]error{"DeleteBranch": errBoom}},
 			pc:         fakePC{open: []platform.PR{{Number: 9, Head: "deps/gomod/gone"}}},
 			wantStatus: map[string]string{branchA: StatusCreated, branchB: StatusCreated, "deps/gomod/gone": StatusClosed},
 			wantErrs:   []string{"delete deps/gomod/gone: boom"},
-			wantPushed: 2, wantCreated: 2, wantClosed: 1,
+			wantPushed: 2, wantCreated: 2, wantClosed: 1, wantTips: 1,
 		},
 		{
 			name:       "behind base, same content, mergeable is rebased",
@@ -750,7 +760,7 @@ func TestRunStaleCheckout(t *testing.T) {
 
 func TestRunBranchPrefixAndUnlimitedPRs(t *testing.T) {
 	root, res := fixture(t)
-	g := &fakeGit{branches: map[string]string{"refs/heads/bot/gomod/gone": "x"}}
+	g := &fakeGit{branches: map[string]string{"refs/heads/bot/gomod/gone": "x"}, authors: map[string]string{"bot/gomod/gone": email}}
 	pc := &fakePC{open: []platform.PR{{Number: 9, Head: "bot/gomod/gone"}, {Number: 10, Head: "deps/gomod/foreign"}}}
 	o := Options{BranchPrefix: "bot/", AuthorEmail: email, Managers: managers} // MaxNewPRs 0 = unlimited
 	acts, errs := Run(t.Context(), o, []Base{{Root: root, Res: res, Git: g}}, nil, pc)
@@ -763,8 +773,8 @@ func TestRunBranchPrefixAndUnlimitedPRs(t *testing.T) {
 	if want := []string{"bot/a-x", "bot/b-y"}; !slices.Equal(pc.created, want) {
 		t.Errorf("created = %v, want %v", pc.created, want)
 	}
-	if !slices.Equal(pc.closedNow, []int{9}) || !slices.Equal(g.deleted, []string{"bot/gomod/gone"}) {
-		t.Errorf("closed = %v deleted = %v; only PRs under the prefix are managed", pc.closedNow, g.deleted)
+	if !slices.Equal(pc.closedNow, []int{9}) || !slices.Equal(g.deletes, []string{"bot/gomod/gone@x"}) {
+		t.Errorf("closed = %v deleted = %v; only PRs under the prefix are managed, with a lease on the known tip", pc.closedNow, g.deletes)
 	}
 	if len(acts) != 3 {
 		t.Errorf("actions = %+v", acts)

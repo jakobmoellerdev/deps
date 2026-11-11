@@ -393,7 +393,14 @@ func TestPushDeleteAuthor(t *testing.T) {
 		t.Fatalf("shallow BranchTip = %+v, %v; want %+v", got, err, want)
 	}
 
-	if err := r.DeleteBranch(ctx, br); err != nil {
+	// A lease naming another commit must not delete the branch: the tip is c2 now.
+	if err := r.DeleteBranch(ctx, br, c1); err == nil {
+		t.Fatal("delete with a stale lease succeeded")
+	}
+	if tip() != c2 {
+		t.Fatalf("rejected delete removed the branch (tip %s)", tip())
+	}
+	if err := r.DeleteBranch(ctx, br, c2); err != nil {
 		t.Fatal(err)
 	}
 	if tip() != "" {

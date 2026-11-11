@@ -47,7 +47,7 @@ func multiBase(t *testing.T, releaseErr error) ([]Action, []error, *fakePC, *fak
 	}
 	gm := &fakeGit{
 		branches: map[string]string{"refs/heads/" + branchA: "x", "refs/heads/" + stale: "y"},
-		authors:  map[string]string{stale: email},
+		authors:  map[string]string{stale: email, branchA: email},
 	}
 	pc := &fakePC{open: []platform.PR{
 		{Number: 1, Head: branchA, Base: "main"},

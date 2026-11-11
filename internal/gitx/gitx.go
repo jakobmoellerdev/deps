@@ -335,9 +335,16 @@ func (r Repo) Push(ctx context.Context, commit, branch, expected string) error {
 	return err
 }
 
-// DeleteBranch deletes refs/heads/<branch> on origin.
-func (r Repo) DeleteBranch(ctx context.Context, branch string) error {
-	_, err := r.run(ctx, nil, nil, "push", "origin", ":refs/heads/"+branch)
+// DeleteBranch deletes refs/heads/<branch> on origin. expected is the commit the branch must
+// still point at ("" = delete it whatever it points at), so a branch someone pushed to
+// between the check and the delete survives.
+func (r Repo) DeleteBranch(ctx context.Context, branch, expected string) error {
+	ref := "refs/heads/" + branch
+	args := []string{"push"}
+	if expected != "" {
+		args = append(args, "--force-with-lease="+ref+":"+expected)
+	}
+	_, err := r.run(ctx, nil, nil, append(args, "origin", ":"+ref)...)
 	return err
 }
 

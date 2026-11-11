@@ -56,7 +56,7 @@ func TestRunLockFileMaintenance(t *testing.T) {
 	}
 
 	// An unchanged lock needs no PR: nothing is pushed and the open one is closed.
-	g = &fakeGit{branches: map[string]string{"refs/heads/" + maintBranch: "x"}}
+	g = &fakeGit{branches: map[string]string{"refs/heads/" + maintBranch: "x"}, authors: map[string]string{maintBranch: email}}
 	pc = &fakePC{open: []platform.PR{{Number: 7, Head: maintBranch, Title: "chore(deps): lock file maintenance"}}}
 	acts, errs = Run(t.Context(), o, []Base{{Root: root, Res: res, Git: g}}, map[string]engine.PostProcessor{cargo.Name: maintainer{}}, pc)
 	if len(errs) > 0 || len(g.pushed) != 0 || !slices.Equal(pc.closedNow, []int{7}) || !slices.Equal(g.deleted, []string{maintBranch}) {

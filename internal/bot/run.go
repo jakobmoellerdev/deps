@@ -42,7 +42,9 @@ type Git interface {
 	// Push wraps gitx.ErrStale when the branch moved away from expected and
 	// gitx.ErrRejected when origin declined the update.
 	Push(ctx context.Context, commit, branch, expected string) error
-	DeleteBranch(ctx context.Context, branch string) error
+	// DeleteBranch deletes branch on origin; expected is the commit it must still point at
+	// ("" = no check), so commits someone else pushed meanwhile are not lost.
+	DeleteBranch(ctx context.Context, branch, expected string) error
 	BranchTip(ctx context.Context, branch string) (platform.Tip, error)
 }
 
@@ -548,8 +550,8 @@ func (r *baseRun) handleGroups(ctx context.Context, o Options, dash *dashboard, 
 	return errs
 }
 
-// closeObsolete closes the open PRs of r no group wants, deleting their branches, apart from
-// those with the stop-updating label.
+// closeObsolete closes the open PRs of r no group wants, deleting the branches of those it
+// still owns, apart from the PRs with the stop-updating label.
 func (r *baseRun) closeObsolete(ctx context.Context, o Options, wanted map[string]bool, pc platform.Client) []error {
 	var errs []error
 	for _, pr := range r.s.open {
@@ -565,9 +567,18 @@ func (r *baseRun) closeObsolete(ctx context.Context, o Options, wanted map[strin
 			errs = append(errs, fmt.Errorf("close #%d: %w", pr.Number, err))
 			continue
 		}
-		if _, ok := r.s.branches["refs/heads/"+pr.Head]; ok {
-			if err := r.Git.DeleteBranch(ctx, pr.Head); err != nil {
-				errs = append(errs, fmt.Errorf("delete %s: %w", pr.Head, err))
+		if sha, ok := r.s.branches["refs/heads/"+pr.Head]; ok {
+			// Someone else's commits on the branch outlive the PR, as deleteObsoleteBranches
+			// keeps them too.
+			switch t, err := r.Git.BranchTip(ctx, pr.Head); {
+			case err != nil:
+				errs = append(errs, fmt.Errorf("%s: %w", pr.Head, err))
+			case !ownAuthor(o, t.Author):
+				slog.InfoContext(ctx, "keeping obsolete branch modified by someone else", "branch", pr.Head, "author", t.Author)
+			default:
+				if err := r.Git.DeleteBranch(ctx, pr.Head, sha); err != nil {
+					errs = append(errs, fmt.Errorf("delete %s: %w", pr.Head, err))
+				}
 			}
 		}
 		r.actions = append(r.actions, Action{Branch: pr.Head, Title: pr.Title, Status: StatusClosed, URL: pr.URL, Number: pr.Number})
@@ -651,7 +662,7 @@ func deleteObsoleteBranches(ctx context.Context, o Options, branches map[string]
 			slog.InfoContext(ctx, "keeping obsolete branch modified by someone else", "branch", b, "author", t.Author)
 			continue
 		}
-		if err := g.DeleteBranch(ctx, b); err != nil {
+		if err := g.DeleteBranch(ctx, b, branches[ref]); err != nil {
 			errs = append(errs, fmt.Errorf("delete %s: %w", b, err))
 			continue
 		}
@@ -1171,7 +1182,7 @@ func mergeBranch(ctx context.Context, o Options, s *runState, grp engine.Group, 
 	s.merged = true
 	a.Automerge = AutomergeMerged
 	slog.InfoContext(ctx, "automerge branch merged", "branch", grp.Branch, "base", s.base, "commit", short(sha))
-	if err := g.DeleteBranch(ctx, grp.Branch); err != nil {
+	if err := g.DeleteBranch(ctx, grp.Branch, sha); err != nil {
 		// Not an error of the merge: the next run deletes the branch as obsolete.
 		slog.WarnContext(ctx, "deleting the merged branch", "branch", grp.Branch, "err", err)
 	}
