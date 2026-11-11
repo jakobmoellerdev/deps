@@ -118,6 +118,13 @@ func TestMatcherRules(t *testing.T) {
 			want: []string{".gitignore", "build/go.mod"},
 		},
 		{
+			// git check-ignore (2.53.0) on "*.{js,ts}" ignores the file literally named
+			// "a.{js,ts}" and neither a.js nor a.ts: gitignore(5) has no brace expansion.
+			name: "braces are literal, not alternation",
+			tree: map[string]string{".gitignore": "*.{js,ts}\nq{\n", "a.js": "", "a.ts": "", "a.{js,ts}": "", "q{": "", "q": ""},
+			want: []string{".gitignore", "a.js", "a.ts", "q"},
+		},
+		{
 			name: "comments, blank lines and escapes",
 			tree: map[string]string{".gitignore": "# a comment\n\n\\#hash\n!x.log\n*.log\ntrail   \nkeep\\ me \n", "#hash": "", "x.log": "", "trail": "", "keep me": "", "ok": ""},
 			want: []string{".gitignore", "ok"},
@@ -199,6 +206,8 @@ func TestParseLine(t *testing.T) {
 		{line: "a/b.txt", ok: true, glob: "a/b.txt"},
 		{line: "a/**/b", ok: true, glob: "a/**/b"},
 		{line: "a/**", ok: true, glob: "a/**/*"}, // one element below a, never a itself
+		{line: "*.{js,ts}", ok: true, glob: `**/*.\{js,ts\}`},
+		{line: "a{b", ok: true, glob: `**/a\{b`}, // an unpaired brace is a name, not a broken glob
 		{line: "trail   ", ok: true, glob: "**/trail"},
 		{line: `keep\ me `, ok: true, glob: `**/keep\ me`},
 		{line: `\#hash`, ok: true, glob: `**/\#hash`},

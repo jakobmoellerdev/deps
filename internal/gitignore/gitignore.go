@@ -78,7 +78,35 @@ func base(rel string) string {
 }
 
 // meta reports whether s holds a glob metacharacter, so it cannot be compared literally.
-func meta(s string) bool { return strings.ContainsAny(s, `*?[]\{}`) }
+// Braces are not among them: gitignore(5) has no brace expansion, so "*.{js,ts}" is a name
+// ending in the literal text "{js,ts}".
+func meta(s string) bool { return strings.ContainsAny(s, `*?[]\`) }
+
+// escapeBraces makes the braces of a doublestar glob literal, leaving the ones already
+// escaped alone. Without this doublestar would read them as the alternation git has not.
+func escapeBraces(glob string) string {
+	if !strings.ContainsAny(glob, "{}") {
+		return glob
+	}
+	var b strings.Builder
+	b.Grow(len(glob) + 4)
+	for i := 0; i < len(glob); i++ {
+		switch c := glob[i]; c {
+		case '\\':
+			b.WriteByte(c)
+			if i+1 < len(glob) {
+				i++
+				b.WriteByte(glob[i])
+			}
+		case '{', '}':
+			b.WriteByte('\\')
+			b.WriteByte(c)
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}
 
 // New loads the ignore files that apply to the tree below root: the repository's
 // .git/info/exclude, the .gitignore files of the directories between the repository top (the
@@ -282,6 +310,7 @@ func parseLine(line string) (pattern, bool) {
 			p.kind, p.text = kindSuffix, line[1:]
 		}
 	}
+	p.glob = escapeBraces(p.glob)
 	// git's trailing "/**" matches everything inside the prefix but not the prefix itself,
 	// while doublestar's "**" also matches zero path elements. Requiring one more element
 	// keeps a walk from pruning the directory, which would make a later negation
