@@ -256,6 +256,57 @@ func TestPackageManager(t *testing.T) {
 	}
 }
 
+// TestExtractBOMAndEdits covers a package.json written with a UTF-8 byte order mark: the
+// decoder reads the mark as whitespace, so the deps are those of the same file without it and
+// the spans still point into the original bytes.
+func TestExtractBOMAndEdits(t *testing.T) {
+	m := New()
+	plain, err := m.Extract("package.json", []byte(src), manager.Env{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	marked, err := m.Extract("package.json", []byte("\ufeff"+src), manager.Env{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(marked) != len(plain) || len(plain) == 0 {
+		t.Fatalf("%d deps with a byte order mark, %d without", len(marked), len(plain))
+	}
+	for i, d := range marked {
+		if w := plain[i]; d.Name != w.Name || d.Version != w.Version || d.Range != w.Range ||
+			d.DepType != w.DepType || d.Line != w.Line || d.Skip != w.Skip {
+			t.Errorf("dep %d = %+v, want %+v", i, d, w)
+		}
+	}
+
+	in := "{\n  \"packageManager\": \"npm@12.2.0\",\n  \"dependencies\": {\"a\": \"^1.2.3\"}\n}\n"
+	b := []byte("\ufeff" + in)
+	deps, err := m.Extract("package.json", b, manager.Env{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deps) != 2 {
+		t.Fatalf("deps = %+v", deps)
+	}
+	news := []string{"12.3.0", "2.0.0"}
+	var edits []patch.Edit
+	for i, d := range deps {
+		e, err := m.Edits(dep.Update{Dep: d, NewVersion: news[i]})
+		if err != nil {
+			t.Fatal(err)
+		}
+		edits = append(edits, e...)
+	}
+	out, err := patch.Apply(b, edits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantOut := "\ufeff" + strings.NewReplacer("npm@12.2.0", "npm@12.3.0", "^1.2.3", "^2.0.0").Replace(in)
+	if string(out) != wantOut {
+		t.Errorf("patched =\n%q\nwant\n%q", out, wantOut)
+	}
+}
+
 func TestExtractCRLFAndEdits(t *testing.T) {
 	in := "{\r\n  \"packageManager\": \"npm@12.2.0\",\r\n  \"dependencies\": {\r\n    \"a\": \"^1.2.3\",\r\n    \"b\":\"~0.1.0\"\r\n  },\r\n  \"dependencies2\": null,\r\n  \"devDependencies\": null,\r\n  \"peerDependencies\": [\"x\"]\r\n}\r\n"
 	b := []byte(in)

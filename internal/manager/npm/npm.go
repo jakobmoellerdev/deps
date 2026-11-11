@@ -90,7 +90,7 @@ func (npmManager) Match(p string) bool {
 // range deps as in the dependency sections (extractor.tools). Values the grammar does not
 // cover are skipped with a reason. Duplicate names are accepted, as npm's JSON.parse does.
 func (npmManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
-	dec := jsontext.NewDecoder(bytes.NewReader(src), jsontext.AllowDuplicateNames(true))
+	dec := jsontext.NewDecoder(bytes.NewReader(blankBOM(src)), jsontext.AllowDuplicateNames(true))
 	x := extractor{file: file, src: src, dec: dec, line: 1}
 	if err := x.run(); err != nil {
 		if errors.Is(err, io.EOF) {
@@ -99,6 +99,24 @@ func (npmManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, er
 		return nil, err
 	}
 	return x.deps, nil
+}
+
+// bom is the UTF-8 byte order mark, which editors on Windows write before a package.json's
+// first byte; npm's JSON.parse skips it.
+var bom = []byte("\ufeff")
+
+// blankBOM returns src with a leading byte order mark replaced by blanks, which the decoder
+// reads as the whitespace before the document. Blanking rather than trimming keeps every byte
+// offset, and so every span, that of src.
+func blankBOM(src []byte) []byte {
+	if !bytes.HasPrefix(src, bom) {
+		return src
+	}
+	out := slices.Clone(src)
+	for i := range bom {
+		out[i] = ' '
+	}
+	return out
 }
 
 // Edits rewrites a range (dependency sections, engines/volta ranges) for the new version
