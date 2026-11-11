@@ -130,6 +130,29 @@ func TestParseRemote(t *testing.T) {
 	}
 }
 
+// A remote URL carries a token in its userinfo on GitLab CI
+// (https://gitlab-ci-token:<job token>@host/...), so no error may repeat it.
+func TestParseRemoteRedactsCredentials(t *testing.T) {
+	const token = "glcbt-SECRET"
+	for _, remote := range []string{
+		"https://gitlab-ci-token:" + token + "@gl.example/onlyowner",
+		"https://gitlab-ci-token:" + token + "@gl.example/%zz/r",
+		"ftp://gitlab-ci-token:" + token + "@gl.example/o/r.git",
+		"gitlab-ci-token:" + token + "@gl.example:o/r.git",
+	} {
+		_, _, _, err := parseRemote(remote)
+		if err == nil {
+			t.Fatalf("%q: want error", remote)
+		}
+		if strings.Contains(err.Error(), token) {
+			t.Errorf("%q: error names the token: %v", remote, err)
+		}
+		if !strings.Contains(err.Error(), "gl.example") {
+			t.Errorf("%q: error = %v, want the host named", remote, err)
+		}
+	}
+}
+
 func TestDetectFailures(t *testing.T) {
 	down := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return nil, errors.New("connection refused")

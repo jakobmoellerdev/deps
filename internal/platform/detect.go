@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -111,6 +112,31 @@ func apiURL(k Kind, serverURL, host string) string {
 	}
 }
 
+// redactRemote masks the password in the userinfo of a remote URL, which CI systems fill
+// with a token (GitLab CI checks out https://gitlab-ci-token:<job token>@host/group/repo),
+// so errors and logs can name the remote. It works on the raw string because the remotes it
+// reports are the ones url.Parse rejected; httpx.Redact, which parses, is out of reach here
+// as httpx imports this package.
+func redactRemote(remote string) string {
+	start := 0
+	if i := strings.Index(remote, "://"); i >= 0 {
+		start = i + len("://")
+	}
+	authority := remote[start:]
+	if i := strings.IndexByte(authority, '/'); i >= 0 {
+		authority = authority[:i]
+	}
+	at := strings.LastIndexByte(authority, '@')
+	if at < 0 {
+		return remote
+	}
+	colon := strings.IndexByte(authority[:at], ':')
+	if colon < 0 {
+		return remote // a user name without a password, as in git@host:owner/repo.git
+	}
+	return remote[:start+colon+1] + "xxxxx" + remote[start+at:] // the mask of url.URL.Redacted
+}
+
 // parseRemote splits a git remote URL into host (with port for http(s)), hostname and the
 // repository path: owner/repo, or group/subgroup/repo (GitLab).
 func parseRemote(remote string) (hostport, hostname, repo string, err error) {
@@ -120,21 +146,25 @@ func parseRemote(remote string) (hostport, hostname, repo string, err error) {
 	case strings.Contains(remote, "://"):
 		u, perr := url.Parse(remote)
 		if perr != nil {
-			return "", "", "", fmt.Errorf("parse remote %q: %w", remote, perr)
+			// *url.Error repeats the remote verbatim, userinfo and all; only its cause is kept.
+			if ue, ok := errors.AsType[*url.Error](perr); ok {
+				perr = ue.Err
+			}
+			return "", "", "", fmt.Errorf("parse remote %q: %w", redactRemote(remote), perr)
 		}
 		hostname = u.Hostname()
 		hostport = hostname
 		if u.Scheme == "https" || u.Scheme == "http" {
 			hostport = u.Host
 		} else if u.Scheme != "ssh" {
-			return "", "", "", fmt.Errorf("unsupported remote %q", remote)
+			return "", "", "", fmt.Errorf("unsupported remote %q", redactRemote(remote))
 		}
 		p = u.Path
 	default:
 		at := strings.IndexByte(remote, '@')
 		colon := strings.IndexByte(remote, ':')
 		if at < 0 || colon < at {
-			return "", "", "", fmt.Errorf("unsupported remote %q", remote)
+			return "", "", "", fmt.Errorf("unsupported remote %q", redactRemote(remote))
 		}
 		hostname = remote[at+1 : colon]
 		hostport = hostname
@@ -142,7 +172,7 @@ func parseRemote(remote string) (hostport, hostname, repo string, err error) {
 	}
 	p = strings.TrimSuffix(strings.Trim(p, "/"), ".git")
 	if hostname == "" || !strings.Contains(p, "/") || strings.HasPrefix(p, "/") || strings.HasSuffix(p, "/") || strings.Contains(p, "//") {
-		return "", "", "", fmt.Errorf("unsupported remote %q", remote)
+		return "", "", "", fmt.Errorf("unsupported remote %q", redactRemote(remote))
 	}
 	return hostport, hostname, p, nil
 }
