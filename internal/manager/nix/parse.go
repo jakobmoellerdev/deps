@@ -520,6 +520,15 @@ func parseSets(src []byte) []attrSet {
 			}
 		}
 	}
+	// The bindings are found in offset order, so their lines are counted forward from the
+	// previous one instead of from the start of src: a generated package set has thousands of
+	// them, and counting from the start each time is quadratic in the file size.
+	line, pos := 1, 0
+	lineAt := func(off int) int {
+		line += bytes.Count(src[pos:off], []byte{'\n'})
+		pos = off
+		return line
+	}
 	for i, t := range toks {
 		switch t.kind {
 		case '{':
@@ -586,7 +595,7 @@ func parseSets(src []byte) []attrSet {
 				continue
 			}
 			v := toks[i+2]
-			b := binding{path: []string{t.text}, line: 1 + bytes.Count(src[:v.start], []byte{'\n'})}
+			b := binding{path: []string{t.text}, line: lineAt(v.start)}
 			if v.plain {
 				b.value, b.span = v.text, v.content
 			}
