@@ -34,6 +34,7 @@ var pep440, _ = versioning.Get(Versioning)
 type clause struct {
 	op       string // "" = a bare Poetry or Pipenv version
 	ver      string // without a trailing `.*`
+	rel      []int  // ver's release parts (release), which the rewrites need per candidate
 	wild     bool   // trailing `.*`
 	start    int    // first byte of the operator
 	verStart int
@@ -106,6 +107,7 @@ func parseClause(s string, i int, g Grammar) (clause, int, bool) {
 	if v, ok := strings.CutSuffix(c.ver, ".*"); ok && (c.op == "==" || c.op == "!=" || c.op == "") {
 		c.ver, c.wild = v, true
 	}
+	c.rel = release(c.ver)
 	return c, j, pep440.Valid(c.ver)
 }
 
@@ -171,15 +173,21 @@ const poetryManager = "poetry"
 // NewRange returns the range of d rewritten for v under strategy (see rangeEdits), or false
 // when the rewrite leaves it unchanged or does not admit v.
 func NewRange(d dep.Dep, v, strategy string) (string, bool) {
+	out, _, ok := newRange(d, v, strategy)
+	return out, ok
+}
+
+// newRange is NewRange with the edits it applied, which Edits needs as well.
+func newRange(d dep.Dep, v, strategy string) (string, []patch.Edit, bool) {
 	edits, ok := rangeEdits(d.Range, v, strategy, d.Manager == poetryManager)
 	if !ok {
-		return "", false
+		return "", nil, false
 	}
 	out, err := patch.Apply([]byte(d.Range), edits)
 	if err != nil || string(out) == d.Range || !admits(string(out), v) {
-		return "", false
+		return "", nil, false
 	}
-	return string(out), true
+	return string(out), edits, true
 }
 
 // Edits rewrites the range of u's dep for the new version under u.RangeStrategy (NewRange),
@@ -189,15 +197,35 @@ func Edits(u dep.Update) ([]patch.Edit, error) {
 	if d.Datasource == GitTags {
 		return tagEdits(u), nil
 	}
-	if _, ok := NewRange(d, u.NewVersion, u.RangeStrategy); !ok {
+	_, edits, ok := newRange(d, u.NewVersion, u.RangeStrategy)
+	if !ok {
 		return nil, fmt.Errorf("range %q cannot be updated to admit %s", d.Range, u.NewVersion)
 	}
-	edits, _ := rangeEdits(d.Range, u.NewVersion, u.RangeStrategy, d.Manager == poetryManager)
 	for i := range edits {
 		edits[i].Start += d.RefSpan.Start
 		edits[i].End += d.RefSpan.Start
 	}
 	return edits, nil
+}
+
+// rewrites caches the parsed alternatives of each specifier rangeEdits rewrites (nil when it
+// does not parse): the engine rewrites the range of a dep for every candidate release. The
+// cached alternatives are shared, so callers read them and do not write to them.
+var rewrites sync.Map // string -> []alt
+
+// rewritten parses s as rangeEdits reads it, once per specifier.
+func rewritten(s string) ([]alt, bool) {
+	if a, hit := rewrites.Load(s); hit {
+		alts, _ := a.([]alt)
+		return alts, alts != nil
+	}
+	alts, ok := parseRange(s, Poetry) // a superset of every grammar
+	if !ok {
+		alts = nil
+	}
+	a, _ := rewrites.LoadOrStore(s, alts)
+	alts, _ = a.([]alt)
+	return alts, alts != nil
 }
 
 // rangeEdits returns the edits of the specifier s for version v, after Renovate's pep440
@@ -209,7 +237,7 @@ func Edits(u dep.Update) ([]patch.Edit, error) {
 // replaced last alternative appended instead (Renovate's npm widen of `||` ranges, which its
 // poetry versioning uses).
 func rangeEdits(s, v, strategy string, poetry bool) ([]patch.Edit, bool) {
-	alts, ok := parseRange(s, Poetry) // a superset of every grammar
+	alts, ok := rewritten(s)
 	if !ok || !pep440.Valid(v) {
 		return nil, false
 	}
@@ -287,7 +315,7 @@ const (
 func renderAlt(s string, a alt, v string, nv []int, mode int) []patch.Edit {
 	trim := false // Renovate's hasZeroSpecifier
 	for _, c := range a.cls {
-		trim = trim || len(release(c.ver)) < 3
+		trim = trim || len(c.rel) < 3
 	}
 	var edits []patch.Edit
 	set := func(c clause, op, ver string) {
@@ -303,7 +331,7 @@ func renderAlt(s string, a alt, v string, nv []int, mode int) []patch.Edit {
 		}
 	}
 	for _, c := range a.cls {
-		base := release(c.ver)
+		base := c.rel
 		switch {
 		case mode == modeWiden && c.op != "<" && c.op != "<=":
 		case mode == modeBump && c.op == ">=":
@@ -340,7 +368,7 @@ func renderAlt(s string, a alt, v string, nv []int, mode int) []patch.Edit {
 // their precision, `~=` (and Poetry's `^`, `~`) take v cut or zero-padded to their precision,
 // pins and `<=` move up to v, `<` moves past v at its own precision and `>`/`>=` only down.
 func updateValue(c clause, v string, nv []int, set func(clause, string, string)) {
-	base := release(c.ver)
+	base := c.rel
 	switch {
 	case c.op == "!=":
 	case c.wild:
@@ -376,13 +404,13 @@ func rangePrecision(cls []clause) int {
 	if len(cls) > 1 {
 		b = cls[1]
 	}
-	bound := release(b.ver)
+	bound := b.rel
 	p := -1
 	switch len(cls) {
 	case 1:
 		p = len(bound) - 1
 	case 2:
-		lower := release(cls[0].ver)
+		lower := cls[0].rel
 		for i, n := range bound {
 			if i < len(lower) && n > lower[i] {
 				p = i
