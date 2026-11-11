@@ -578,6 +578,13 @@ func TestLoadRules(t *testing.T) {
     minimumReleaseAge: 3 days` + defaultExclusions,
 		},
 		{
+			name: "^*$ is a match-all pattern",
+			src:  `{packageRules: [{matchPackagePatterns: ['^*$'], groupName: 'all'}]}`,
+			rules: `  - # packageRules[0]
+    names: ['**']
+    group: all` + defaultExclusions,
+		},
+		{
 			name:  "package and dep names together drop the rule",
 			src:   `{packageRules: [{matchPackageNames: ['a'], matchDepNames: ['b'], enabled: false}]}`,
 			rules: strings.TrimPrefix(defaultExclusions, "\n"),

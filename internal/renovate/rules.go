@@ -134,9 +134,11 @@ func exactEntries(l []string) []any {
 	return out
 }
 
-// regexEntry converts a deprecated *Patterns entry into the /re/ form.
+// regexEntry converts a deprecated *Patterns entry into the /re/ form. Renovate treats "*",
+// ".*" and "^*$" as match-all (packageRules matchesRule); "^*$" is no valid RE2 and would
+// drop the whole rule.
 func regexEntry(p string) string {
-	if p == "*" || p == ".*" {
+	if p == "*" || p == ".*" || p == "^*$" {
 		return "**"
 	}
 	return "/" + p + "/"
