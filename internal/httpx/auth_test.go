@@ -253,7 +253,7 @@ func TestSetAuth(t *testing.T) {
 		{"jwt-looking but empty part", "x-access-token", "eyJhbGciOiJSUzI1NiJ9..c2ln", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			req, err := http.NewRequest(http.MethodGet, "https://example.org/", nil)
+			req, err := http.NewRequest(http.MethodGet, "https://example.org/", http.NoBody)
 			if err != nil {
 				t.Fatal(err)
 			}

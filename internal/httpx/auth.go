@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -226,12 +227,7 @@ func IsJWT(token string) bool {
 	if !strings.HasPrefix(token, "eyJ") || strings.Count(token, ".") != 2 {
 		return false
 	}
-	for _, part := range strings.Split(token, ".") {
-		if part == "" {
-			return false
-		}
-	}
-	return true
+	return !slices.Contains(strings.Split(token, "."), "")
 }
 
 // SetAuth puts (user, token) on req: Basic, except for a JWT, which goes in as
