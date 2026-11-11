@@ -143,6 +143,57 @@ func TestDiscoverRootForms(t *testing.T) {
 	}
 }
 
+// TestDiscoverSymlinkRoot: a --dir that is itself a symlink to a directory discovers the same
+// files as the directory, .gitignore included.
+func TestDiscoverSymlinkRoot(t *testing.T) {
+	tmp := t.TempDir()
+	repo := filepath.Join(tmp, "repo")
+	for f, body := range map[string]string{
+		".git/HEAD":   "ref: refs/heads/main\n",
+		".gitignore":  "dist/\n",
+		"go.mod":      "",
+		"a/go.mod":    "",
+		"dist/go.mod": "",
+	} {
+		p := filepath.Join(repo, filepath.FromSlash(f))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := filepath.Join(tmp, "link")
+	if err := os.Symlink(repo, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	want, err := discover(repo, nil, true, []manager.Manager{suffixManager{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(want[0], []string{"a/go.mod", "go.mod"}) {
+		t.Fatalf("real root discovered %v", want[0])
+	}
+	for _, tc := range []struct{ cwd, root string }{
+		{"", link},
+		{"", link + string(filepath.Separator)},
+		{tmp, "link"},
+	} {
+		t.Run(tc.root, func(t *testing.T) {
+			if tc.cwd != "" {
+				t.Chdir(tc.cwd)
+			}
+			got, err := discover(tc.root, nil, true, []manager.Manager{suffixManager{}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(got[0], want[0]) {
+				t.Errorf("discovered %v, want %v", got[0], want[0])
+			}
+		})
+	}
+}
+
 // TestRelPathMatchesRel pins relPath to filepath.Rel for roots that cannot be walked in a
 // test, such as the filesystem root.
 func TestRelPathMatchesRel(t *testing.T) {

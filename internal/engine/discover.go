@@ -18,28 +18,38 @@ var prunedDirs = map[string]bool{".git": true, "node_modules": true, "vendor": t
 // discover walks root once, pruning ignored directories, and matches paths without opening
 // files. A file goes to every manager that matches it (a custom manager may target a file a
 // built-in one handles too); the result holds the sorted slash paths (relative to root) per
-// manager, indexed like managers. With gitIgnore, the .gitignore files of the repository
-// (and its .git/info/exclude) prune directories and files as they do for git.
+// manager, indexed like managers. A root that is a symlink to a directory is followed. With
+// gitIgnore, the .gitignore files of the repository (and its .git/info/exclude) prune
+// directories and files as they do for git.
 func discover(root string, ignore []string, gitIgnore bool, managers []manager.Manager) ([][]string, error) {
 	out := make([][]string, len(managers))
 	ign, err := pattern.CompileCaseSensitive(ignore)
 	if err != nil {
 		return nil, err
 	}
-	base := filepath.Clean(root)
+	// filepath.WalkDir lstats its root, so a --dir that is itself a symlink to a directory
+	// would walk nothing: the callback is handed the link, takes the root branch and returns.
+	// The link is resolved first, which also lets the .gitignore levels above the root be read
+	// from the real repository. Paths are reported relative to the root either way. A root that
+	// cannot be resolved (it does not exist) is walked as given, so WalkDir reports its error.
+	walkRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		walkRoot = root
+	}
+	base := filepath.Clean(walkRoot)
 	ignored := ign.Match
 	var gi *gitignore.Matcher
 	if gitIgnore {
-		gi = gitignore.New(root)
+		gi = gitignore.New(walkRoot)
 	}
-	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(walkRoot, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if p == root {
+		if p == walkRoot {
 			return nil
 		}
-		rel, err := relPath(base, root, p)
+		rel, err := relPath(base, walkRoot, p)
 		if err != nil {
 			return err
 		}
