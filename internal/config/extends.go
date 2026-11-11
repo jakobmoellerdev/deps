@@ -420,14 +420,19 @@ func merge(layers []layer) *yaml.Node {
 				continue
 			}
 			prev := mapValue(out, k.Value)
+			isList, isMap := slices.Contains(listKeys, k.Value), slices.Contains(mapKeys, k.Value)
 			switch {
-			case slices.Contains(listKeys, k.Value) && v.Kind == yaml.SequenceNode:
+			case (isList || isMap) && isNull(v):
+				// A layer writing `rules:` with every entry commented out contributes no entries;
+				// replacing what it inherits with null would silently drop it.
+				continue
+			case isList && v.Kind == yaml.SequenceNode:
 				if prev != nil && prev.val.Kind == yaml.SequenceNode {
 					prev.val.Content = append(prev.val.Content, v.Content...)
 					continue
 				}
 				v = &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Content: slices.Clone(v.Content)}
-			case slices.Contains(mapKeys, k.Value) && v.Kind == yaml.MappingNode:
+			case isMap && v.Kind == yaml.MappingNode:
 				if prev != nil && prev.val.Kind == yaml.MappingNode {
 					for j := 0; j+1 < len(v.Content); j += 2 {
 						if at := mapIndex(prev.val, v.Content[j].Value); at >= 0 {
@@ -448,6 +453,11 @@ func merge(layers []layer) *yaml.Node {
 		}
 	}
 	return out
+}
+
+// isNull reports whether n is an explicit or empty YAML null (`rules:` without entries).
+func isNull(n *yaml.Node) bool {
+	return n.Kind == yaml.ScalarNode && (n.Tag == "!!null" || n.Tag == "" && n.Value == "")
 }
 
 // mapIndex returns the index of key's key node in the mapping n, or -1.

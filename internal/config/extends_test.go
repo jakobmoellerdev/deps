@@ -124,6 +124,52 @@ registryAliases:
 	}
 }
 
+// TestLoadExtendsNullLists checks that a layer whose rules, custom, customDatasources,
+// registryAliases or groups are null (every entry commented out) keeps what it extends
+// instead of replacing it with nothing.
+func TestLoadExtendsNullLists(t *testing.T) {
+	base := `rules:
+  - managers: [gomod]
+    group: go
+custom:
+  - files: [Makefile]
+    match: 'x (?P<version>\S+)'
+    datasource: docker
+    name: alpine
+customDatasources:
+  shared: {url: https://example.com/shared.json}
+registryAliases: {$HUB: mirror.example.com}
+groups:
+  go: {automerge: true}
+`
+	local := `extends: [org/cfg]
+rules:
+custom:
+customDatasources:
+registryAliases:
+groups:
+`
+	c, _, err := loadExtends(t, local, map[string]string{"org/cfg//.deps.yaml": base})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Rules) != 1 || c.Rules[0].Group != "go" {
+		t.Errorf("rules = %+v, want the extended file's", c.Rules)
+	}
+	if len(c.Custom) != 1 || len(c.Custom[0].Files) != 1 || c.Custom[0].Files[0] != "Makefile" {
+		t.Errorf("custom = %+v, want the extended file's", c.Custom)
+	}
+	if c.CustomDatasources["shared"].URL != "https://example.com/shared.json" {
+		t.Errorf("customDatasources = %+v", c.CustomDatasources)
+	}
+	if !maps.Equal(c.RegistryAliases, map[string]string{"$HUB": "mirror.example.com"}) {
+		t.Errorf("registryAliases = %v", c.RegistryAliases)
+	}
+	if g := c.Groups["go"]; g == nil || g.Automerge == nil || !*g.Automerge {
+		t.Errorf("groups = %+v", c.Groups)
+	}
+}
+
 func TestLoadExtendsDefaultsAndDiamond(t *testing.T) {
 	// Without ignorePaths anywhere the default list applies; a file two entries reach is
 	// read once.

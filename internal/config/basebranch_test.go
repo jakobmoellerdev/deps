@@ -151,15 +151,16 @@ func TestMergeBase(t *testing.T) {
 }
 
 func TestMergeBaseErrors(t *testing.T) {
-	c, err := load(t, ".deps.yaml", "useBaseBranchConfig: merge\ncustomDatasources: {envtest: {url: 'https://x/y'}}\nrules:\n  - datasources: [custom.envtest]\n    group: g\n")
+	c, err := load(t, ".deps.yaml", "useBaseBranchConfig: merge\ndashboard: {enabled: true}\nrules:\n  - names: [a]\n    dashboardApproval: true\n")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct{ name, base, want string }{
 		{"syntax", "rules: [", "b:.deps.yaml:"},
 		{"invalid value", "rangeStrategy: sideways\n", "b:.deps.yaml:1:16: rangeStrategy:"},
-		// The base drops the datasource the checkout's rule names: the problem is in the checkout's file.
-		{"problem in the checkout's file", "customDatasources: null\n", `.deps.yaml:4:19: rules[0].datasources[0]: customDatasources has no entry "envtest"`},
+		// The base turns the dashboard off the checkout's rule needs: the problem is in the
+		// checkout's file.
+		{"problem in the checkout's file", "dashboard: {enabled: false}\n", `.deps.yaml:5:24: rules[0].dashboardApproval: requires dashboard.enabled: true`},
 		{"extends without fetcher", "extends: [o/x]\n", "extends is not supported by this command"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
