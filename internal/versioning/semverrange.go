@@ -1,6 +1,8 @@
 package versioning
 
 import (
+	"slices"
+	"strconv"
 	"strings"
 
 	msemver "github.com/Masterminds/semver/v3"
@@ -12,11 +14,23 @@ import (
 // builds an error, with the version formatted into it, for every failed check. The common
 // grammar is therefore parsed by hand and checked without allocating; anything else (hyphen
 // ranges, `!=`, wildcards or partial versions with a prerelease, `V` prefixes, unusual
-// whitespace, leading zeros) is left to Masterminds. Both accept and admit the same.
+// whitespace, leading zeros) is left to Masterminds, alternative by alternative. Both accept
+// and admit the same, except that prereleases follow node-semver (see semverGroup.pre).
 type SemverRange struct {
-	groups [][]semverComparator // the `||` alternatives, each a list of ANDed comparators
-	pre    []bool               // pre[i]: an alternative naming a prerelease admits prereleases
-	ms     *msemver.Constraints // when the range is outside the hand-parsed grammar
+	groups []semverGroup // the `||` alternatives
+}
+
+// semverGroup is one `||` alternative: comparators that must all hold, or the Masterminds
+// constraint of an alternative outside the hand-parsed grammar.
+type semverGroup struct {
+	cmps []semverComparator
+	ms   *msemver.Constraints
+	// pre holds the [major, minor, patch] of every comparator naming a prerelease. npm
+	// (node-semver's Range.test, semver/classes/range.js) admits a prerelease only when a
+	// comparator of the same alternative names a prerelease of the same release, while
+	// Masterminds admits every prerelease once one comparator names one, so that
+	// `>=1.0.0-alpha.1 <2.0.0` would admit 1.5.0-rc.1.
+	pre [][3]uint64
 }
 
 // semverComparator is one Masterminds constraint: op (constraintOps' key) applied to con,
@@ -30,34 +44,81 @@ type semverComparator struct {
 
 // NewSemverRange compiles rng as msemver.NewConstraint does, with its error.
 func NewSemverRange(rng string) (*SemverRange, error) {
-	if r, ok := parseSemverRange(rng); ok {
-		return r, nil
+	if len(rng) > msemver.MaxConstraintLen || strings.Count(rng, "||") >= msemver.MaxConstraintGroups ||
+		hyphenSpansAlternatives(rng) {
+		// Masterminds judges the whole constraint, not an alternative, for its two limits and
+		// for a hyphen range reaching across a `||`. Its alternatives then share their
+		// prereleases (semverGroup.pre), which only such a malformed range has.
+		c, err := msemver.NewConstraint(rng)
+		if err != nil {
+			return nil, err
+		}
+		return &SemverRange{groups: []semverGroup{semverFallback(c)}}, nil
 	}
-	c, err := msemver.NewConstraint(rng)
-	if err != nil {
-		return nil, err
+	segs := strings.Split(rng, "||")
+	r := &SemverRange{groups: make([]semverGroup, 0, len(segs))}
+	for _, seg := range segs {
+		g, ok := parseSemverGroup(seg)
+		if !ok {
+			c, err := msemver.NewConstraint(seg)
+			if err != nil {
+				return nil, err
+			}
+			g = semverFallback(c)
+		}
+		r.groups = append(r.groups, g)
 	}
-	return &SemverRange{ms: c}, nil
+	return r, nil
+}
+
+// hyphenSpansAlternatives reports whether a hyphen range of s may reach across a `||`:
+// Masterminds rewrites `A - B` into comparators before it splits the alternatives, and the
+// versions of its rewrite regexp admit a `|` and overlap each other, so `1.0 ||1.1 - 2.0` is
+// one alternative of it and `0 - 0- 0|| 0 - 0` not what the alternatives are on their own.
+// Such a range is compiled whole, as Masterminds compiles it.
+func hyphenSpansAlternatives(s string) bool {
+	if !strings.Contains(s, "||") {
+		return false
+	}
+	for i := 1; i < len(s); i++ {
+		if s[i] == '-' && isSpace(s[i-1]) {
+			return true
+		}
+	}
+	return false
+}
+
+// isSpace is the whitespace of Masterminds' constraint regexps.
+func isSpace(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\v' || c == '\f' || c == '\r'
 }
 
 // Check reports whether v satisfies the range, as msemver.Constraints.Check.
 func (r *SemverRange) Check(v *msemver.Version) bool {
-	if r.ms != nil {
-		return r.ms.Check(v)
-	}
-	return r.check(semverVersion{major: v.Major(), minor: v.Minor(), patch: v.Patch(), pre: v.Prerelease()})
+	sv := semverVersion{major: v.Major(), minor: v.Minor(), patch: v.Patch(), pre: v.Prerelease()}
+	return r.check(sv, v)
 }
 
-// check is Check for a parsed version, without the Masterminds fallback.
-func (r *SemverRange) check(v semverVersion) bool {
-	for i, g := range r.groups {
-		incPre := r.pre[i]
-		if v.pre != "" && !incPre {
-			continue // every constraint function rejects a prerelease first
+// check is Check for a parsed version; mv is its Masterminds form, built on demand when an
+// alternative outside the hand-parsed grammar needs it.
+func (r *SemverRange) check(v semverVersion, mv *msemver.Version) bool {
+	for i := range r.groups {
+		g := &r.groups[i]
+		if v.pre != "" && !g.admitsPre(v) {
+			continue
+		}
+		if g.ms != nil {
+			if mv == nil {
+				mv = v.semver()
+			}
+			if g.ms.Check(mv) {
+				return true
+			}
+			continue
 		}
 		ok := true
-		for j := range g {
-			if !g[j].check(v) {
+		for j := range g.cmps {
+			if !g.cmps[j].check(v) {
 				ok = false
 				break
 			}
@@ -67,6 +128,12 @@ func (r *SemverRange) check(v semverVersion) bool {
 		}
 	}
 	return false
+}
+
+// admitsPre reports whether a comparator of the alternative names a prerelease of v's
+// release, the only prereleases npm admits (semverGroup.pre).
+func (g *semverGroup) admitsPre(v semverVersion) bool {
+	return slices.Contains(g.pre, [3]uint64{v.major, v.minor, v.patch})
 }
 
 // MatchRange implements RangeMatcher with Masterminds constraint semantics, as the engine
@@ -81,57 +148,35 @@ func (semverScheme) MatchRange(rng string) (func(v string) bool, error) {
 		if !ok {
 			return false
 		}
-		if r.ms != nil {
-			return r.ms.Check(v.semver())
-		}
-		return r.check(v)
+		return r.check(v, nil)
 	}, nil
 }
 
-// parseSemverRange parses the grammar NewSemverRange handles itself: `||` alternatives of
+// parseSemverGroup parses one `||` alternative of the grammar NewSemverRange handles itself:
 // comparators separated by blanks or a comma, each an optional operator (`=`, `>`, `<`, `>=`,
 // `=>`, `<=`, `=<`, `~`, `~>`, `^`) and a version: `v`? then one to three parts, each a
 // decimal without leading zero or a wildcard (`x`, `X`, `*`); only a full numeric version may
 // have a prerelease and metadata. ok is false for anything else, Masterminds deciding then.
-func parseSemverRange(s string) (*SemverRange, bool) {
-	if s == "" || len(s) > msemver.MaxConstraintLen {
-		return nil, false
-	}
-	n := strings.Count(s, "||") + 1
-	if n > msemver.MaxConstraintGroups {
-		return nil, false
-	}
+func parseSemverGroup(s string) (g semverGroup, ok bool) {
 	for i := 1; i < len(s); i++ {
 		// Masterminds rewrites `A - B` (blanks around the hyphen) first: a hyphen range.
 		if s[i] == '-' && isBlank(s[i-1]) {
-			return nil, false
+			return semverGroup{}, false
 		}
 	}
-	r := &SemverRange{groups: make([][]semverComparator, 0, n), pre: make([]bool, 0, n)}
-	for seg := range strings.SplitSeq(s, "||") {
-		g, pre, ok := parseSemverGroup(seg)
-		if !ok {
-			return nil, false
-		}
-		r.groups = append(r.groups, g)
-		r.pre = append(r.pre, pre)
-	}
-	return r, true
-}
-
-// parseSemverGroup parses one `||` alternative; pre reports a comparator with a prerelease.
-func parseSemverGroup(s string) (g []semverComparator, pre, ok bool) {
 	i := skipBlanks(s, 0)
 	if i == len(s) {
-		return nil, false, false
+		return semverGroup{}, false
 	}
 	for i < len(s) {
 		c, j, ok := parseSemverComparator(s, i)
 		if !ok {
-			return nil, false, false
+			return semverGroup{}, false
 		}
-		g = append(g, c)
-		pre = pre || c.con.pre != ""
+		g.cmps = append(g.cmps, c)
+		if c.con.pre != "" {
+			g.pre = append(g.pre, [3]uint64{c.con.major, c.con.minor, c.con.patch})
+		}
 		// A comparator ends at blanks, a comma or the end; a comma may be surrounded by blanks
 		// but must be followed by another comparator.
 		k := skipBlanks(s, j)
@@ -140,11 +185,71 @@ func parseSemverGroup(s string) (g []semverComparator, pre, ok bool) {
 			k = skipBlanks(s, k+1)
 		}
 		if k == j && k < len(s) || comma && k == len(s) {
-			return nil, false, false
+			return semverGroup{}, false
 		}
 		i = k
 	}
-	return g, pre, true
+	return g, true
+}
+
+// semverFallback is the alternative of the Masterminds constraint c, which must not apply
+// its own prerelease rule (semverGroup.pre).
+func semverFallback(c *msemver.Constraints) semverGroup {
+	c.IncludePrerelease = true
+	return semverGroup{ms: c, pre: semverFallbackPre(c)}
+}
+
+// semverFallbackPre reads the comparators of the Masterminds constraint c back from its
+// String (each the operator and the version as written, blanks between) and returns the
+// [major, minor, patch] of those naming a prerelease, a missing or wildcard part counting as
+// zero as parseConstraint fills it in. Masterminds keeps no comparator a caller could read,
+// and semverGroup.pre needs the releases of an alternative outside the hand-parsed grammar
+// as much as of one inside it.
+func semverFallbackPre(c *msemver.Constraints) [][3]uint64 {
+	var pre [][3]uint64
+	for tok := range strings.FieldsSeq(c.String()) {
+		ver := strings.TrimLeft(tok, "=!<>~^")
+		if ver != "" && (ver[0] == 'v' || ver[0] == 'V') {
+			ver = ver[1:]
+		}
+		if t, rest, ok := semverFallbackRelease(ver); ok && strings.HasPrefix(rest, "-") {
+			pre = append(pre, t)
+		}
+	}
+	return pre
+}
+
+// semverFallbackRelease reads the one to three dot-separated parts of ver, each a run of the
+// bytes Masterminds' version regexp allows, and returns what follows them. A wildcard part
+// and every part after it count as zero, as parseConstraint drops them.
+func semverFallbackRelease(ver string) (t [3]uint64, rest string, ok bool) {
+	i, wild := 0, false
+	for n := range 3 {
+		j := i
+		for j < len(ver) && ('0' <= ver[j] && ver[j] <= '9' || ver[j] == 'x' || ver[j] == 'X' ||
+			ver[j] == '*' || ver[j] == '|') {
+			j++
+		}
+		if j == i {
+			return t, "", false
+		}
+		switch part := ver[i:j]; {
+		case part == "x" || part == "X" || part == "*":
+			wild = true
+		case !wild:
+			u, err := strconv.ParseUint(part, 10, 64)
+			if err != nil {
+				return t, "", false
+			}
+			t[n] = u
+		}
+		i = j
+		if i == len(ver) || ver[i] != '.' {
+			break
+		}
+		i++
+	}
+	return t, ver[i:], true
 }
 
 // parseSemverComparator parses the operator and version at i, returning the index after it.
