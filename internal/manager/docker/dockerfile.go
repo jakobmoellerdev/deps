@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"bytes"
 	"regexp"
 	"slices"
 	"strings"
@@ -53,7 +54,12 @@ func (x *extractor) dockerfile() {
 	directives := true
 	st := stageState{stages: map[string]bool{}, globals: map[string]arg{}, used: map[int]bool{}, substituted: map[substKey]bool{}, registries: map[string]string{}}
 	var toks []token
-	for i := 0; i < len(src); {
+	// A leading byte order mark is no part of the first instruction; offsets stay those of src.
+	i := 0
+	if bytes.HasPrefix(src, []byte("\xef\xbb\xbf")) {
+		i = 3
+	}
+	for i < len(src) {
 		le := lineEnd(src, i)
 		s := skipBlank(src, i, le)
 		if directives {

@@ -144,6 +144,15 @@ func TestExtractDockerfileEscapeDirective(t *testing.T) {
 	}
 }
 
+// TestExtractDockerfileBOM: a byte order mark is no part of the first instruction.
+func TestExtractDockerfileBOM(t *testing.T) {
+	src := "\ufeffFROM alpine:3.20\nFROM busybox:1.36\n"
+	check(t, []byte(src), extract(t, "Dockerfile", src), []want{
+		{line: 1, name: "alpine", source: "docker.io/library/alpine", version: "3.20", depT: TypeDockerfile},
+		{line: 2, name: "busybox", source: "docker.io/library/busybox", version: "1.36", depT: TypeDockerfile},
+	})
+}
+
 const compose = `services:
   db:
     image: postgres:16.2-alpine
