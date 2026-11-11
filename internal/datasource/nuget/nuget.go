@@ -210,19 +210,32 @@ func (s *Source) lookup(ctx context.Context, d dep.Dep) (*pkg, error) {
 		key.WriteString(f.id())
 	}
 	return s.merged.Do(ctx, key.String(), func() (*pkg, error) {
-		var out *pkg
-		v2 := 0
-		for _, f := range feeds {
+		// Query every v3 feed together (each request takes its own slot), merge in feed order:
+		// a dep with several feeds pays the slowest feed, not the sum of them.
+		var (
+			pkgs = make([]*pkg, len(feeds))
+			errs = make([]error, len(feeds))
+			wg   sync.WaitGroup
+			v2   = 0
+		)
+		for i, f := range feeds {
 			if !v3(f.url) {
 				v2++
 				slog.DebugContext(ctx, "nuget v2 feed not read", "feed", httpx.Redact(f.url), "name", d.Name)
 				continue
 			}
-			p, err := s.pkgs.Do(ctx, f.id()+"\x00"+id, func() (*pkg, error) { return s.fetch(ctx, f, id) })
-			if errors.Is(err, errNotFound) {
+			wg.Go(func() {
+				pkgs[i], errs[i] = s.pkgs.Do(ctx, f.id()+"\x00"+id, func() (*pkg, error) { return s.fetch(ctx, f, id) })
+			})
+		}
+		wg.Wait()
+		var out *pkg
+		for i := range feeds {
+			p, err := pkgs[i], errs[i]
+			switch {
+			case errors.Is(err, errNotFound), p == nil && err == nil: // not on this feed, or a v2 feed
 				continue
-			}
-			if err != nil {
+			case err != nil:
 				return nil, err
 			}
 			if out == nil {
