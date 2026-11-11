@@ -2,7 +2,11 @@ package engine
 
 import (
 	"context"
+	"runtime"
+	"slices"
+	"sync"
 	"time"
+	"weak"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -48,10 +52,48 @@ func (e *extracting) Releases(ctx context.Context, d dep.Dep, dir string) ([]Rel
 	if err != nil {
 		return nil, err
 	}
-	out := make([]Release, 0, len(rels))
-	e.names = make(map[string]string, len(rels))
+	var out []Release
+	out, e.names = extract(rels, e.x)
+	if len(out) == 0 && e.fallback {
+		return rels, nil
+	}
+	return out, nil
+}
+
+// extractions shares one extraction between the deps of a run: datasources return one shared
+// release list per package, so a monorepo whose manifests pin the same package under the
+// same extractVersion would otherwise run the expression over every release name once per
+// dep. Lists are keyed by their first element and length as in releaseNames, weakly and with
+// a cleanup, so a datasource returning fresh lists does not keep extractions alive;
+// expressions are interned by versioning.CompileExtract, so their pointer identifies them.
+// The cached releases and names are shared and must not be modified.
+var extractions sync.Map // extractKey -> extraction
+
+type extractKey struct {
+	first weak.Pointer[Release]
+	n     int
+	x     *versioning.Extractor
+}
+
+type extraction struct {
+	rels  []Release
+	names map[string]string // extracted version -> release name; first match wins
+}
+
+// extract returns the releases of rels x matches, as their extracted versions, and the names
+// they were extracted from.
+func extract(rels []Release, x *versioning.Extractor) ([]Release, map[string]string) {
+	if len(rels) == 0 {
+		return nil, nil
+	}
+	k := extractKey{weak.Make(&rels[0]), len(rels), x}
+	if v, ok := extractions.Load(k); ok {
+		e := v.(extraction)
+		return e.rels, e.names
+	}
+	e := extraction{make([]Release, 0, len(rels)), make(map[string]string, len(rels))}
 	for _, rel := range rels {
-		v, ok := e.x.Version(rel.Version)
+		v, ok := x.Version(rel.Version)
 		if !ok {
 			continue
 		}
@@ -59,13 +101,19 @@ func (e *extracting) Releases(ctx context.Context, d dep.Dep, dir string) ([]Rel
 			continue
 		}
 		e.names[v] = rel.Version
-		out = append(out, Release{Version: v, Digest: rel.Digest})
+		e.rels = append(e.rels, Release{Version: v, Digest: rel.Digest})
 	}
-	if len(out) == 0 && e.fallback {
-		return rels, nil
+	e.rels = slices.Clip(e.rels) // shared: an append by a caller must not write into it
+	if prev, loaded := extractions.LoadOrStore(k, e); loaded {
+		e = prev.(extraction) // a concurrent extraction of the same list came first
+	} else {
+		runtime.AddCleanup(&rels[0], dropExtraction, k)
 	}
-	return out, nil
+	return e.rels, e.names
 }
+
+// dropExtraction forgets the extraction of a collected list.
+func dropExtraction(k extractKey) { extractions.Delete(k) }
 
 // name returns the release name of version: the one it was extracted from, else version
 // itself (the current version before Releases ran, e.g. a digest-only refresh).

@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"maps"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -9,6 +11,7 @@ import (
 	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
 // namedReleases lists release names and records the names passed to the per-version lookups.
@@ -164,4 +167,81 @@ func TestResolveActionMonorepoTags(t *testing.T) {
 			t.Errorf("line %d:\n got %s\nwant %s", n, l, want)
 		}
 	}
+}
+
+// One extraction is shared between the deps of a run: the same release list under the same
+// extractVersion is mapped once, a list of another length or backing array and another
+// expression get their own.
+func TestExtractShared(t *testing.T) {
+	x := compileExtract(t, `^jq-(?<version>.+)$`)
+	rels := []Release{{Version: "jq-1.0.0"}, {Version: "jq-1.1.0", Digest: "d"}, {Version: "v2.0.0"}}
+	a, names := extract(rels, x)
+	want := []Release{{Version: "1.0.0"}, {Version: "1.1.0", Digest: "d"}}
+	if !slices.Equal(a, want) {
+		t.Fatalf("releases = %+v, want %+v", a, want)
+	}
+	if !maps.Equal(names, map[string]string{"1.0.0": "jq-1.0.0", "1.1.0": "jq-1.1.0"}) {
+		t.Errorf("names = %q", names)
+	}
+	if cap(a) != len(a) {
+		t.Errorf("shared releases keep spare capacity %d", cap(a)-len(a))
+	}
+	if b, bn := extract(rels, x); &b[0] != &a[0] || len(bn) != len(names) {
+		t.Error("the same list was extracted again")
+	}
+	if p, _ := extract(rels[:2], x); !slices.Equal(p, want) || &p[0] == &a[0] {
+		t.Errorf("prefix releases = %+v, shared = %v", p, &p[0] == &a[0])
+	}
+	if c, _ := extract(slices.Clone(rels), x); &c[0] == &a[0] {
+		t.Error("a copy of the list shares its extraction")
+	}
+	y := compileExtract(t, `^v(?<version>.+)$`)
+	if o, on := extract(rels, y); !slices.Equal(o, []Release{{Version: "2.0.0"}}) || on["2.0.0"] != "v2.0.0" {
+		t.Errorf("another expression over the same list: releases = %+v, names = %q", o, on)
+	}
+	if e, en := extract(nil, x); e != nil || en != nil {
+		t.Errorf("extraction of no releases = %+v, %q", e, en)
+	}
+}
+
+// A collected release list leaves the cache, so lists a datasource builds per lookup do not
+// keep their extractions alive for the whole run.
+func TestExtractDropCollected(t *testing.T) {
+	x := compileExtract(t, `^dropped-(?<version>.+)$`)
+	func() {
+		rels := make([]Release, 64)
+		for i := range rels {
+			rels[i].Version = "dropped-1.0." + string(rune('0'+i%10))
+		}
+		extract(rels, x)
+	}()
+	for range 200 {
+		runtime.GC()
+		if cached := extractionsOf(x); cached == 0 {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Error("the extraction of a collected list stays cached")
+}
+
+func compileExtract(t *testing.T, expr string) *versioning.Extractor {
+	t.Helper()
+	x, err := versioning.CompileExtract(expr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return x
+}
+
+// extractionsOf counts the cached extractions of x.
+func extractionsOf(x *versioning.Extractor) int {
+	var n int
+	extractions.Range(func(k, _ any) bool {
+		if k.(extractKey).x == x {
+			n++
+		}
+		return true
+	})
+	return n
 }

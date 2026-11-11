@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/actions"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
 // benchSource serves n versions per dependency from memory, with release times one day apart
@@ -159,6 +161,28 @@ func BenchmarkDiscoverManagers(b *testing.B) {
 		got, err := discover(root, config.DefaultIgnorePaths, true, managers)
 		if err != nil || len(got[0]) != 1 {
 			b.Fatalf("discovered %d workflows, err %v", len(got[0]), err)
+		}
+	}
+}
+
+// BenchmarkExtractReleases maps the 600 release names of one package to versions for the 100
+// deps of a monorepo that pin it with the same extractVersion.
+func BenchmarkExtractReleases(b *testing.B) {
+	src := newBenchSource(600, "jq-", time.Now())
+	x, err := versioning.CompileExtract(`^jq-(?<version>.+)$`)
+	if err != nil {
+		b.Fatal(err)
+	}
+	d := dep.Dep{Name: "jq", Version: "1.7.1"}
+	b.ReportAllocs()
+	for b.Loop() {
+		// A fresh list per iteration: a run looks up the datasource once, not once per b.Loop.
+		shared := benchSource{rels: slices.Clone(src.rels), now: src.now, pfx: src.pfx}
+		for range 100 {
+			rels, err := (&extracting{ds: shared, x: x}).Releases(b.Context(), d, "")
+			if err != nil || len(rels) != len(src.rels) {
+				b.Fatalf("releases = %d, err = %v", len(rels), err)
+			}
 		}
 	}
 }
