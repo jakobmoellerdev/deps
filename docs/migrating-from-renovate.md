@@ -268,10 +268,10 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 26 # package-lock.json regeneration (npm via npx at packageManager's version)
-      - uses: jakobmoellerdev/deps@v0.11.0
+      - uses: jakobmoellerdev/deps@v0.12.0
         with:
           token: ${{ steps.app.outputs.token || github.token }}
-          version: v0.11.0 # keep this when pin: digest rewrites the ref above to a SHA
+          version: v0.12.0 # keep this when pin: digest rewrites the ref above to a SHA
           args: ${{ github.event_name == 'pull_request' && 'plan' || 'run' }}
           config: .github/deps.yaml
           show-skipped: true
@@ -280,7 +280,7 @@ jobs:
 
 - **Pull requests** that change the config run `plan` with the job token. That validates the config: an invalid key exits 2. `run --dry-run` reports against the checkout, so on a PR merge commit it would only warn that `HEAD` is not the tip of `main` and list the PRs of the PR's tree as if it were `main`. To list the PRs a config change would cause, use the base/PR checkout pair from [ci.md](ci.md#preview-on-pull-requests).
 - **Token.** The App token goes to both `actions/checkout` and the action. The action creates the commits and moves the `deps/*` branches through the API with it; git uses the checkout's credentials only to list and delete branches. `permission-workflows: write` is required, because Action updates change `.github/workflows/*`: GitHub checks it for API commits too (without it, creating the tree fails with `403 Resource not accessible by integration`).
-- **Version.** The action downloads the release named by its ref when that ref is a tag. `pin: digest` turns `@v0.6.0` into `@<sha> # v0.11.0` in the first "Digest pins" PR, and from then on the ref no longer names the release. Without `version:`, the action would download the latest release.
+- **Version.** The action downloads the release named by its ref when that ref is a tag. `pin: digest` turns `@v0.6.0` into `@<sha> # v0.12.0` in the first "Digest pins" PR, and from then on the ref no longer names the release. Without `version:`, the action would download the latest release.
 - **Signing.** Renovate runs with `RENOVATE_PLATFORM_COMMIT: enabled`, and so does deps: `git.platformCommit: enabled` in the example config (`auto` would choose it too, because the token is an App installation token). deps then creates the commits through the GitHub API, and GitHub signs them: they show as verified, authored by `ocmbot[bot]` (`<id>+ocmbot[bot]@users.noreply.github.com`), committed by GitHub. `git.author` only applies to git commits. Don't pass `signing-key`: it conflicts with `git.platformCommit: enabled`. Verified commits satisfy the `required_signatures` rule of both rulesets that cover `deps/*` ("OCM Organization Ruleset" and the repository's "All branches"). The rulesets also restrict branch creation, deletion and non-fast-forward updates, so the branches still need ocmbot's bypass (App 295948 is an `always` bypass actor of both) or an exclusion, see the [cutover](#cutover-for-ocm).
 - **Not needed.** Renovate's repository cache steps (deps has no cache) and `RENOVATE_ALLOWED_COMMANDS` (`renovate.json5` has no `postUpgradeTasks`; deps' equivalent is the `allow-tasks` input).
 
