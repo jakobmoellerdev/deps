@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/toolrun"
 )
 
 // stubDotnet installs a fake dotnet on PATH (only it: it uses shell builtins) that logs its
@@ -108,6 +109,42 @@ func TestLockCache(t *testing.T) {
 		if got := strings.Join(l.ScopeSiblings(root), " "); got != "src/App/packages.lock.json src/Lib/packages.lock.json" {
 			t.Errorf("ScopeSiblings = %s", got)
 		}
+	}
+}
+
+// TestMirrorOptions checks the mirror a restore runs in: the directories of the projects it
+// may restore, including those only referenced by a restored one, are real, so that the obj
+// and bin directories dotnet writes stay in the mirror, while the rest of the repository is
+// symlinked whole.
+func TestMirrorOptions(t *testing.T) {
+	root := write(t, map[string]string{
+		".git/HEAD": "", lockRepo: "<Project/>",
+		"src/App/App.csproj": "<Project/>", "src/App/packages.lock.json": "app\n",
+		"src/Lib/Lib.fsproj": "<Project/>", "src/Lib/Lib.cs": "",
+		"docs/guide/index.md": "", "assets/logo.png": "",
+	})
+	files := map[string][]byte{"src/App/packages.lock.json": []byte("app\n")}
+	tmp, base, err := toolrun.Mirror(root, mirrorOptions(root, files))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmp)
+	for _, d := range []string{"src", "src/App", "src/Lib"} {
+		if st, err := os.Lstat(filepath.Join(base, filepath.FromSlash(d))); err != nil || !st.IsDir() {
+			t.Errorf("%s is not a directory of the mirror: %v", d, err)
+		}
+	}
+	for _, d := range []string{"docs", "assets"} {
+		if st, err := os.Lstat(filepath.Join(base, d)); err != nil || st.Mode()&os.ModeSymlink == 0 {
+			t.Errorf("%s is not symlinked: %v", d, err)
+		}
+	}
+	// A restore writes obj next to the project; the checkout keeps none.
+	if err := os.Mkdir(filepath.Join(base, "src", "Lib", "obj"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "src", "Lib", "obj")); err == nil {
+		t.Error("obj reached the working tree")
 	}
 }
 

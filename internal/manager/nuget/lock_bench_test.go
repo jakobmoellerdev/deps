@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/toolrun"
 )
 
 // solution writes a repository of projects projects with sources, two of which keep a
@@ -50,6 +52,43 @@ func BenchmarkLockerScope(b *testing.B) {
 			if dir, ok := l.Scope(b.Context(), root, m); !ok || dir != "." {
 				b.Fatalf("Scope(%s) = %q, %v", m, dir, ok)
 			}
+		}
+	}
+}
+
+// repoTree writes a repository of projects projects, each with sources and a
+// packages.lock.json, and assets files of documentation, test data and a web frontend that
+// hold no project.
+func repoTree(tb testing.TB, projects, assets int) string {
+	tb.Helper()
+	root := solution(tb, projects)
+	for i := range assets {
+		for _, d := range []string{"docs", "tests/data", "web/public"} {
+			p := filepath.Join(root, filepath.FromSlash(fmt.Sprintf("%s/g%d/f%d.txt", d, i%20, i)))
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				tb.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte("x\n"), 0o644); err != nil {
+				tb.Fatal(err)
+			}
+		}
+	}
+	return root
+}
+
+// BenchmarkRestoreMirror builds the mirror a restore of a repository of 50 projects and 18000
+// other files runs in.
+func BenchmarkRestoreMirror(b *testing.B) {
+	root := repoTree(b, 50, 6000)
+	files := map[string][]byte{"src/P025/packages.lock.json": []byte("{\"version\": 1}\n"), "src/P049/packages.lock.json": []byte("{\"version\": 1}\n")}
+	b.ReportAllocs()
+	for b.Loop() {
+		tmp, _, err := toolrun.Mirror(root, mirrorOptions(root, files))
+		if err != nil {
+			b.Fatal(err)
+		}
+		if err := os.RemoveAll(tmp); err != nil {
+			b.Fatal(err)
 		}
 	}
 }

@@ -192,8 +192,7 @@ func (Locker) Maintain(ctx context.Context, dir string, files map[string][]byte)
 
 // restore runs `dotnet restore <project> --use-lock-file` (--force-evaluate when force) for
 // each project next to one of the lockfiles in files, in a mirror of dir holding the patched
-// manifests and the lockfiles as copies. Every directory of the mirror is recreated, its files
-// symlinked, so the obj and bin directories restore writes stay in the mirror.
+// manifests and the lockfiles as copies (mirrorOptions).
 func restore(ctx context.Context, dir string, manifests, files map[string][]byte, force bool) (map[string][]byte, error) {
 	if len(files) == 0 {
 		return nil, nil
@@ -205,12 +204,7 @@ func restore(ctx context.Context, dir string, manifests, files map[string][]byte
 	copies := make(map[string][]byte, len(manifests)+len(files))
 	maps.Copy(copies, files)
 	maps.Copy(copies, manifests)
-	tmp, base, err := toolrun.Mirror(dir, toolrun.MirrorOptions{
-		Pattern:  "deps-nuget-*",
-		Files:    copies,
-		Skip:     func(rel string, d fs.DirEntry) bool { return d.IsDir() && skipDir(d.Name()) },
-		Recreate: func(string, fs.DirEntry) bool { return true },
-	})
+	tmp, base, err := toolrun.Mirror(dir, mirrorOptions(dir, copies))
 	if err != nil {
 		return nil, err
 	}
@@ -238,6 +232,49 @@ func restore(ctx context.Context, dir string, manifests, files map[string][]byte
 		}
 	}
 	return out, nil
+}
+
+// mirrorOptions is the mirror of dir a restore runs in, with files written into it. The
+// directories holding a project and their ancestors are recreated, so that the obj and bin
+// directories `dotnet restore` writes next to a project it restores, including the projects
+// referenced by the restored ones, stay in the mirror; the rest of the repository is
+// symlinked whole, which for a repository with many sources or assets is most of it.
+func mirrorOptions(dir string, files map[string][]byte) toolrun.MirrorOptions {
+	dirs := projectDirs(dir)
+	return toolrun.MirrorOptions{
+		Pattern:  "deps-nuget-*",
+		Files:    files,
+		Skip:     func(_ string, d fs.DirEntry) bool { return d.IsDir() && skipDir(d.Name()) },
+		Recreate: func(rel string, _ fs.DirEntry) bool { return dirs[rel] },
+	}
+}
+
+// projectDirs returns the directories below dir holding an MSBuild project, and their
+// ancestors, as slash paths relative to dir.
+func projectDirs(dir string) map[string]bool {
+	out := map[string]bool{}
+	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		switch {
+		case err != nil:
+			return nil //nolint:nilerr // unreadable parts of the tree are not mirrored either
+		case d.IsDir():
+			if p != dir && skipDir(d.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		case !isProject(d.Name()):
+			return nil
+		}
+		rel, err := filepath.Rel(dir, filepath.Dir(p))
+		if err != nil {
+			return nil //nolint:nilerr // a path outside dir is none of its directories
+		}
+		for r := filepath.ToSlash(rel); r != "." && !out[r]; r = path.Dir(r) {
+			out[r] = true
+		}
+		return nil
+	})
+	return out
 }
 
 // dotnet runs `dotnet args...` in dir (the mirror of scope); a failure carries the tail of its
