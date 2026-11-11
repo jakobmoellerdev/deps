@@ -150,8 +150,16 @@ func (precommitManager) Edits(u dep.Update) ([]patch.Edit, error) {
 type extractor struct {
 	file  string
 	src   []byte
-	lines []int // yamlspan.LineStarts(src), computed for the first additional dependency
+	lines []int // yamlspan.LineStarts(src), computed for the first located value
 	deps  []dep.Dep
+}
+
+// lineStarts returns the line starts of src, computed on first use.
+func (x *extractor) lineStarts() []int {
+	if x.lines == nil {
+		x.lines = yamlspan.LineStarts(x.src)
+	}
+	return x.lines
 }
 
 // entry extracts one `repos[]` entry: the repository and, unless it is `meta` (whose hooks
@@ -162,7 +170,7 @@ func (x *extractor) entry(e *yaml.Node) {
 	}
 	repo := yamlspan.Str(yamlspan.Get(e, "repo"))
 	if repo != nil {
-		x.deps = append(x.deps, repository(x.file, x.src, repo, yamlspan.Get(e, "rev")))
+		x.deps = append(x.deps, x.repository(repo, yamlspan.Get(e, "rev")))
 	}
 	if repo != nil && repo.Value == "meta" {
 		return
@@ -184,10 +192,7 @@ func (x *extractor) entry(e *yaml.Node) {
 // ranges), a PEP 508 requirement (python) or `path@version` (golang, a package or module path
 // as `go install` takes it).
 func (x *extractor) additional(depType string, v *yaml.Node) dep.Dep {
-	if x.lines == nil {
-		x.lines = yamlspan.LineStarts(x.src)
-	}
-	off := yamlspan.Locate(x.src, x.lines, v)
+	off := yamlspan.Locate(x.src, x.lineStarts(), v)
 	s := v.Value
 	if depType == DepTypePython {
 		r, ok := pyreq.Parse(s)
@@ -238,8 +243,9 @@ func (x *extractor) additional(depType string, v *yaml.Node) dep.Dep {
 }
 
 // repository returns the dep of a `repos[]` entry's repo and rev.
-func repository(file string, src []byte, repo, rev *yaml.Node) dep.Dep {
-	d := dep.Dep{Manager: Name, Datasource: "git-tags", Versioning: "tag", DepType: DepTypeRepository, File: file, Line: repo.Line}
+func (x *extractor) repository(repo, rev *yaml.Node) dep.Dep {
+	src := x.src
+	d := dep.Dep{Manager: Name, Datasource: "git-tags", Versioning: "tag", DepType: DepTypeRepository, File: x.file, Line: repo.Line}
 	switch repo.Value {
 	case "local":
 		d.Name, d.Skip = repo.Value, "local repository"
@@ -258,21 +264,11 @@ func repository(file string, src []byte, repo, rev *yaml.Node) dep.Dep {
 		return d
 	}
 	d.Line = rev.Line
-	if rev.Style&(yaml.LiteralStyle|yaml.FoldedStyle) != 0 {
-		d.Skip = skipLocateValue
-		return d
-	}
-	ls, le := line(src, rev.Line)
-	start := -1
-	if ls >= 0 {
-		l := src[ls:le]
-		if k := bytes.Index(l, []byte("rev")); k >= 0 {
-			if i := bytes.Index(l[k+3:], []byte(rev.Value)); i >= 0 {
-				start = ls + k + 3 + i
-			}
-		}
-	}
-	if start < 0 {
+	// The value is located by its node, not by searching the line for "rev": the first "rev"
+	// of a flow mapping (`- {repo: https://host/review-tools, rev: v1}`) is in the URL.
+	start := yamlspan.Locate(src, x.lineStarts(), rev)
+	_, le := line(src, rev.Line)
+	if start < 0 || le < 0 {
 		d.Skip = skipLocateValue
 		return d
 	}

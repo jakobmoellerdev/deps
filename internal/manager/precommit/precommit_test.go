@@ -146,6 +146,26 @@ func TestExtractEmpty(t *testing.T) {
 	}
 }
 
+// TestExtractFlowStyleRev: the rev of a flow mapping is located by its node; searching the
+// line for "rev" finds the one inside the repository URL.
+func TestExtractFlowStyleRev(t *testing.T) {
+	const src = "repos:\n  - {repo: https://github.com/org/review-v1.0, rev: v1.0}\n"
+	deps, err := New().Extract(".pre-commit-config.yaml", []byte(src), manager.Env{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deps) != 1 {
+		t.Fatalf("got %d deps: %+v", len(deps), deps)
+	}
+	d := deps[0]
+	if d.Name != "org/review-v1.0" || d.Version != "v1.0" || d.Skip != "" {
+		t.Fatalf("dep = %+v", d)
+	}
+	if want := strings.LastIndex(src, "v1.0"); d.RefSpan.Start != want {
+		t.Errorf("RefSpan %v, want start %d: %q", d.RefSpan, want, src[d.RefSpan.Start:d.RefSpan.End])
+	}
+}
+
 func TestEdits(t *testing.T) {
 	src := []byte(fixture)
 	deps, err := New().Extract(".pre-commit-config.yaml", src, manager.Env{})
