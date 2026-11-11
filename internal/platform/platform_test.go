@@ -626,7 +626,8 @@ func TestForkPRsExcluded(t *testing.T) {
 				t.Fatalf("GetPR 1 = %+v %v", pr, err)
 			}
 			pr, err := c.GetPR(t.Context(), 2)
-			if !errors.Is(err, ErrForkPR) || pr.Number != 0 {
+			// The fork PR comes back with the error, so a metadata-only caller can use it.
+			if !errors.Is(err, ErrForkPR) || pr.Number != 2 {
 				t.Fatalf("GetPR 2 = %+v %v", pr, err)
 			}
 			if !strings.Contains(err.Error(), "attacker/r") {

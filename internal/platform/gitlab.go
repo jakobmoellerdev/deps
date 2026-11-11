@@ -226,7 +226,7 @@ func (g *gitlabClient) GetPR(ctx context.Context, n int) (PR, error) {
 		return PR{}, err
 	}
 	if m.fromFork() {
-		return PR{}, forkError(n, "project "+strconv.FormatInt(m.SourceProjectID, 10))
+		return m.pr(), forkError(n, "project "+strconv.FormatInt(m.SourceProjectID, 10))
 	}
 	return m.pr(), nil
 }

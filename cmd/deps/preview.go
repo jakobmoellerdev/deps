@@ -83,7 +83,9 @@ func previewRemote(ctx context.Context, cmd *cli.Command, o *rootOpts, entries [
 		return fmt.Errorf("--pr: no forge API for %s: give the repository as owner/name on a known forge", t.URL)
 	}
 	pr, err := platform.NewClient(t.Info, token, client).GetPR(ctx, number)
-	if err != nil {
+	// A PR opened from a fork comes back with ErrForkPR. preview only reads its base branch
+	// and clones refs/pull/<n>/head from the base repository, which works for a fork too.
+	if err != nil && !errors.Is(err, platform.ErrForkPR) {
 		return fmt.Errorf("pull request %d of %s: %w", number, t.Name, err)
 	}
 	branch := pr.Base

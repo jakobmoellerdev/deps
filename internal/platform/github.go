@@ -237,7 +237,9 @@ func (r *rest) GetPR(ctx context.Context, n int) (PR, error) {
 		return PR{}, err
 	}
 	if p.fromFork() {
-		return PR{}, forkError(n, p.Head.Repo.fullName())
+		// The PR is returned with the error: a caller that only reads metadata (deps preview
+		// reads the base branch) may use it deliberately; the bot treats the error as fatal.
+		return r.toPR(&p), forkError(n, p.Head.Repo.fullName())
 	}
 	return r.toPR(&p), nil
 }

@@ -136,7 +136,8 @@ type Client interface {
 	DefaultBranch(ctx context.Context) (string, error)
 	// ListPRs lists the PRs in state; PRs opened from a fork are left out (ErrForkPR).
 	ListPRs(ctx context.Context, state string, maxPages int) ([]PR, error) // "open" | "closed"
-	// GetPR reads PR number; a PR opened from a fork is ErrForkPR (wrapped).
+	// GetPR reads PR number; a PR opened from a fork is returned with ErrForkPR (wrapped),
+	// so a caller that only reads its metadata can go on deliberately.
 	GetPR(ctx context.Context, number int) (PR, error)
 	// CreatePR opens a PR; draft opens it as a draft (GitHub: the draft flag; Gitea and
 	// Forgejo: the title gets the "WIP: " prefix; GitLab: the "Draft: " prefix).
