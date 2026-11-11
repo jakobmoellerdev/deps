@@ -252,3 +252,30 @@ func BenchmarkTreeChanges(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkBuildApplicable applies three updates of one workflow whose post-processor rejects
+// two of them together, the path that builds the updates alone and then one at a time.
+func BenchmarkBuildApplicable(b *testing.B) {
+	const wf = ".github/workflows/a.yml"
+	root, _ := setup(b, "", map[string]string{wf: "jobs:\n  a:\n    steps:\n      - uses: a/x@v1\n      - uses: b/y@v1\n      - uses: c/z@v1\n"})
+	up := func(name string, line int) dep.Update {
+		return dep.Update{Dep: dep.Dep{Manager: actions.Name, File: wf, Line: line, Name: name, Version: "v1",
+			RefSpan: refSpan(b, root, wf, name+"@v1")}, Type: dep.Major, NewVersion: "v2"}
+	}
+	ups := []dep.Update{up("a/x", 4), up("b/y", 5), up("c/z", 6)}
+	post := map[string]PostProcessor{actions.Name: postFunc{f: func(_ context.Context, _ string, manifests, _ map[string][]byte) (map[string][]byte, error) {
+		src := string(manifests["a.yml"])
+		if strings.Contains(src, "a/x@v2") && strings.Contains(src, "b/y@v2") {
+			return nil, &dep.SkipError{Reason: "a/x and b/y conflict"}
+		}
+		return nil, nil
+	}, scope: func(string, string) (string, bool) { return ".github/workflows", true }}}
+	ms := []manager.Manager{actions.New()}
+	b.ReportAllocs()
+	for b.Loop() {
+		_, skipped, errs := BuildApplicable(b.Context(), root, ms, ups, post)
+		if len(errs) != 0 || len(skipped) != 1 {
+			b.Fatalf("skipped = %d, errs = %v", len(skipped), errs)
+		}
+	}
+}

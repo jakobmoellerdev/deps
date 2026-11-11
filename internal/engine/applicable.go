@@ -46,6 +46,10 @@ func BuildApplicable(ctx context.Context, root string, managers []manager.Manage
 	// Alone: an update whose own build is only skipped cannot be applied.
 	check := touching(root, managers, updates, files)
 	alone := make([]string, len(updates))
+	// own[i] is the verdict the together phase below reaches for updates[i] with nothing
+	// accepted yet, which is this very build: it adds the first update without building it
+	// again. An update the phase never built keeps false and is built there.
+	own := make([]bool, len(updates))
 	var wg sync.WaitGroup
 	for i, t := range check {
 		if t {
@@ -54,6 +58,8 @@ func BuildApplicable(ctx context.Context, root string, managers []manager.Manage
 				if reason, ok := skipOnly(errs); ok {
 					alone[i] = reason
 				}
+				_, skipped := skipOnly(skipErrs(errs))
+				own[i] = !skipped
 			})
 		}
 	}
@@ -62,6 +68,7 @@ func BuildApplicable(ctx context.Context, root string, managers []manager.Manage
 		return nil, nil, []error{err}
 	}
 	updates, skipped := leaveOut(updates, alone)
+	own = keptFlags(own, alone)
 	if len(skipped) > 0 {
 		changes, errs = Build(ctx, root, managers, updates, post)
 		if files = skipFiles(errs); len(files) == 0 {
@@ -76,6 +83,10 @@ func BuildApplicable(ctx context.Context, root string, managers []manager.Manage
 		if !t {
 			continue
 		}
+		if len(accepted) == 0 && own[i] {
+			accepted = append(accepted, updates[i])
+			continue
+		}
 		_, errs := Build(ctx, root, managers, append(slices.Clip(accepted), updates[i]), post)
 		if reason, ok := skipOnly(skipErrs(errs)); ok {
 			together[i] = reason
@@ -87,8 +98,23 @@ func BuildApplicable(ctx context.Context, root string, managers []manager.Manage
 		}
 	}
 	updates, more := leaveOut(updates, together)
-	changes, errs = Build(ctx, root, managers, updates, post)
+	if len(more) > 0 {
+		// With nothing left out the updates are those of the last full build, whose changes
+		// and errors still stand: only a changed set needs another one.
+		changes, errs = Build(ctx, root, managers, updates, post)
+	}
 	return changes, append(skipped, more...), errs
+}
+
+// keptFlags returns the elements of flags whose update leaveOut keeps, in order.
+func keptFlags(flags []bool, reasons []string) []bool {
+	out := flags[:0]
+	for i, f := range flags {
+		if reasons[i] == "" {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // touching reports, per update, whether it edits one of files (its dep's file or its

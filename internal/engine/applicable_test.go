@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -82,7 +83,7 @@ func TestBuildApplicable(t *testing.T) {
 }
 
 // refSpan returns the span of the ref after '@' of the first occurrence of uses in file.
-func refSpan(t *testing.T, root, file, uses string) dep.Span {
+func refSpan(t testing.TB, root, file, uses string) dep.Span {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(file)))
 	if err != nil {
@@ -94,4 +95,35 @@ func refSpan(t *testing.T, root, file, uses string) dep.Span {
 	}
 	at := i + strings.IndexByte(uses, '@') + 1
 	return dep.Span{Start: at, End: i + len(uses)}
+}
+
+// The together phase builds no update alone again: the alone phase already built each of
+// them, so adding the first one costs no build. Its outcome is the same.
+func TestBuildApplicableBuildsOnce(t *testing.T) {
+	root, _ := setup(t, "", map[string]string{
+		".github/workflows/a.yml": "jobs:\n  a:\n    steps:\n      - uses: a/x@v1\n      - uses: b/y@v1\n      - uses: c/z@v1\n",
+	})
+	const wf = ".github/workflows/a.yml"
+	up := func(name string, line int) dep.Update {
+		return dep.Update{Dep: dep.Dep{Manager: "github-actions", File: wf, Line: line, Name: name, Version: "v1",
+			RefSpan: refSpan(t, root, wf, name+"@v1")}, Type: dep.Major, NewVersion: "v2"}
+	}
+	ups := []dep.Update{up("a/x", 4), up("b/y", 5), up("c/z", 6)}
+	var builds atomic.Int64
+	post := map[string]PostProcessor{"github-actions": postFunc{f: func(_ context.Context, _ string, manifests, _ map[string][]byte) (map[string][]byte, error) {
+		builds.Add(1)
+		src := string(manifests["a.yml"])
+		if strings.Contains(src, "a/x@v2") && strings.Contains(src, "b/y@v2") {
+			return nil, &dep.SkipError{Reason: "a/x and b/y conflict"}
+		}
+		return nil, nil
+	}, scope: func(string, string) (string, bool) { return ".github/workflows", true }}}
+	_, skipped, errs := BuildApplicable(t.Context(), root, managers, ups, post)
+	if len(errs) != 0 || len(skipped) != 1 || skipped[0].Update.Dep.Name != "b/y" {
+		t.Fatalf("skipped = %+v, errs = %v", skipped, errs)
+	}
+	// All three updates, then each alone, then a/x with b/y and with c/z, then the kept two.
+	if got := builds.Load(); got != 7 {
+		t.Errorf("post-processed %d times, want 7", got)
+	}
 }
