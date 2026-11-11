@@ -130,6 +130,46 @@ func TestParse(t *testing.T) {
 	}
 }
 
+// TestTableSpans checks the End of the values a table header opens: it runs to the end of
+// the last value below the table, so that an offset can be resolved to the table holding
+// it (pytool resolves a Pipfile offset to its category that way).
+func TestTableSpans(t *testing.T) {
+	root := mustParse(t, doc)
+	for _, c := range []struct {
+		path        []string
+		first, last string
+	}{
+		{[]string{"project"}, "[project]", "nested = { x = true } }"},
+		{[]string{"tool"}, "[tool.poetry.dependencies]", `k = "v"`},
+		{[]string{"tool", "poetry", "dependencies"}, "[tool.poetry.dependencies]", `requests = { version = "^2.31" }`},
+		{[]string{"tool", "poetry", "source"}, "[[tool.poetry.source]]", `k = "v"`},
+		{[]string{"dotted", "quoted.part"}, `[ dotted . "quoted.part" ]`, `"\u00e9\U0001F600\x41\e\b\t\n\f\r\\"`},
+	} {
+		v := root.Get(c.path...)
+		if v == nil {
+			t.Fatalf("%v missing", c.path)
+		}
+		if got := doc[v.Start:v.End]; !strings.HasPrefix(got, c.first) || !strings.HasSuffix(got, c.last) {
+			t.Errorf("%v spans %q, want %q … %q", c.path, got, c.first, c.last)
+		}
+	}
+	// A sub-table opened by a header is found through the offset of a value below it.
+	off := strings.Index(doc, `"^2.31"`)
+	deps := root.Get("tool", "poetry", "dependencies")
+	req := deps.Fields["requests"]
+	if req.Start > off || off > req.End {
+		t.Errorf("requests spans %d-%d, want %d inside", req.Start, req.End, off)
+	}
+	// A table without values spans its header, an array of tables its elements.
+	empty := mustParse(t, "[a]\n[[b]]\nx = 1\n")
+	if v := empty.Get("a"); v.Start != 0 || v.End != 3 {
+		t.Errorf("a spans %d-%d, want 0-3", v.Start, v.End)
+	}
+	if v := empty.Get("b"); v.Kind != Array || v.Start != 4 || v.End != 15 {
+		t.Errorf("b spans %d-%d, want 4-15", v.Start, v.End)
+	}
+}
+
 func TestParseCRLF(t *testing.T) {
 	src := "[a]\r\nb = \"1\"\r\nc = \"\"\"\r\nx\r\ny\"\"\"\r\nd = 2\r\n"
 	root := mustParse(t, src)

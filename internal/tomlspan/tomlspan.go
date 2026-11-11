@@ -31,7 +31,9 @@ type Value struct {
 	// Str is the decoded string (String) or the raw text (Scalar).
 	Str string
 	// Start and End delimit the string's content between its quotes (String) or the raw text
-	// (Scalar); for arrays and tables they delimit the whole value.
+	// (Scalar); for arrays and tables they delimit the whole value: from the opening bracket
+	// of an inline one, from the header of a table or an array of tables to the end of the
+	// last value below it.
 	Start, End int
 	// Exact reports whether src[Start:End] equals Str byte for byte (no escapes, no trimmed
 	// first newline), so the bytes can be replaced in place.
@@ -104,11 +106,30 @@ func Parse(src []byte) (*Value, error) {
 			return nil, err
 		}
 	}
+	closeTables(root)
 	return root, nil
 }
 
 func newTable(start, line int) *Value {
 	return &Value{Kind: Table, Start: start, End: start, Line: line, Fields: map[string]*Value{}}
+}
+
+// closeTables sets the End of the values a table header opens and returns it: a standard
+// table, an array of tables and the implicit tables above them end with the last value
+// below them, which the header cannot know. Inline tables and arrays close with their
+// bracket and already have it.
+func closeTables(v *Value) int {
+	switch {
+	case v.Kind == Table && !v.inline:
+		for _, k := range v.Keys {
+			v.End = max(v.End, closeTables(v.Fields[k]))
+		}
+	case v.Kind == Array && v.aot:
+		for _, it := range v.Items {
+			v.End = max(v.End, closeTables(it))
+		}
+	}
+	return v.End
 }
 
 type parser struct {
@@ -218,7 +239,7 @@ func (p *parser) header(root *Value) (*Value, error) {
 			return nil, p.errf("%s is not an array of tables", strings.Join(keys, "."))
 		}
 		el := newTable(start, line)
-		el.defined = true
+		el.defined, el.End = true, p.pos // an element without values spans its header
 		v.Items = append(v.Items, el)
 		return el, nil
 	}
@@ -232,7 +253,7 @@ func (p *parser) header(root *Value) (*Value, error) {
 		return nil, p.errf("table %s defined twice", strings.Join(keys, "."))
 	}
 	v.defined = true
-	v.Start, v.Line = start, line
+	v.Start, v.End, v.Line = start, p.pos, line
 	return v, nil
 }
 
@@ -292,6 +313,9 @@ func (p *parser) keyValue(t *Value) error {
 		return err
 	}
 	t.add(last, v)
+	// The table the key belongs to ends with the value; closeTables carries that up to the
+	// tables above it, whose own End is only their header.
+	t.End = p.pos
 	return nil
 }
 

@@ -197,6 +197,29 @@ func TestProcessLockedCommands(t *testing.T) {
 	}
 }
 
+// TestPipfileCategories resolves the offset of a constraint to the Pipfile category holding
+// it, also when the dep has a table of its own ([packages.urllib3]).
+func TestPipfileCategories(t *testing.T) {
+	const src = "[[source]]\nname = \"pypi\"\n\n[packages]\nrequests = \">=2.32\"\n\n[packages.urllib3]\nversion = \">=1.26\"\n\n[dev-packages.pytest]\nversion = \">=9\"\n"
+	cat := pipfileCategories([]byte(src))
+	for _, c := range []struct{ spec, want string }{
+		{">=2.32", "packages"},
+		{">=1.26", "packages"},
+		{">=9", "dev-packages"},
+		{"pypi", ""}, // [[source]] is an array of tables, not a category
+	} {
+		if got := cat(span(src, c.spec).Start); got != c.want {
+			t.Errorf("%s: category = %q, want %q", c.spec, got, c.want)
+		}
+	}
+	if got := cat(len(src)); got != "" {
+		t.Errorf("past the end: category = %q", got)
+	}
+	if got := pipfileCategories([]byte("[packages"))(0); got != "" {
+		t.Errorf("invalid Pipfile: category = %q", got)
+	}
+}
+
 // TestProcessLockedPins moves the lockfile-only updates of poetry.lock and pdm.lock to exactly
 // their versions: the lock command runs with the constraints pinned, then with the manifest
 // restored.
