@@ -228,7 +228,7 @@ type tree struct {
 func extractTree(ctx context.Context, root string, cfg *config.Config, env manager.Env, managers []manager.Manager, prog Progress) (*tree, error) {
 	start := time.Now()
 	prog.Start(PhaseDiscover, 0)
-	found, err := discover(root, cfg.IgnorePaths, managers)
+	found, err := discover(root, cfg.IgnorePaths, cfg.GitIgnoreEnabled(), managers)
 	if err != nil {
 		prog.End(PhaseDiscover)
 		return nil, fmt.Errorf("walk %s: %w", root, err)

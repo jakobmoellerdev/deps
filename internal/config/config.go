@@ -250,10 +250,13 @@ type Config struct {
 	Composer            Composer  `yaml:"composer" jsonschema_description:"composer manager settings."`
 	// RegistryAliases maps a registry alias as written (a variable such as $CI_REGISTRY) to
 	// the registry it stands for (Renovate's registryAliases).
-	RegistryAliases    map[string]string `yaml:"registryAliases" jsonschema_description:"Registry aliases by the prefix written in files, e.g. $CI_REGISTRY or ${REGISTRY}: an image reference '<alias>/<path>[:tag][@digest]' is looked up as '<value>/<path>' while the file keeps the alias. Extended files merge it by key."`
-	IgnorePaths        []string          `yaml:"ignorePaths" jsonschema_description:"Case-sensitive doublestar globs (as in Renovate) on slash paths relative to --dir; matching files and directories are not scanned. When the key is absent, the default list (dependency trees, examples and tests) applies; any list (also []) replaces it. Entries may also be /RE2/ regexes."`
-	UpdateNotScheduled *bool             `yaml:"updateNotScheduled" scope:"run" jsonschema:"default=true" jsonschema_description:"Keep updating and rebasing open update PRs outside their schedule; only new PRs wait for the schedule window. false leaves out-of-schedule branches untouched."`
-	PRNotPendingHours  *int              `yaml:"prNotPendingHours" scope:"run" jsonschema:"minimum=0,default=25" jsonschema_description:"With prCreation not-pending: hours after the last commit of a branch whose checks are still running or absent after which its PR is opened anyway."`
+	RegistryAliases map[string]string `yaml:"registryAliases" jsonschema_description:"Registry aliases by the prefix written in files, e.g. $CI_REGISTRY or ${REGISTRY}: an image reference '<alias>/<path>[:tag][@digest]' is looked up as '<value>/<path>' while the file keeps the alias. Extended files merge it by key."`
+	IgnorePaths     []string          `yaml:"ignorePaths" jsonschema_description:"Case-sensitive doublestar globs (as in Renovate) on slash paths relative to --dir; matching files and directories are not scanned. When the key is absent, the default list (dependency trees, examples and tests) applies; any list (also []) replaces it. Entries may also be /RE2/ regexes."`
+	// GitIgnore prunes the paths .gitignore ignores from discovery (git's own view of a
+	// repository); it has no Renovate counterpart, which only ever sees tracked files.
+	GitIgnore          *bool `yaml:"gitIgnore" jsonschema:"default=true" jsonschema_description:"Leave files and directories ignored by the repository's .gitignore files (and .git/info/exclude) out of discovery, as git does: build output or vendored trees deps could not commit anyway are not scanned. The git index is not read, so a tracked file an ignore rule matches counts as ignored too; false scans every path ignorePaths allows."`
+	UpdateNotScheduled *bool `yaml:"updateNotScheduled" scope:"run" jsonschema:"default=true" jsonschema_description:"Keep updating and rebasing open update PRs outside their schedule; only new PRs wait for the schedule window. false leaves out-of-schedule branches untouched."`
+	PRNotPendingHours  *int  `yaml:"prNotPendingHours" scope:"run" jsonschema:"minimum=0,default=25" jsonschema_description:"With prCreation not-pending: hours after the last commit of a branch whose checks are still running or absent after which its PR is opened anyway."`
 	// RebaseLabel and StopUpdatingLabel are PR labels people set (Renovate's options of the
 	// same names).
 	RebaseLabel       string `yaml:"rebaseLabel" scope:"run" jsonschema:"default=rebase" jsonschema_description:"Label that makes the next run rebuild an update PR's branch on the current base, like ticking its rebase checkbox (bypassing the schedule and discarding commits by others); deps removes the label afterwards."`
@@ -365,6 +368,10 @@ func (c *Config) SecurityEnabled() bool { return c.Builtins.Security == nil || *
 
 // MonoreposEnabled reports whether the built-in monorepo groups apply (default true).
 func (c *Config) MonoreposEnabled() bool { return c.Builtins.Monorepos == nil || *c.Builtins.Monorepos }
+
+// GitIgnoreEnabled reports whether discovery skips the paths .gitignore ignores (default
+// true).
+func (c *Config) GitIgnoreEnabled() bool { return c.GitIgnore == nil || *c.GitIgnore }
 
 // ReplacementsEnabled reports whether the built-in replacements apply (default true).
 func (c *Config) ReplacementsEnabled() bool {

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/gitignore"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pattern"
 )
@@ -17,8 +18,9 @@ var prunedDirs = map[string]bool{".git": true, "node_modules": true, "vendor": t
 // discover walks root once, pruning ignored directories, and matches paths without opening
 // files. A file goes to every manager that matches it (a custom manager may target a file a
 // built-in one handles too); the result holds the sorted slash paths (relative to root) per
-// manager, indexed like managers.
-func discover(root string, ignore []string, managers []manager.Manager) ([][]string, error) {
+// manager, indexed like managers. With gitIgnore, the .gitignore files of the repository
+// (and its .git/info/exclude) prune directories and files as they do for git.
+func discover(root string, ignore []string, gitIgnore bool, managers []manager.Manager) ([][]string, error) {
 	out := make([][]string, len(managers))
 	ign, err := pattern.CompileCaseSensitive(ignore)
 	if err != nil {
@@ -26,6 +28,10 @@ func discover(root string, ignore []string, managers []manager.Manager) ([][]str
 	}
 	base := filepath.Clean(root)
 	ignored := ign.Match
+	var gi *gitignore.Matcher
+	if gitIgnore {
+		gi = gitignore.New(root)
+	}
 	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -39,10 +45,11 @@ func discover(root string, ignore []string, managers []manager.Manager) ([][]str
 		}
 		rel = filepath.ToSlash(rel)
 		if d.IsDir() {
-			if prunedDirs[d.Name()] || ignored(rel) {
+			if prunedDirs[d.Name()] || ignored(rel) || gi.Ignored(rel, true) {
 				slog.Debug("directory pruned", "dir", rel)
 				return fs.SkipDir
 			}
+			gi.Enter(rel)
 			return nil
 		}
 		if !d.Type().IsRegular() {
@@ -55,7 +62,7 @@ func discover(root string, ignore []string, managers []manager.Manager) ([][]str
 				continue
 			}
 			if !checked {
-				checked, skip = true, ignored(rel)
+				checked, skip = true, ignored(rel) || gi.Ignored(rel, false)
 			}
 			if skip {
 				break

@@ -134,6 +134,7 @@ customDatasources:
   - [`composer.ignorePlatformReqs`](#composerignoreplatformreqs)
 - [`registryAliases`](#registryaliases)
 - [`ignorePaths`](#ignorepaths)
+- [`gitIgnore`](#gitignore)
 - [`updateNotScheduled`](#updatenotscheduled)
 - [`prNotPendingHours`](#prnotpendinghours)
 - [`rebaseLabel`](#rebaselabel)
@@ -1085,11 +1086,28 @@ Case-sensitive doublestar globs (as in Renovate) on slash paths relative to --di
 
 - When the key is **absent**, Renovate's `:ignoreModulesAndTests` list (the default above) applies.
 - Any explicit list, including `[]` or a null value, replaces that default.
-- Independently of `ignorePaths`, discovery always prunes `.git`, `node_modules`, `vendor` and `testdata` directories.
+- Independently of `ignorePaths`, discovery always prunes `.git`, `node_modules`, `vendor` and `testdata` directories, and the paths [`gitIgnore`](#gitignore) excludes.
 - Each entry must be a valid doublestar glob or a `/RE2/` regex (flag `i` allowed) matched anywhere in the path; `!` negations are rejected.
 
 ```yaml
 ignorePaths: ['**/node_modules/**', 'docs/**']
+```
+
+## `gitIgnore`
+
+Leave files and directories ignored by the repository's .gitignore files (and .git/info/exclude) out of discovery, as git does: build output or vendored trees deps could not commit anyway are not scanned. The git index is not read, so a tracked file an ignore rule matches counts as ignored too; false scans every path ignorePaths allows.
+
+- **Type:** boolean
+- **Default:** `true`
+
+Discovery reads the repository's ignore rules and leaves the paths they ignore out, as git does, so build output, generated trees and local scratch files are not scanned and no update is proposed for a file that could not be committed.
+
+- **Files read:** the `.gitignore` of every directory discovery walks, those of the directories between the repository top (the nearest directory at or above `--dir` holding `.git`) and `--dir`, and the repository's `.git/info/exclude` (in a linked worktree, the one of its common directory). A deeper file overrides a shallower one and the last matching pattern of a file decides, as in `gitignore(5)`: `!` negations, `/` anchoring, trailing `/` for directories only, `**`, character classes and backslash escapes all work. The user-global `core.excludesFile` is not read, so a run in CI sees the same paths as one on a workstation.
+- **The index is not read:** a file an ignore rule matches is skipped even when it is tracked (`git add -f`). Set `gitIgnore: false`, or un-ignore the file in `.gitignore`, to have such a file scanned.
+- An ignored directory is pruned, so a negation cannot bring a file below it back, exactly as in git.
+
+```yaml
+gitIgnore: false
 ```
 
 ## `updateNotScheduled`

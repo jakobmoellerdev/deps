@@ -112,7 +112,7 @@ func BenchmarkDiscover(b *testing.B) {
 	managers := []manager.Manager{suffixManager{}}
 	b.ReportAllocs()
 	for b.Loop() {
-		got, err := discover(root, config.DefaultIgnorePaths, managers)
+		got, err := discover(root, config.DefaultIgnorePaths, true, managers)
 		if err != nil || len(got[0]) != 200 {
 			b.Fatalf("discovered %d files, err %v", len(got[0]), err)
 		}
@@ -156,7 +156,7 @@ func BenchmarkDiscoverManagers(b *testing.B) {
 	}
 	b.ReportAllocs()
 	for b.Loop() {
-		got, err := discover(root, config.DefaultIgnorePaths, managers)
+		got, err := discover(root, config.DefaultIgnorePaths, true, managers)
 		if err != nil || len(got[0]) != 1 {
 			b.Fatalf("discovered %d workflows, err %v", len(got[0]), err)
 		}
