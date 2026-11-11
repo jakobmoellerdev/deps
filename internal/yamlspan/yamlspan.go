@@ -155,6 +155,10 @@ func unsplittable(src []byte) bool {
 	return bytes.Contains(src, []byte("\u0085")) || bytes.Contains(src, []byte("\u2028")) || bytes.Contains(src, []byte("\u2029"))
 }
 
+// bom is the UTF-8 byte order mark, which the scanner consumes with the stream's encoding,
+// before the first line's first column.
+var bom = []byte("\ufeff")
+
 // Locate returns the byte offset of scalar v's value in src, or -1 when the source bytes differ
 // from the value (escapes, multi-line or block scalars). lines are src's LineStarts. yaml
 // columns count runes, not bytes, and point at the anchor of an anchored value.
@@ -163,6 +167,9 @@ func Locate(src []byte, lines []int, v *yaml.Node) int {
 		return -1
 	}
 	off := lines[v.Line-1]
+	if v.Line == 1 && bytes.HasPrefix(src, bom) {
+		off += len(bom) // the mark is no column of the first line
+	}
 	for range v.Column - 1 {
 		if off >= len(src) || src[off] == '\n' {
 			return -1

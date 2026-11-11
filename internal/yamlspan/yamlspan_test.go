@@ -50,6 +50,8 @@ func TestLocate(t *testing.T) {
 		{"literal block", "k: |\n  v1\n", ""},
 		{"folded block", "k: >\n  v1\n", ""},
 		{"multi-line plain", "k: a\n  b\n", ""},
+		{"byte order mark", "\ufeffk: v1.2\n", "v1.2\n"},
+		{"byte order mark, value below", "\ufeffm:\n  k: v1\n", "v1\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			v := parse(t, tc.src)
