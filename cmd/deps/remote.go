@@ -135,6 +135,9 @@ type remoteSource struct {
 	info   platform.Info
 	token  string
 	client *http.Client
+	// tokenHost is the forge host token authenticates against; the token is only ever sent
+	// to that host, so a target on another forge is cloned without it.
+	tokenHost string
 	// into is where kept clones are made (<into>/<owner>/<name>, apply --into); "" makes a
 	// temporary clone that is removed again after the repository.
 	into string
@@ -154,6 +157,12 @@ func newRemoteSource(ctx context.Context, o *rootOpts, entries []string, token s
 		named = named || !s.URL
 	}
 	if !named {
+		// With URL entries alone the forge of the token is not needed to resolve them, but
+		// it still decides which of them may see the token; it can only come from the CI
+		// environment here, and a missing one simply leaves every clone anonymous.
+		if info, detectErr := platform.Detect(ctx, os.Getenv, "", platform.Overrides{}, client); detectErr == nil {
+			src.tokenHost = info.Host
+		}
 		return src, nil
 	}
 	dir, err := filepath.Abs(o.dir)
@@ -170,6 +179,7 @@ func newRemoteSource(ctx context.Context, o *rootOpts, entries []string, token s
 		}
 		return nil, err
 	}
+	src.tokenHost = src.info.Host
 	if src.info.Kind != platform.GitLab {
 		for _, s := range specs {
 			if owner, _ := splitRepository(s.Repo); !s.URL && strings.Contains(owner, "/") {
@@ -250,7 +260,6 @@ func (src *remoteSource) eachRepository(ctx context.Context, o *rootOpts, stderr
 		defer os.RemoveAll(work)
 	}
 	defer actionsLog.setRepo("")
-	header := gitAuthHeader(src.token)
 	for i, t := range targets {
 		fmt.Fprintf(stderr, "repository %s\n", t.Name)
 		actionsLog.setRepo(t.Name)
@@ -263,7 +272,7 @@ func (src *remoteSource) eachRepository(ctx context.Context, o *rootOpts, stderr
 			if !keep {
 				defer os.RemoveAll(dir)
 			}
-			if err := cloneRepository(ctx, t, header, dir); err != nil {
+			if err := cloneRepository(ctx, t, src.authHeader(t), dir); err != nil {
 				return err
 			}
 			if keep {
@@ -318,6 +327,17 @@ func (p *repoSessions) close() {
 	if p.base != nil {
 		p.base.close()
 	}
+}
+
+// authHeader is the git auth header the clone of t gets. A target given as a URL carries the
+// forge of that URL, which may be a host the token does not belong to; writing the header
+// into its clone config would hand the forge credentials to a foreign server, so only a
+// target on the token's own host is authenticated and every other one is cloned anonymously.
+func (src *remoteSource) authHeader(t repoTarget) string {
+	if src.tokenHost == "" || !strings.EqualFold(t.Info.Host, src.tokenHost) {
+		return ""
+	}
+	return gitAuthHeader(src.token)
 }
 
 // gitAuthHeader is the http.extraheader that authenticates git with token as Basic

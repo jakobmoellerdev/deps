@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json/v2"
 	"io"
 	"net/http"
@@ -8,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 )
 
 func TestParseRepoSpec(t *testing.T) {
@@ -256,4 +259,29 @@ func TestPreviewPullRequest(t *testing.T) {
 		t.Errorf("stderr:\n%s", stderr)
 	}
 	_ = stdout
+}
+
+// A --repositories entry given as a git URL carries its own forge, which may be a host the
+// forge token does not belong to. Its clone must stay anonymous: the header is written into
+// the clone's config, so attaching it would hand the token to a foreign server.
+func TestRemoteSourceAuthHeaderOnlyOwnHost(t *testing.T) {
+	cleanEnv(t)
+	giteaEnv(t)
+	src, err := newRemoteSource(t.Context(), &rootOpts{dir: t.TempDir()},
+		[]string{"https://git.test/o/r.git", "https://gitlab.example.org/x/y.git"}, "tok", http.DefaultClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	own := repoTarget{Info: platform.Info{Kind: platform.Gitea, Host: "git.test", ServerURL: "https://git.test"}}
+	if h := src.authHeader(own); !strings.Contains(h, base64.StdEncoding.EncodeToString([]byte("x-access-token:tok"))) {
+		t.Errorf("header for the token's own host = %q, want the token", h)
+	}
+	foreign := repoTarget{Info: platform.Info{Kind: platform.GitLab, Host: "gitlab.example.org", ServerURL: "https://gitlab.example.org"}}
+	if h := src.authHeader(foreign); h != "" {
+		t.Errorf("header for a foreign host = %q, want none", h)
+	}
+	// A URL without a forge (file://) has no host either.
+	if h := src.authHeader(repoTarget{}); h != "" {
+		t.Errorf("header without a forge = %q, want none", h)
+	}
 }
