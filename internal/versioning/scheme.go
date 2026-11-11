@@ -234,6 +234,10 @@ func (s impl[T]) rank(cur string, cands []string, accept func(string, dep.Update
 		return r
 	}
 	r.cur = c
+	// Most candidates are rejected (compat, allow rules, release age), so a full
+	// len(cands) reservation wastes memory; a quarter covers the usual ratio and
+	// still saves the first doubling rounds, which copy the large parsed versions.
+	r.kept = make([]rankedVersion[T], 0, len(cands)/4+8)
 	for i, raw := range cands {
 		n, why := s.consider(c, raw, accept)
 		if why != "" {
