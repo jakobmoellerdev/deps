@@ -463,6 +463,40 @@ func TestPrivateRegistryScheme(t *testing.T) {
 	}
 }
 
+// TestHeadNotServed: a registry that refuses HEAD of a manifest is retried with a GET, whose
+// manifest the digest is computed from.
+func TestHeadNotServed(t *testing.T) {
+	for _, status := range []int{http.StatusMethodNotAllowed, http.StatusNotImplemented, http.StatusForbidden} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			reg := newMemRegistry()
+			img := reg.image(t, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), nil)
+			reg.tag("img", "1.0", img)
+			var heads, gets atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.Contains(r.URL.Path, "/manifests/") {
+					if r.Method == http.MethodHead {
+						heads.Add(1)
+						registryError(w, status, "UNSUPPORTED")
+						return
+					}
+					gets.Add(1)
+				}
+				reg.ServeHTTP(w, r)
+			}))
+			t.Cleanup(srv.Close)
+			s := newSource(srv.Client(), nil, anon)
+			host := strings.TrimPrefix(srv.URL, "http://")
+			got, err := s.Digest(t.Context(), dep.Dep{Name: host + "/img"}, "1.0")
+			if err != nil || got != img.Digest.String() {
+				t.Fatalf("Digest = %q, %v; want %q", got, err, img.Digest)
+			}
+			if heads.Load() != 1 || gets.Load() != 1 {
+				t.Errorf("%d HEADs, %d GETs; want 1, 1", heads.Load(), gets.Load())
+			}
+		})
+	}
+}
+
 // TestTagPageCap checks a listing stops after maxTagPages pages and resolves with the tags seen,
 // while one of exactly maxTagPages pages is read whole.
 func TestTagPageCap(t *testing.T) {

@@ -571,9 +571,10 @@ func (s *Source) list(ctx context.Context, name string) (rels []datasource.Relea
 // minTagChunk is the length of the first chunk list collects tags in.
 const minTagChunk = 64
 
-// head resolves the digest with a HEAD request. A registry that omits the digest header gets a
-// GET, whose digest is computed from the manifest; HTTP and auth errors are not retried with GET,
-// and a 404 becomes "tag <v> not found upstream".
+// head resolves the digest with a HEAD request. A registry that omits the digest header, or
+// answers HEAD with a status that says it does not serve the method (noHead), gets a GET, whose
+// digest is computed from the manifest; other HTTP and auth errors are not retried with GET, and
+// a 404 becomes "tag <v> not found upstream".
 func (s *Source) head(ctx context.Context, name, tag string) (digest string, err error) {
 	start, method := time.Now(), http.MethodHead
 	defer func() {
@@ -596,8 +597,9 @@ func (s *Source) head(ctx context.Context, name, tag string) (digest string, err
 	if errors.Is(err, errdef.ErrNotFound) {
 		return "", fmt.Errorf("tag %s %w", tag, datasource.ErrVersionNotFound)
 	}
-	if httpErr := (*errcode.ErrorResponse)(nil); errors.As(err, &httpErr) || errors.Is(err, auth.ErrBasicCredentialNotFound) ||
-		errors.Is(err, httpx.ErrRateLimited) || ctx.Err() != nil {
+	if httpErr := (*errcode.ErrorResponse)(nil); errors.Is(err, auth.ErrBasicCredentialNotFound) ||
+		errors.Is(err, httpx.ErrRateLimited) || ctx.Err() != nil ||
+		(errors.As(err, &httpErr) && !noHead(httpErr.StatusCode)) {
 		return "", s.pullLimitHint(name, fmt.Errorf("digest %s:%s: %w", name, tag, err))
 	}
 	method = http.MethodGet
@@ -607,6 +609,13 @@ func (s *Source) head(ctx context.Context, name, tag string) (digest string, err
 	}
 	rc.Close()
 	return desc.Digest.String(), nil
+}
+
+// noHead reports whether status is a registry's answer to a HEAD it does not serve, so that the
+// manifest has to be GET instead: 405 and 501 say so outright, and the distribution spec lets a
+// registry answer a method it refuses with 403 as well (Harbor and some proxies do).
+func noHead(status int) bool {
+	return status == http.StatusMethodNotAllowed || status == http.StatusNotImplemented || status == http.StatusForbidden
 }
 
 // repoName returns the canonical repository of d: d.Source, or d.Name normalized
