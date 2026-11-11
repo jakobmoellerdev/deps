@@ -73,6 +73,11 @@ func discover(root string, ignore []string, gitIgnore bool, managers []manager.M
 			}
 			if !checked {
 				checked, skip = true, ignored(rel) || gi.Ignored(rel, false)
+				if skip {
+					// A manager claims the file, so its absence from the plan would
+					// otherwise be unexplained.
+					slog.Debug("file ignored", "file", rel)
+				}
 			}
 			if skip {
 				break
