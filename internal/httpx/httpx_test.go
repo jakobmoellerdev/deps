@@ -98,9 +98,9 @@ func TestClientLogging(t *testing.T) {
 func TestClientResumesTLSSessions(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	t.Cleanup(srv.Close)
-	c := NewClient()
-	tr := c.Transport.(timeoutTransport).next.(*retryTransport).next.(logTransport).next.(*firstConnTransport).next.(gzipTransport).next.(*http.Transport)
+	tr := newTransport()
 	tr.TLSClientConfig.RootCAs = srv.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs
+	c := newClient(tr)
 
 	for i, want := range []bool{false, true} {
 		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, http.NoBody)

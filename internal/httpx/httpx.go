@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+
+	"github.com/klauspost/compress/gzhttp"
 )
 
 // Version is the deps version advertised in User-Agent headers and git agent capabilities.
@@ -23,10 +25,24 @@ func UserAgent() string { return "deps/" + Version }
 // NewClient returns the HTTP client shared by all packages (HTTP/2, keep-alive, proxy from
 // environment). Idempotent requests are retried (see Idempotent) and rate limits waited out
 // briefly; every attempt is logged at debug level. RequestTimeout bounds single requests.
-// Requests to an HTTPS host wait for its first connection (see firstConnTransport); gzip
-// responses are decompressed with klauspost/compress (see gzipTransport).
-func NewClient() *http.Client {
-	return &http.Client{Transport: timeoutTransport{newRetryTransport(logTransport{&firstConnTransport{next: gzipTransport{&http.Transport{
+// Requests to an HTTPS host wait for its first connection (see firstConnTransport); gzip and
+// zstd responses are decompressed with klauspost/compress (see newClient).
+func NewClient() *http.Client { return newClient(newTransport()) }
+
+// newClient wraps base in the shared transport chain. gzhttp.Transport asks for zstd and gzip
+// and decompresses responses itself (net/http's own decompression is off): inflating registry
+// documents (npm packuments, PyPI JSON) is a large share of a run's CPU and klauspost's gzip
+// decoder is about a fifth faster on them, while zstd decodes several times faster still. No
+// public registry deps talks to serves zstd today (they answer gzip, which stays the common
+// case); a self-hosted registry, proxy or custom datasource that does gets the faster path
+// for free. Both decoders come from pools, so a response costs no window allocation.
+// Tests build a client over their own base transport.
+func newClient(base *http.Transport) *http.Client {
+	return &http.Client{Transport: timeoutTransport{newRetryTransport(logTransport{&firstConnTransport{next: gzhttp.Transport(base)}})}}
+}
+
+func newTransport() *http.Transport {
+	return &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
 			Timeout:   30 * time.Second,
@@ -37,12 +53,12 @@ func NewClient() *http.Client {
 		// HTTP/1.1 connections after the first one to a host resume its session.
 		TLSClientConfig:       &tls.Config{ClientSessionCache: tls.NewLRUClientSessionCache(0)},
 		ForceAttemptHTTP2:     true,
-		DisableCompression:    true, // gzipTransport
+		DisableCompression:    true, // gzhttp.Transport
 		MaxIdleConnsPerHost:   16,
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 30 * time.Second,
-	}}}})}}
+	}
 }
 
 // logTransport logs method, URL (without credentials), status, time to first response byte and
