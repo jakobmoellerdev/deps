@@ -112,6 +112,34 @@ func TestGitLabListPRs(t *testing.T) {
 	}
 }
 
+// A merge request opened from a fork has its source branch in another project, so ListPRs
+// leaves it out and GetPR refuses it: deps must not push to, edit or close a branch that is
+// not the project's own.
+func TestGitLabForkMRs(t *testing.T) {
+	const own = `{"iid":1,"state":"opened","source_branch":"deps/a","sha":"abc","source_project_id":7,"target_project_id":7}`
+	const fork = `{"iid":2,"state":"opened","source_branch":"deps/a","sha":"def","source_project_id":9,"target_project_id":7}`
+	q := "&order_by=updated_at&sort=desc&per_page=100&page="
+	c, _ := gitlabTestClient(t, map[string]route{
+		"GET " + glAPI + "/merge_requests?state=opened" + q + "1": {body: "[" + own + "," + fork + "]"},
+		"GET " + glAPI + "/merge_requests/1":                      {body: own},
+		"GET " + glAPI + "/merge_requests/2":                      {body: fork},
+	})
+	open, err := c.ListPRs(t.Context(), "open", 1)
+	if err != nil || len(open) != 1 || open[0].Number != 1 {
+		t.Fatalf("ListPRs = %+v %v", open, err)
+	}
+	if pr, err := c.GetPR(t.Context(), 1); err != nil || pr.HeadSHA != "abc" {
+		t.Fatalf("GetPR 1 = %+v %v", pr, err)
+	}
+	pr, err := c.GetPR(t.Context(), 2)
+	if !errors.Is(err, ErrForkPR) || pr.Number != 0 {
+		t.Fatalf("GetPR 2 = %+v %v", pr, err)
+	}
+	if !strings.Contains(err.Error(), "project 9") {
+		t.Errorf("GetPR 2: err = %v, want the source project named", err)
+	}
+}
+
 // A merge request for a branch GitLab does not know yet (its push is still processed) is
 // created again; other 400s and a canceled context end it.
 func TestGitLabCreatePRBranchRace(t *testing.T) {

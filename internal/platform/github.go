@@ -148,15 +148,42 @@ type apiPR struct {
 	AutoMerge jsontext.Value `json:"auto_merge"`
 	CreatedAt time.Time      `json:"created_at"`
 	Head      struct {
-		Ref string `json:"ref"`
-		SHA string `json:"sha"`
+		Ref  string     `json:"ref"`
+		SHA  string     `json:"sha"`
+		Repo *apiPRRepo `json:"repo"` // null once the head repository (a fork) is gone
 	} `json:"head"`
 	Base struct {
-		Ref string `json:"ref"`
+		Ref  string     `json:"ref"`
+		Repo *apiPRRepo `json:"repo"`
 	} `json:"base"`
 	Labels []struct {
 		Name string `json:"name"`
 	} `json:"labels"`
+}
+
+// apiPRRepo is the head or base repository of a PR; GitHub, Gitea and Forgejo all name it
+// "owner/name" in full_name.
+type apiPRRepo struct {
+	FullName string `json:"full_name"`
+}
+
+// fullName returns r's name, "" for a repository the forge did not report.
+func (r *apiPRRepo) fullName() string {
+	if r == nil {
+		return ""
+	}
+	return r.FullName
+}
+
+// fromFork reports whether the PR's head branch lives in another repository than its base
+// one. A forge that reports neither repository is taken at its word that the PR is the
+// repository's own, as GitHub, Gitea and Forgejo always report both.
+func (p *apiPR) fromFork() bool {
+	head, base := p.Head.Repo.fullName(), p.Base.Repo.fullName()
+	if head == "" && base == "" {
+		return false
+	}
+	return !strings.EqualFold(head, base)
 }
 
 // present reports whether a raw JSON value is set and not null.
@@ -208,6 +235,9 @@ func (r *rest) GetPR(ctx context.Context, n int) (PR, error) {
 	var p apiPR
 	if err := r.do(ctx, http.MethodGet, prPath(r.repo, n), nil, &p, r.headers); err != nil {
 		return PR{}, err
+	}
+	if p.fromFork() {
+		return PR{}, forkError(n, p.Head.Repo.fullName())
 	}
 	return r.toPR(&p), nil
 }
@@ -547,6 +577,8 @@ func defaultBranch(ctx context.Context, r *rest, h func(http.Header)) (string, e
 	return v.DefaultBranch, nil
 }
 
+// listPRs pages through a PR list; fork PRs are left out (ErrForkPR), a short page (them
+// included) ends the paging.
 func listPRs(ctx context.Context, r *rest, h func(http.Header), conv func(*apiPR) PR, per, maxPages int, path func(int) string) ([]PR, error) {
 	var out []PR
 	for page := 1; page <= maxPages; page++ {
@@ -555,7 +587,9 @@ func listPRs(ctx context.Context, r *rest, h func(http.Header), conv func(*apiPR
 			return nil, err
 		}
 		for i := range ps {
-			out = append(out, conv(&ps[i]))
+			if !ps[i].fromFork() {
+				out = append(out, conv(&ps[i]))
+			}
 		}
 		if len(ps) < per {
 			break

@@ -5,6 +5,7 @@ package platform
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -114,10 +115,28 @@ var (
 	ErrIssuesDisabled = errors.New("issues are disabled in the repository")
 )
 
+// ErrForkPR means the pull request's head branch lives in another repository (a fork), so it
+// is not one of deps' own branches: deps pushes to the branches of the PRs it is given,
+// edits and closes them, and reads the markers in their bodies as its own state, none of
+// which may happen to a pull request a stranger opened from a fork. ListPRs leaves them out
+// and GetPR returns this error (wrapped), so callers only ever see same-repository PRs.
+var ErrForkPR = errors.New("pull request is opened from a fork")
+
+// forkError reports PR number as opened from head, the head repository as the forge named it
+// ("" when it named none, which is how GitHub reports a deleted fork).
+func forkError(number int, head string) error {
+	if head == "" {
+		return fmt.Errorf("pull request #%d: %w", number, ErrForkPR)
+	}
+	return fmt.Errorf("pull request #%d: head branch lives in %s: %w", number, head, ErrForkPR)
+}
+
 // Client is the pull request and issue API of a forge.
 type Client interface {
 	DefaultBranch(ctx context.Context) (string, error)
+	// ListPRs lists the PRs in state; PRs opened from a fork are left out (ErrForkPR).
 	ListPRs(ctx context.Context, state string, maxPages int) ([]PR, error) // "open" | "closed"
+	// GetPR reads PR number; a PR opened from a fork is ErrForkPR (wrapped).
 	GetPR(ctx context.Context, number int) (PR, error)
 	// CreatePR opens a PR; draft opens it as a draft (GitHub: the draft flag; Gitea and
 	// Forgejo: the title gets the "WIP: " prefix; GitLab: the "Draft: " prefix).

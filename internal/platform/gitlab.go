@@ -110,12 +110,26 @@ type gitlabMR struct {
 	Labels       []string  `json:"labels"`
 	Draft        bool      `json:"draft"`
 	HasConflicts bool      `json:"has_conflicts"`
+	// SourceProjectID and TargetProjectID name the projects of the source and the target
+	// branch; they differ for a merge request opened from a fork.
+	SourceProjectID int64 `json:"source_project_id"`
+	TargetProjectID int64 `json:"target_project_id"`
 	// MergeWhenPipelineSucceeds reports auto-merge as set (the MR JSON keeps this name after
 	// GitLab 17.11 renamed the request parameter to auto_merge).
 	MergeWhenPipelineSucceeds bool `json:"merge_when_pipeline_succeeds"`
 	// DetailedMergeStatus is mergeable, conflict, need_rebase, or why the MR waits (checking,
 	// ci_must_pass, not_approved, …).
 	DetailedMergeStatus string `json:"detailed_merge_status"`
+}
+
+// fromFork reports whether the merge request's source branch lives in another project than
+// its target one. A GitLab that reports neither project is taken at its word that the branch
+// is the project's own, as every GitLab version deps supports reports both.
+func (m *gitlabMR) fromFork() bool {
+	if m.SourceProjectID == 0 || m.TargetProjectID == 0 {
+		return false
+	}
+	return m.SourceProjectID != m.TargetProjectID
 }
 
 // pr converts m. AutoMerge is merge_when_pipeline_succeeds, which a push to the source branch
@@ -189,13 +203,19 @@ func (g *gitlabClient) listMRs(ctx context.Context, q string, maxPages int) ([]g
 	return out, nil
 }
 
+// gitlabPRs converts the merge requests, leaving out the ones opened from a fork (ErrForkPR).
 func gitlabPRs(ms []gitlabMR) []PR {
 	if len(ms) == 0 {
 		return nil
 	}
-	out := make([]PR, len(ms))
+	out := make([]PR, 0, len(ms))
 	for i := range ms {
-		out[i] = ms[i].pr()
+		if !ms[i].fromFork() {
+			out = append(out, ms[i].pr())
+		}
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }
@@ -204,6 +224,9 @@ func (g *gitlabClient) GetPR(ctx context.Context, n int) (PR, error) {
 	var m gitlabMR
 	if err := g.do(ctx, http.MethodGet, g.mrPath(n), nil, &m); err != nil {
 		return PR{}, err
+	}
+	if m.fromFork() {
+		return PR{}, forkError(n, "project "+strconv.FormatInt(m.SourceProjectID, 10))
 	}
 	return m.pr(), nil
 }

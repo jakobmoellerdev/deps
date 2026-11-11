@@ -572,6 +572,50 @@ func TestDraftPRs(t *testing.T) {
 	}
 }
 
+// A pull request opened from a fork is a stranger's, whatever its head branch is called, so
+// ListPRs leaves it out and GetPR refuses it: deps must not push to, edit or close it, nor
+// read the deps markers in its body. A head repository the forge no longer reports (a
+// deleted fork) is not the repository's own branch either.
+func TestForkPRsExcluded(t *testing.T) {
+	const own = `{"number":1,"state":"open","head":{"ref":"deps/a","sha":"abc","repo":{"full_name":"O/R"}},"base":{"ref":"main","repo":{"full_name":"o/r"}}}`
+	const fork = `{"number":2,"state":"open","head":{"ref":"deps/a","sha":"def","repo":{"full_name":"attacker/r"}},"base":{"ref":"main","repo":{"full_name":"o/r"}}}`
+	const gone = `{"number":3,"state":"open","head":{"ref":"deps/a","sha":"ghi","repo":null},"base":{"ref":"main","repo":{"full_name":"o/r"}}}`
+	for _, tc := range []struct {
+		kind  Kind
+		query string
+	}{
+		{GitHub, "state=open&sort=updated&direction=desc&per_page=100&page=1"},
+		{Gitea, "state=open&sort=recentupdate&limit=50&page=1"},
+	} {
+		t.Run(string(tc.kind), func(t *testing.T) {
+			srv, _ := routes(t, map[string]route{
+				"GET /repos/o/r/pulls?" + tc.query: {body: "[" + own + "," + fork + "," + gone + "]"},
+				"GET /repos/o/r/pulls/1":           {body: own},
+				"GET /repos/o/r/pulls/2":           {body: fork},
+				"GET /repos/o/r/pulls/3":           {body: gone},
+			})
+			c := NewClient(Info{Kind: tc.kind, APIURL: srv.URL, Repo: "o/r"}, "tok", srv.Client())
+			prs, err := c.ListPRs(t.Context(), "open", 1)
+			if err != nil || len(prs) != 1 || prs[0].Number != 1 {
+				t.Fatalf("ListPRs = %+v %v", prs, err)
+			}
+			if pr, err := c.GetPR(t.Context(), 1); err != nil || pr.HeadSHA != "abc" {
+				t.Fatalf("GetPR 1 = %+v %v", pr, err)
+			}
+			pr, err := c.GetPR(t.Context(), 2)
+			if !errors.Is(err, ErrForkPR) || pr.Number != 0 {
+				t.Fatalf("GetPR 2 = %+v %v", pr, err)
+			}
+			if !strings.Contains(err.Error(), "attacker/r") {
+				t.Errorf("GetPR 2: err = %v, want the head repository named", err)
+			}
+			if _, err := c.GetPR(t.Context(), 3); !errors.Is(err, ErrForkPR) {
+				t.Errorf("GetPR 3: err = %v", err)
+			}
+		})
+	}
+}
+
 func assertErrPrefix(t *testing.T, op string, err error, prefix string) {
 	t.Helper()
 	if err == nil || !strings.HasPrefix(err.Error(), prefix) {
