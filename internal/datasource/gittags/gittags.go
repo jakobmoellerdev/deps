@@ -482,12 +482,18 @@ func (l *Lister) tagTime(ctx context.Context, repoURL, tag string, lookup func()
 	})
 }
 
-// giteaListSize is the page size of the releases list: Gitea/Forgejo cap at MAX_RESPONSE_ITEMS
-// (default 50).
+// giteaListSize is the requested page size of the releases list: Gitea/Forgejo cap it at
+// MAX_RESPONSE_ITEMS (default 50), so what a page holds is not what was asked for and the
+// pages are followed by their Link header instead.
 const giteaListSize = 50
 
-// giteaList returns the first page of releases of repoURL, fetched once per repository. The
-// entry is never nil.
+// maxReleasePages bounds a releases listing at 500 releases, as the forge datasource bounds
+// its lists. A repository with more leaves the listing incomplete, so its tags that are not on
+// the pages read cost a request each.
+const maxReleasePages = 10
+
+// giteaList returns the listed releases of repoURL, fetched once per repository. The entry is
+// never nil.
 func (l *Lister) giteaList(ctx context.Context, repoURL string) (*listEntry, error) {
 	return l.lists.Do(ctx, repoURL, func() (*listEntry, error) {
 		le := &listEntry{}
@@ -498,34 +504,51 @@ func (l *Lister) giteaList(ctx context.Context, repoURL string) (*listEntry, err
 	})
 }
 
-// releaseList fetches the first page of releases of repoURL. A host without the API (404 or a
-// non-JSON answer) has api false: every tag is unknown without further requests. A page
-// shorter than requested is complete.
+// releaseList fetches the releases of repoURL, following the Link rel="next" of each page up to
+// maxReleasePages. A host without the API (404 or a non-JSON answer) has api false: every tag is
+// unknown without further requests.
 func (l *Lister) releaseList(ctx context.Context, repoURL string) (times map[string]time.Time, complete, api bool, err error) {
 	u, repo, err := apiRepo(repoURL)
 	if err != nil {
 		return nil, false, false, fmt.Errorf("releases: %w", err)
 	}
-	path, size := "/repos/"+repo+"/releases?limit="+strconv.Itoa(giteaListSize), giteaListSize
-	var rels []struct {
-		TagName     string     `json:"tag_name"`
-		Draft       bool       `json:"draft"`
-		PublishedAt *time.Time `json:"published_at"`
-	}
-	found, err := l.getJSON(ctx, u, path, &rels)
-	if err != nil {
-		return nil, false, false, fmt.Errorf("releases of %s: %w", repo, err)
-	}
-	if !found {
-		return nil, true, false, nil
-	}
-	times = make(map[string]time.Time, len(rels))
-	for _, r := range rels {
-		if !r.Draft && r.PublishedAt != nil && r.TagName != "" {
-			times[r.TagName] = *r.PublishedAt
+	path := "/repos/" + repo + "/releases?limit=" + strconv.Itoa(giteaListSize)
+	times = make(map[string]time.Time, giteaListSize)
+	for page := 1; page <= maxReleasePages; page++ {
+		target := path
+		if page > 1 {
+			target += "&page=" + strconv.Itoa(page)
+		}
+		var rels []struct {
+			TagName     string     `json:"tag_name"`
+			Draft       bool       `json:"draft"`
+			PublishedAt *time.Time `json:"published_at"`
+		}
+		found, link, err := l.getJSONPage(ctx, u, target, &rels)
+		if err != nil {
+			return nil, false, false, fmt.Errorf("releases of %s: %w", repo, err)
+		}
+		if !found {
+			// The first page decides whether the host has the API at all; a later one that is
+			// gone ends the listing with the releases of the pages before it.
+			if page == 1 {
+				return nil, true, false, nil
+			}
+			return times, true, true, nil
+		}
+		for _, r := range rels {
+			if !r.Draft && r.PublishedAt != nil && r.TagName != "" {
+				times[r.TagName] = *r.PublishedAt
+			}
+		}
+		// Gitea and Forgejo send a Link header on every paginated answer, so a page without a
+		// rel="next" is the last one. A host that sends none at all is only complete when its
+		// page was short: limit may have been capped below what was asked for.
+		if len(rels) == 0 || !strings.Contains(link, `rel="next"`) {
+			return times, link != "" || len(rels) < giteaListSize, true, nil
 		}
 	}
-	return times, len(rels) < size, true, nil
+	return times, false, true, nil
 }
 
 func (l *Lister) releaseTime(ctx context.Context, repoURL, tag string) (time.Time, error) {
@@ -598,20 +621,27 @@ func apiRepo(repoURL string) (*url.URL, string, error) {
 	return u, strings.TrimSuffix(strings.Trim(u.Path, "/"), ".git"), nil
 }
 
-// getJSON GETs path from the Gitea/Forgejo API of repository u into v. found is false on 404
-// or when the body is not JSON (a host without the API may answer with a web page): unknown,
-// not an error.
+// getJSON GETs path from the Gitea/Forgejo API of repository u into v, without reading the
+// pagination of a listing (see getJSONPage).
 func (l *Lister) getJSON(ctx context.Context, u *url.URL, path string, v any) (found bool, err error) {
+	found, _, err = l.getJSONPage(ctx, u, path, v)
+	return found, err
+}
+
+// getJSONPage GETs path from the Gitea/Forgejo API of repository u into v and returns the
+// answer's Link header, which pages a listing. found is false on 404 or when the body is not
+// JSON (a host without the API may answer with a web page): unknown, not an error.
+func (l *Lister) getJSONPage(ctx context.Context, u *url.URL, path string, v any) (found bool, link string, err error) {
 	_, token, authed := l.auth.Static(u.Hostname())
 	target := u.Scheme + "://" + u.Host + "/api/v1" + path
 	release, err := httpx.Acquire(ctx, l.sem)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	defer release()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", httpx.UserAgent())
@@ -620,19 +650,19 @@ func (l *Lister) getJSON(ctx context.Context, u *url.URL, path string, v any) (f
 	}
 	resp, err := l.client.Do(req)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	defer closeBody(resp)
 	switch {
 	case resp.StatusCode == http.StatusNotFound:
-		return false, nil
+		return false, "", nil
 	case resp.StatusCode < 200 || resp.StatusCode > 299:
-		return false, httpx.ResponseError(resp)
+		return false, "", httpx.ResponseError(resp)
 	}
 	if json.UnmarshalRead(io.LimitReader(resp.Body, 16<<20), v) != nil {
-		return false, nil
+		return false, "", nil
 	}
-	return true, nil
+	return true, resp.Header.Get("Link"), nil
 }
 
 // get returns the tags of repoURL, or with heads its branches and HEAD, fetching them once.

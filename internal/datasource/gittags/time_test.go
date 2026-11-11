@@ -2,11 +2,13 @@ package gittags
 
 import (
 	"encoding/json/v2"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -203,6 +205,101 @@ func TestReleaseTime(t *testing.T) {
 	}
 	if !slices.Equal(reqs, want) {
 		t.Errorf("requests =\n%q\nwant\n%q", reqs, want)
+	}
+}
+
+// TestReleaseListPages follows the Link rel="next" of the Gitea/Forgejo releases listing: a host
+// that caps limit below the requested page size (MAX_RESPONSE_ITEMS) is not mistaken for a
+// complete list, and a release on a later page is dated without a request of its own.
+func TestReleaseListPages(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		pages, perPage int
+		link           bool // the host sends a Link header, as Gitea and Forgejo do
+		wantComplete   bool
+		wantReqs       []string
+		wantTag        string // dated from the listing alone
+	}{
+		{
+			name: "capped page size", pages: 2, perPage: 10, link: true, wantComplete: true,
+			wantReqs: []string{"/api/v1/repos/o/r/releases?limit=50", "/api/v1/repos/o/r/releases?limit=50&page=2"},
+			wantTag:  "v2.0",
+		},
+		{
+			name: "no link header", pages: 1, perPage: giteaListSize, wantComplete: false,
+			wantReqs: []string{"/api/v1/repos/o/r/releases?limit=50"},
+		},
+		{
+			name: "page cap", pages: maxReleasePages + 3, perPage: 2, link: true, wantComplete: false,
+			wantReqs: nil, // filled below: maxReleasePages requests
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var (
+				mu   sync.Mutex
+				reqs []string
+			)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				reqs = append(reqs, r.URL.RequestURI())
+				mu.Unlock()
+				if r.URL.Path != "/api/v1/repos/o/r/releases" {
+					http.NotFound(w, r)
+					return
+				}
+				page := 1
+				if p := r.URL.Query().Get("page"); p != "" {
+					page, _ = strconv.Atoi(p)
+				}
+				switch {
+				case !tc.link:
+				case page < tc.pages:
+					w.Header().Set("Link", fmt.Sprintf(`<%s?page=%d>; rel="next"`, r.URL.Path, page+1))
+				case page > 1:
+					w.Header().Set("Link", fmt.Sprintf(`<%s?page=1>; rel="first"`, r.URL.Path))
+				}
+				var b strings.Builder
+				b.WriteString("[")
+				for i := range tc.perPage {
+					if i > 0 {
+						b.WriteString(",")
+					}
+					fmt.Fprintf(&b, `{"tag_name":"v%d.%d","published_at":"2026-01-01T00:%02d:00Z"}`, page, i, page)
+				}
+				b.WriteString("]")
+				io.WriteString(w, b.String())
+			}))
+			t.Cleanup(srv.Close)
+			l := New(srv.Client(), httpx.NewAuth(platform.Info{}, "", func(string) string { return "" }), make(chan struct{}, 1), nil)
+			le, err := l.giteaList(t.Context(), srv.URL+"/o/r")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !le.api || le.complete != tc.wantComplete {
+				t.Errorf("api %v, complete %v; want true, %v", le.api, le.complete, tc.wantComplete)
+			}
+			want := tc.wantReqs
+			if want == nil {
+				want = []string{"/api/v1/repos/o/r/releases?limit=50"}
+				for page := 2; page <= maxReleasePages; page++ {
+					want = append(want, "/api/v1/repos/o/r/releases?limit=50&page="+strconv.Itoa(page))
+				}
+			}
+			if !slices.Equal(reqs, want) {
+				t.Errorf("requests =\n%q\nwant\n%q", reqs, want)
+			}
+			if tc.wantTag == "" {
+				return
+			}
+			var timer datasource.Timer = l
+			got, err := timer.ReleaseTime(t.Context(), dep.Dep{Source: srv.URL + "/o/r"}, tc.wantTag)
+			if w := time.Date(2026, 1, 1, 0, 2, 0, 0, time.UTC); err != nil || !got.Equal(w) {
+				t.Errorf("ReleaseTime(%s) = %v, %v; want %v", tc.wantTag, got, err, w)
+			}
+			if len(reqs) != len(want) {
+				t.Errorf("a listed release must not cost a request: %q", reqs[len(want):])
+			}
+		})
 	}
 }
 
