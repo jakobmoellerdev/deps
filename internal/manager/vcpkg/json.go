@@ -51,9 +51,21 @@ func (n *node) text() string {
 	return n.str
 }
 
-// parseJSON reads src into a node tree.
+// bom is the UTF-8 byte order mark, which editors on Windows write before a manifest's first
+// byte; vcpkg's own parser skips it.
+var bom = []byte("\ufeff")
+
+// parseJSON reads src into a node tree. A leading byte order mark is blanked rather than
+// trimmed, so the decoder reads it as whitespace and every span stays a span of src.
 func parseJSON(src []byte) (*node, error) {
-	dec := jsontext.NewDecoder(bytes.NewReader(src), jsontext.AllowDuplicateNames(true))
+	in := src
+	if bytes.HasPrefix(in, bom) {
+		in = slices.Clone(src)
+		for i := range bom {
+			in[i] = ' '
+		}
+	}
+	dec := jsontext.NewDecoder(bytes.NewReader(in), jsontext.AllowDuplicateNames(true))
 	return parseValue(dec, src)
 }
 

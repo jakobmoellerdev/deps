@@ -298,6 +298,41 @@ func TestEdits(t *testing.T) {
 	}
 }
 
+// TestBOM covers a manifest written with a UTF-8 byte order mark: it yields the deps of the
+// same manifest without one, with spans into the original bytes.
+func TestBOM(t *testing.T) {
+	const c1 = "1111111111111111111111111111111111111111"
+	const c2 = "2222222222222222222222222222222222222222"
+	src := "\ufeff" + `{"builtin-baseline": "` + c1 + `", "dependencies": [{"name": "fmt", "version>=": "10.0.0"}]}`
+	m := New()
+	deps, err := m.Extract("vcpkg.json", []byte(src), manager.Env{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deps) != 2 {
+		t.Fatalf("deps = %+v", deps)
+	}
+	m.(manager.Linker).Link([][]dep.Dep{deps})
+	var edits []patch.Edit
+	for _, u := range []dep.Update{
+		{Dep: deps[0], NewVersion: headVersion, NewDigest: c2},
+		{Dep: deps[1], NewVersion: "11.1.4#1"},
+	} {
+		e, err := m.Edits(u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		edits = append(edits, e...)
+	}
+	out, err := patch.Apply([]byte(src), edits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "\ufeff" + `{"builtin-baseline": "` + c2 + `", "dependencies": [{"name": "fmt", "version>=": "11.1.4#1"}]}`; string(out) != want {
+		t.Errorf("got %s", out)
+	}
+}
+
 func TestVersioning(t *testing.T) {
 	s, ok := versioning.Get(Versioning)
 	if !ok {
