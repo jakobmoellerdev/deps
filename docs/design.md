@@ -766,7 +766,7 @@ type Client interface {
     EnableAutoMerge(ctx context.Context, pr PR, strategy string) error // ErrAutoMergePending, ErrAutoMergeUnavailable
     Checks(ctx context.Context, sha string) (CheckState, error)       // none, pending, success, failure over statuses and check runs
     MergePR(ctx context.Context, pr PR, strategy string) error         // pinned to pr.HeadSHA
-    ListIssues(ctx context.Context, maxPages int) ([]Issue, error)     // open, PRs excluded; ErrIssuesDisabled
+    ListIssues(ctx context.Context, maxPages int, f IssueFilter) ([]Issue, error) // open, PRs excluded; ErrIssuesDisabled. IssueFilter{Oldest, Stop}: oldest first, stop on the page of the first accepted issue
     CreateIssue(ctx context.Context, title, body string, labels []string) (Issue, error)
     UpdateIssue(ctx context.Context, number int, body string) error
 }
@@ -891,7 +891,7 @@ func Run(ctx context.Context, o Options, root string, res *engine.Result, post m
 | EnableAutoMerge | `POST {graphql}` mutation `enablePullRequestAutoMerge(input:{pullRequestId:<node_id>, mergeMethod:MERGE\|SQUASH\|REBASE})`; not sent when `allow_auto_merge` is `false` |
 | Checks | `GET .../commits/{sha}/status` (`state`, `total_count`) and `GET .../commits/{sha}/check-runs?per_page=100&page=N` (`status`, `conclusion`); a failed status or check run wins over an unfinished one |
 | MergePR | `PUT .../pulls/{n}/merge {merge_method, sha}` |
-| ListIssues | `GET {api}/repos/{repo}/issues?state=open&per_page=100&page=N`, entries with `pull_request` dropped; 410 → issues disabled |
+| ListIssues | `GET {api}/repos/{repo}/issues?state=open[&sort=created&direction=asc]&per_page=100&page=N`, entries with `pull_request` dropped; 410 → issues disabled |
 | CreateIssue | `POST .../issues {title,body,labels:[names]}` |
 | UpdateIssue | `PATCH .../issues/{n} {body}` |
 
@@ -908,7 +908,7 @@ On GitHub, `Merged` is `merged_at != null` and `AutoMerge` is `auto_merge != nul
 | EnableAutoMerge | `POST .../pulls/{n}/merge {do, merge_when_checks_succeed: true, delete_branch_after_merge: true, head_commit_id}`; the style field is `do` on Gitea 28 and `Do` on Forgejo (both `swagger.v1.json`). 409 `already scheduled` is success; 405 `Please try again later` is pending. |
 | Checks | `GET .../commits/{sha}/status` (Actions report commit statuses); `total_count` 0 → none, `success`, `pending`, anything else (`failure`, `error`, `warning`) → failure |
 | MergePR | `POST .../pulls/{n}/merge {do, delete_branch_after_merge: true, head_commit_id}` |
-| ListIssues | `GET {api}/repos/{repo}/issues?state=open&type=issues&limit=50&page=N`; a 404 with `has_issues: false` or an `external_tracker` → issues disabled |
+| ListIssues | `GET {api}/repos/{repo}/issues?state=open&type=issues[&sort=oldest]&limit=50&page=N`; a 404 with `has_issues: false` or an `external_tracker` → issues disabled |
 | CreateIssue | `POST .../issues {title,body,labels:[ids]}`; ids from `GET .../labels` and `GET {api}/orgs/{owner}/labels` (case-insensitive names) |
 | UpdateIssue | `PATCH .../issues/{n} {body}` |
 
@@ -928,7 +928,7 @@ On Gitea and Forgejo, `Merged` is the `merged` field and `Mergeable` is the `mer
 | EnableAutoMerge | `PUT .../merge_requests/{iid}/merge {merge_when_pipeline_succeeds: true, auto_merge: true, should_remove_source_branch: true, sha, squash}`; 405, 406, 409 and 422 are pending |
 | Checks | `GET {project}/pipelines?sha=<sha>&order_by=id&sort=desc&per_page=100`, the latest pipeline per ref (branch and merge request pipelines; external commit statuses get an `external` pipeline): none → none, `failed`/`canceled` → failure, all `success`/`skipped` → success, else pending |
 | MergePR | `PUT .../merge_requests/{iid}/merge {should_remove_source_branch: true, sha, squash}` |
-| ListIssues | `issues_enabled: false` → issues disabled (GitLab then lists none and refuses creation with 403); else `GET {project}/issues?state=opened&per_page=100&page=N` |
+| ListIssues | `issues_enabled: false` → issues disabled (GitLab then lists none and refuses creation with 403); else `GET {project}/issues?state=opened[&order_by=created_at&sort=asc]&per_page=100&page=N` |
 | CreateIssue | `POST {project}/issues {title, description, labels: "a,b"}` |
 | UpdateIssue | `PUT {project}/issues/{iid} {description}` |
 

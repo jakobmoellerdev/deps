@@ -56,10 +56,10 @@ func TestPRLabelsReconciled(t *testing.T) {
 	for i := range res.Updates {
 		res.Updates[i].Labels, res.Updates[i].Reviewers = []string{"dependencies", "actions"}, []string{"alice"}
 	}
-	bare, labelled := openPR(branchA), openPR(branchB)
-	bare.Number, labelled.Number = 1, 2
-	labelled.Labels = []string{"Dependencies", "actions", "extra"} // complete, as forges compare
-	pc := &fakePC{open: []platform.PR{bare, labelled}}
+	bare, labeled := openPR(branchA), openPR(branchB)
+	bare.Number, labeled.Number = 1, 2
+	labeled.Labels = []string{"Dependencies", "actions", "extra"} // complete, as forges compare
+	pc := &fakePC{open: []platform.PR{bare, labeled}}
 	g := &fakeGit{
 		branches: map[string]string{"refs/heads/" + branchA: "x", "refs/heads/" + branchB: "y"},
 		authors:  map[string]string{branchA: email, branchB: email},

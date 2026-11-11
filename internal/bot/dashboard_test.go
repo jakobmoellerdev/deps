@@ -131,6 +131,27 @@ func TestDashboardUnchangedNoWrite(t *testing.T) {
 	}
 }
 
+// A repository that opened thousands of issues after the dashboard still finds it: the scan
+// lists the oldest issues first, so a newest-first page window cannot push it out.
+func TestDashboardBeyondPageWindow(t *testing.T) {
+	root, res := dashFixture(t)
+	issues := []platform.Issue{{Number: 7, Title: dashTitle, Body: "stale " + dashboardMarker, URL: "https://forge/issues/7"}}
+	for n := range dashboardIssuePages * fakeIssuesPerPage {
+		issues = append(issues, platform.Issue{Number: 1000 + n, Title: fmt.Sprintf("bug %d", n)})
+	}
+	pc := &fakePC{issues: issues}
+	_, errs, dash := dashRun(t, Options{}, res, root, pc, &fakeGit{})
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	if !pc.issueOldest {
+		t.Error("the dashboard scan must ask for the oldest issues first")
+	}
+	if dash.Status != StatusUpdated || dash.Number != 7 || len(pc.createdIssues) != 0 {
+		t.Fatalf("dashboard %+v, created %+v; want #7 updated and no duplicate", dash, pc.createdIssues)
+	}
+}
+
 func TestDashboardCheckboxCreateBypassesScheduleAndLimit(t *testing.T) {
 	root, res := dashFixture(t)
 	weekly, err := schedule.Parse([]string{"0 0 * * 0", "0 6 * * 1"}, nil)

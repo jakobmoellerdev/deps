@@ -27,7 +27,8 @@ const (
 	dashboardMaxBytes  = 60000
 	dashboardMaxErrors = 20
 	dashboardErrorLen  = 300
-	// dashboardIssuePages bounds the open-issue scan that finds the dashboard.
+	// dashboardIssuePages bounds the open-issue scan that finds the dashboard. The scan runs
+	// oldest first and stops at the dashboard, so newer issues never push it out of reach.
 	dashboardIssuePages = 10
 )
 
@@ -42,16 +43,21 @@ type dashboard struct {
 }
 
 // loadDashboard finds the open issue titled title whose body has the dashboard marker (the
-// lowest number if there are several) and parses its ticked checkboxes.
+// lowest number if there are several) and parses its ticked checkboxes. The dashboard is
+// created once and stays open, so the oldest issues are listed first and the listing ends at
+// the first match: a repository with thousands of newer open issues still finds it.
 func loadDashboard(ctx context.Context, pc platform.Client, title string) (*dashboard, error) {
-	issues, err := pc.ListIssues(ctx, dashboardIssuePages, platform.IssueFilter{})
+	isDashboard := func(is platform.Issue) bool {
+		return is.Title == title && strings.Contains(is.Body, dashboardMarker)
+	}
+	issues, err := pc.ListIssues(ctx, dashboardIssuePages, platform.IssueFilter{Oldest: true, Stop: isDashboard})
 	if err != nil {
 		return nil, fmt.Errorf("list issues: %w", err)
 	}
 	d := &dashboard{create: map[string]bool{}, recreate: map[string]bool{}, rebase: map[string]bool{}, pr: map[string]bool{}}
 	for i := range issues {
 		is := &issues[i]
-		if is.Title != title || !strings.Contains(is.Body, dashboardMarker) {
+		if !isDashboard(*is) {
 			continue
 		}
 		if d.issue == nil || is.Number < d.issue.Number {
