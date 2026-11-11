@@ -2,6 +2,7 @@
 package patch
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 )
@@ -13,10 +14,17 @@ type Edit struct {
 }
 
 // Apply applies non-overlapping edits in a single pre-sized pass. edits is
-// sorted in place by Start. Identical edits (several deps sharing one version
+// sorted in place by Start and then End, so that an insertion at the start of
+// a replaced span is applied before it and the result does not depend on the
+// order the edits came in. Identical edits (several deps sharing one version
 // definition, such as a Maven property) are applied once.
 func Apply(src []byte, edits []Edit) ([]byte, error) {
-	slices.SortStableFunc(edits, func(a, b Edit) int { return a.Start - b.Start })
+	slices.SortStableFunc(edits, func(a, b Edit) int {
+		if a.Start != b.Start {
+			return cmp.Compare(a.Start, b.Start)
+		}
+		return cmp.Compare(a.End, b.End)
+	})
 	edits = slices.Compact(edits)
 	size := len(src)
 	for i, e := range edits {
