@@ -34,12 +34,51 @@ type level struct {
 	pats []pattern
 }
 
-// pattern is one line of an ignore file.
+// pattern is one line of an ignore file. Most lines are a plain name ("dist"), a suffix
+// ("*.log") or a literal path ("build/out"), which are matched without the glob engine: on a
+// large repository doublestar dominated matching (105ms of 107ms for backstage's 14,868
+// paths), and these three kinds cover nearly every line.
 type pattern struct {
+	kind    patternKind
+	text    string // kindName: the name; kindSuffix: the part after "*"; kindPath: the path; kindGlob: unused
 	glob    string // doublestar glob matched against the path relative to the file's directory
 	negate  bool   // the line started with "!"
 	dirOnly bool   // the line ended with "/": matches directories only
 }
+
+type patternKind uint8
+
+const (
+	kindGlob   patternKind = iota // any pattern: doublestar
+	kindName                      // a literal name at any depth: the path's last element
+	kindSuffix                    // "*<text>" at any depth, text without metacharacters
+	kindPath                      // a literal path below the ignore file's directory
+)
+
+// match reports whether rel (relative to the ignore file's directory) matches p.
+func (p *pattern) match(rel string) bool {
+	switch p.kind {
+	case kindName:
+		return base(rel) == p.text
+	case kindSuffix: // "*<text>": git's * matches an empty name part too
+		return strings.HasSuffix(base(rel), p.text)
+	case kindPath:
+		return rel == p.text
+	default:
+		return doublestar.MatchUnvalidated(p.glob, rel)
+	}
+}
+
+// base is the last element of a slash path.
+func base(rel string) string {
+	if _, after, ok := strings.CutLast(rel, "/"); ok {
+		return after
+	}
+	return rel
+}
+
+// meta reports whether s holds a glob metacharacter, so it cannot be compared literally.
+func meta(s string) bool { return strings.ContainsAny(s, `*?[]\{}`) }
 
 // New loads the ignore files that apply to the tree below root: the repository's
 // .git/info/exclude, the .gitignore files of the directories between the repository top (the
@@ -95,11 +134,12 @@ func (m *Matcher) Ignored(path string, isDir bool) bool {
 			}
 			rel = path[len(lv.dir)+1:]
 		}
-		for _, p := range slices.Backward(lv.pats) {
+		for i := len(lv.pats) - 1; i >= 0; i-- {
+			p := &lv.pats[i]
 			if p.dirOnly && !isDir {
 				continue
 			}
-			if doublestar.MatchUnvalidated(p.glob, rel) {
+			if p.match(rel) {
 				return !p.negate
 			}
 		}
@@ -230,10 +270,19 @@ func parseLine(line string) (pattern, bool) {
 	}
 	if strings.Contains(line, "/") {
 		p.glob = strings.TrimPrefix(line, "/")
+		if !meta(p.glob) {
+			p.kind, p.text = kindPath, p.glob
+		}
 	} else {
 		p.glob = "**/" + line
+		switch {
+		case !meta(line):
+			p.kind, p.text = kindName, line
+		case !meta(line[1:]) && line[0] == '*' && len(line) > 1:
+			p.kind, p.text = kindSuffix, line[1:]
+		}
 	}
-	if !doublestar.ValidatePattern(p.glob) {
+	if p.kind == kindGlob && !doublestar.ValidatePattern(p.glob) {
 		return pattern{}, false
 	}
 	return p, true
