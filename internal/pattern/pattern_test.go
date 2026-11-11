@@ -82,3 +82,19 @@ func TestCompileErrors(t *testing.T) {
 		}
 	}
 }
+
+// BenchmarkMatch matches mixed-case subjects (file names, .NET package names) against a list
+// of several globs, as a rule's names or paths list is matched per dep.
+func BenchmarkMatch(b *testing.B) {
+	l, err := Compile([]string{"**/Dockerfile", "**/Chart.yaml", "Microsoft.*", "!Microsoft.Extensions.Logging", "**/*.csproj"})
+	if err != nil {
+		b.Fatal(err)
+	}
+	subjects := []string{"charts/app/Chart.yaml", "Microsoft.AspNetCore.App", "Microsoft.Extensions.Logging", "src/app/App.csproj", "k8s.io/api"}
+	b.ReportAllocs()
+	for b.Loop() {
+		for _, s := range subjects {
+			_ = l.Match(s)
+		}
+	}
+}

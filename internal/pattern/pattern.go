@@ -13,7 +13,10 @@ import (
 )
 
 // List is a compiled pattern list with Renovate's matchRegexOrGlobList semantics.
-type List struct{ pos, neg []matcher }
+type List struct {
+	pos, neg []matcher
+	nocase   bool // some matcher is a case-insensitive glob, so Match lower-cases its subject
+}
 
 type matcher struct {
 	glob   string // lower-cased when nocase
@@ -21,12 +24,14 @@ type matcher struct {
 	nocase bool
 }
 
-func (m matcher) match(s string) bool {
+// match reports whether m matches s; lower is s lower-cased, which Match computes once for
+// the whole list.
+func (m matcher) match(s, lower string) bool {
 	if m.re != nil {
 		return m.re.MatchString(s)
 	}
 	if m.nocase {
-		s = strings.ToLower(s)
+		s = lower
 	}
 	return doublestar.MatchUnvalidated(m.glob, s)
 }
@@ -53,6 +58,7 @@ func compileList(patterns []string, nocase bool) (*List, error) {
 			errs = append(errs, err)
 			continue
 		}
+		l.nocase = l.nocase || m.nocase
 		if neg {
 			l.neg = append(l.neg, m)
 		} else {
@@ -94,8 +100,12 @@ func (l *List) Match(s string) bool {
 	if l == nil || len(l.pos)+len(l.neg) == 0 {
 		return false
 	}
+	lower := s
+	if l.nocase {
+		lower = strings.ToLower(s)
+	}
 	for _, m := range l.neg {
-		if m.match(s) {
+		if m.match(s, lower) {
 			return false
 		}
 	}
@@ -103,7 +113,7 @@ func (l *List) Match(s string) bool {
 		return true
 	}
 	for _, m := range l.pos {
-		if m.match(s) {
+		if m.match(s, lower) {
 			return true
 		}
 	}
