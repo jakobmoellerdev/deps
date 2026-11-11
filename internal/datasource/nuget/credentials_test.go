@@ -103,3 +103,38 @@ func TestReadCredsMergesAndClears(t *testing.T) {
 		t.Errorf("missing dir: %v", got)
 	}
 }
+
+// TestConfigCredentialsNotShared checks that a feed is not read with the cached result of a
+// directory whose nuget.config holds other credentials: the memos cache failures, so the 401
+// of a directory with the wrong credentials would otherwise be handed to one with the right
+// credentials.
+func TestConfigCredentialsNotShared(t *testing.T) {
+	var hits atomic.Int32
+	srv := serve(t, &hits)
+	root := t.TempDir()
+	config := func(pass string) string {
+		return `<configuration>
+  <packageSourceCredentials>
+    <my_x0020_feed>
+      <add key="Username" value="bot" />
+      <add key="ClearTextPassword" value="` + pass + `" />
+    </my_x0020_feed>
+  </packageSourceCredentials>
+</configuration>`
+	}
+	writeFile(t, filepath.Join(root, "bad", "nuget.config"), config("wrong"))
+	writeFile(t, filepath.Join(root, "good", "nuget.config"), config("s3cret"))
+	s := newSource(srv, nil)
+	source := "my+feed=" + srv.URL + "/private/index.json"
+	_, err := s.Releases(t.Context(), dep.Dep{Name: "Internal.Lib", File: "bad/app.csproj", Source: source}, filepath.Join(root, "bad"))
+	if err == nil || !strings.Contains(err.Error(), "HTTP 401") {
+		t.Fatalf("wrong credentials: %v", err)
+	}
+	rels, err := s.Releases(t.Context(), dep.Dep{Name: "Internal.Lib", File: "good/app.csproj", Source: source}, filepath.Join(root, "good"))
+	if err != nil {
+		t.Fatalf("right credentials after wrong ones: %v", err)
+	}
+	if got := versionsOf(rels); !slices.Equal(got, []string{"1.0.0", "1.1.0", "13.0.5"}) {
+		t.Errorf("releases = %v", got)
+	}
+}

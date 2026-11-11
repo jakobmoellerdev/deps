@@ -33,7 +33,7 @@ const (
 	DefaultAPIURL   = "https://crates.io"
 )
 
-// Source fetches each crate's index file once per run and registry; concurrent callers share
+// Source fetches each crate's index file once per run, registry and credential; concurrent callers share
 // the result.
 type Source struct {
 	client     *http.Client
@@ -43,8 +43,8 @@ type Source struct {
 	index, api string // crates.io sparse index and web API
 
 	mu         sync.Mutex
-	crates     datasource.Memo[string, *entry] // index + "\x00" + lowercase name
-	repos      datasource.Memo[string, string] // api + "\x00" + name@version; "config\x00" + index -> api
+	crates     datasource.Memo[string, *entry] // registry.key(lowercase name)
+	repos      datasource.Memo[string, string] // api + "\x00" + credential + "\x00" + name@version; "config\x00" + registry.key("") -> api
 	registries map[string]*registry            // index URL + "\x00" + token
 	configs    map[string]*configEntry         // manifest directory -> Cargo configuration
 	located    map[string]*registry            // file + "\x00" + name -> registry of the Releases lookup
@@ -131,7 +131,7 @@ func (s *Source) Deprecation(d dep.Dep, version string) string {
 	s.mu.Unlock()
 	var e *entry
 	if r != nil {
-		e, _ = s.crates.Peek(r.index + "\x00" + strings.ToLower(d.Name))
+		e, _ = s.crates.Peek(r.key(strings.ToLower(d.Name)))
 	}
 	if e == nil || !e.yanked[version] {
 		return ""
@@ -158,7 +158,7 @@ func (s *Source) SourceRepo(ctx context.Context, d dep.Dep, version string) (str
 	if err != nil || api == "" {
 		return "", err
 	}
-	key := api + "\x00" + strings.ToLower(d.Name) + "@" + version
+	key := api + "\x00" + r.cred + "\x00" + strings.ToLower(d.Name) + "@" + version
 	return s.repos.Do(ctx, key, func() (string, error) { return s.fetchRepo(ctx, r, api, d.Name, version) })
 }
 
@@ -168,7 +168,7 @@ func (s *Source) apiOf(ctx context.Context, r *registry) (string, error) {
 	if r.api != "" {
 		return r.api, nil
 	}
-	return s.repos.Do(ctx, "config\x00"+r.index, func() (string, error) {
+	return s.repos.Do(ctx, "config\x00"+r.key(""), func() (string, error) {
 		body, err := s.open(ctx, r, "config.json")
 		if errors.Is(err, errNotFound) {
 			return "", nil
@@ -193,7 +193,7 @@ func (*Source) Digest(_ context.Context, d dep.Dep, _ string) (string, error) {
 }
 
 func (s *Source) load(ctx context.Context, r *registry, name string) (*entry, error) {
-	return s.crates.Do(ctx, r.index+"\x00"+strings.ToLower(name), func() (*entry, error) {
+	return s.crates.Do(ctx, r.key(strings.ToLower(name)), func() (*entry, error) {
 		start := time.Now()
 		e := &entry{}
 		err := s.fetch(ctx, r, strings.ToLower(name), e)

@@ -9,6 +9,7 @@ import (
 	"cmp"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"encoding/json/v2"
 	"encoding/xml"
 	"errors"
@@ -47,18 +48,31 @@ type Source struct {
 	getenv func(string) string
 	def    string // the default feed's service index
 
-	services datasource.Memo[string, *service] // by feed URL
-	pkgs     datasource.Memo[string, *pkg]     // by feed URL + "\x00" + lower-case id
-	merged   datasource.Memo[string, *pkg]     // by dep source + "\x00" + lower-case id
-	repos    datasource.Memo[string, string]   // by feed URL + "\x00" + lower-case id + "\x00" + version
+	services datasource.Memo[string, *service] // by feed.id
+	pkgs     datasource.Memo[string, *pkg]     // by feed.id + "\x00" + lower-case id
+	merged   datasource.Memo[string, *pkg]     // by lower-case id + the feed.id of every feed
+	repos    datasource.Memo[string, string]   // by feed.id + "\x00" + lower-case id + "\x00" + version
 	creds    configCreds                       // nuget.config packageSourceCredentials
 }
 
 // feed is one package source of a dep: its nuget.config key ("" when none), URL and the
-// nuget.config credentials of the key (nil when none).
+// credentials sent to its host (nil when none), from the key's NuGetPackageSourceCredentials_
+// variable, else from the nuget.config of the dep's directory.
 type feed struct {
 	key, url string
 	cred     *credential
+}
+
+// id identifies the feed in a memo key: its URL and the credentials it is read with. The
+// memos cache failures, so without the credentials the 401 of a directory whose nuget.config
+// has none would be handed to every directory that has them, and which of the two runs first
+// is up to the scheduler. The credentials are hashed so that no secret ends up in a map key.
+func (f feed) id() string {
+	if f.cred == nil {
+		return f.url
+	}
+	sum := sha256.Sum256([]byte(f.cred.user + "\x00" + f.cred.pass))
+	return f.url + "\x00" + string(sum[:])
 }
 
 // service is what a feed's service index names: the registration base (the SemVer 2.0 one
@@ -120,7 +134,7 @@ func (s *Source) SourceRepo(ctx context.Context, d dep.Dep, version string) (str
 	}
 	id := strings.ToLower(d.Name)
 	v := strings.ToLower(version)
-	repo, err := s.repos.Do(ctx, p.feed.url+"\x00"+id+"\x00"+v, func() (string, error) {
+	repo, err := s.repos.Do(ctx, p.feed.id()+"\x00"+id+"\x00"+v, func() (string, error) {
 		var spec struct {
 			Repository struct {
 				URL string `xml:"url,attr"`
@@ -145,7 +159,9 @@ func (s *Source) SourceRepo(ctx context.Context, d dep.Dep, version string) (str
 
 // feeds returns the package sources of d.Source in lookup order: whitespace-separated entries
 // `<key>=<url>` (the key query-escaped) or `<url>`; "" is nuget.org. nuget.org's service index
-// is read from DEPS_NUGET_URL when that is set.
+// is read from DEPS_NUGET_URL when that is set. A keyed source carries the credentials of its
+// key: NuGet's NuGetPackageSourceCredentials_<key> variable, else the packageSourceCredentials
+// of the nuget.config files above the dep's manifest.
 func (s *Source) feeds(d dep.Dep) []feed {
 	var out []feed
 	creds := s.creds.of(d.File)
@@ -157,8 +173,12 @@ func (s *Source) feeds(d dep.Dep) []feed {
 				f = feed{key: key, url: u}
 			}
 		}
-		if c, ok := creds[strings.ToLower(f.key)]; ok && f.key != "" {
-			f.cred = &c
+		if f.key != "" {
+			if user, pass, ok := credentials(s.getenv(CredentialsEnv + f.key)); ok {
+				f.cred = &credential{user: user, pass: pass}
+			} else if c, ok := creds[strings.ToLower(f.key)]; ok {
+				f.cred = &c
+			}
 		}
 		if f.url == DefaultURL {
 			f.url = s.def
@@ -182,17 +202,23 @@ func v3(u string) bool {
 // lookup returns the listing of d's package merged over its feeds.
 func (s *Source) lookup(ctx context.Context, d dep.Dep) (*pkg, error) {
 	id := strings.ToLower(d.Name)
-	return s.merged.Do(ctx, d.Source+"\x00"+id, func() (*pkg, error) {
+	feeds := s.feeds(d)
+	var key strings.Builder
+	key.WriteString(id)
+	for _, f := range feeds {
+		key.WriteByte(0)
+		key.WriteString(f.id())
+	}
+	return s.merged.Do(ctx, key.String(), func() (*pkg, error) {
 		var out *pkg
 		v2 := 0
-		feeds := s.feeds(d)
 		for _, f := range feeds {
 			if !v3(f.url) {
 				v2++
 				slog.DebugContext(ctx, "nuget v2 feed not read", "feed", httpx.Redact(f.url), "name", d.Name)
 				continue
 			}
-			p, err := s.pkgs.Do(ctx, f.url+"\x00"+id, func() (*pkg, error) { return s.fetch(ctx, f, id) })
+			p, err := s.pkgs.Do(ctx, f.id()+"\x00"+id, func() (*pkg, error) { return s.fetch(ctx, f, id) })
 			if errors.Is(err, errNotFound) {
 				continue
 			}
@@ -234,7 +260,7 @@ var registrationTypes = []string{"RegistrationsBaseUrl/3.6.0", "RegistrationsBas
 
 // service reads the service index of f once.
 func (s *Source) service(ctx context.Context, f feed) (*service, error) {
-	return s.services.Do(ctx, f.url, func() (*service, error) {
+	return s.services.Do(ctx, f.id(), func() (*service, error) {
 		var ix index
 		err := s.get(ctx, f, f.url, func(r io.Reader) error { return json.UnmarshalRead(r, &ix) })
 		if errors.Is(err, errNotFound) {
@@ -373,19 +399,14 @@ func (s *Source) flatVersions(ctx context.Context, f feed, base, id string) (*pk
 
 // get GETs target and passes the body to read (gunzipped when the server compressed it
 // unasked, as registration5-gz does). A 404 is errNotFound. Credentials, on requests to the
-// feed's host only: the target's userinfo (as basic auth, by net/http), else NuGet's
-// NuGetPackageSourceCredentials_<key> variable of the feed (`Username=<user>;Password=<password>`),
-// else the feed's nuget.config packageSourceCredentials.
+// feed's host only: the target's userinfo (as basic auth, by net/http), else the feed's (see
+// feeds).
 func (s *Source) get(ctx context.Context, f feed, target string, read func(io.Reader) error) error {
 	g := s.getter
-	if f.key != "" {
+	if f.cred != nil {
 		g.Prepare = func(req *http.Request) error {
 			if req.URL.User == nil && sameHost(f.url, req.URL) {
-				if user, pass, ok := credentials(s.getenv(CredentialsEnv + f.key)); ok {
-					req.SetBasicAuth(user, pass)
-				} else if f.cred != nil {
-					req.SetBasicAuth(f.cred.user, f.cred.pass)
-				}
+				req.SetBasicAuth(f.cred.user, f.cred.pass)
 			}
 			return nil
 		}

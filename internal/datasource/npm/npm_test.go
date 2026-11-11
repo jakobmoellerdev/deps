@@ -369,3 +369,37 @@ func TestDeprecation(t *testing.T) {
 		})
 	}
 }
+
+// TestCredentialsNotShared checks that a lookup is not served the cached result of a
+// directory with other credentials: the memos cache failures, so the 401 of a directory
+// without a valid token would otherwise be handed to every directory that has one.
+func TestCredentialsNotShared(t *testing.T) {
+	reg := newRegistry(t, func(w http.ResponseWriter, req *http.Request) {
+		if req.Header.Get("Authorization") != "Bearer good" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte(metadataDoc))
+	})
+	rc := func(token string) string {
+		return "registry=" + reg.srv.URL + "/\n//" + strings.TrimPrefix(reg.srv.URL, "http://") + "/:_authToken=" + token + "\n"
+	}
+	root := write(t, t.TempDir(), map[string]string{
+		"bad/.npmrc": rc("bad"), "bad/package.json": "{}",
+		"good/.npmrc": rc("good"), "good/package.json": "{}",
+	})
+	s := New(reg.srv.Client(), nil, env(nil))
+	if _, err := s.Releases(t.Context(), dep.Dep{Name: "pkg", File: "bad/package.json"}, filepath.Join(root, "bad")); err == nil {
+		t.Fatal("lookup with an invalid token: no error")
+	}
+	rels, err := s.Releases(t.Context(), dep.Dep{Name: "pkg", File: "good/package.json"}, filepath.Join(root, "good"))
+	if err != nil {
+		t.Fatalf("valid token after an invalid one: %v", err)
+	}
+	if got := versions(rels); !slices.Equal(got, []string{"1.0.0", "1.1.1", "1.2.0"}) {
+		t.Errorf("versions = %v", got)
+	}
+	if want := []string{"Bearer bad /pkg", "Bearer good /pkg"}; !slices.Equal(reg.reqs, want) {
+		t.Errorf("requests = %q, want %q", reg.reqs, want)
+	}
+}

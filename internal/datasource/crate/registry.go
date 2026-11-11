@@ -3,6 +3,7 @@ package crate
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -28,9 +29,26 @@ type registry struct {
 	index  string
 	sparse bool
 	token  string // Authorization header, only sent to the index host (owns); "" = none
+	cred   string // identity of token, for memo keys (see key); "" = none
 	api    string // web API base for source repositories; "" = read from config.json
 
 	clone datasource.Once[string] // git: the clone's directory
+}
+
+// key is the memo key of a lookup of suffix in r. It covers the token: the memos cache
+// failures, so without it the 401 of a directory without a token would be handed to every
+// later directory that has one, and which of the two runs first is up to the scheduler.
+func (r *registry) key(suffix string) string {
+	return r.index + "\x00" + r.cred + "\x00" + suffix
+}
+
+// credID identifies a token without keeping it; "" stands for no token.
+func credID(token string) string {
+	if token == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(token))
+	return string(sum[:])
 }
 
 // owns reports whether u is on r's index host: Cargo credentials belong to the index, so only
@@ -185,7 +203,7 @@ func (s *Source) registry(name, index, token, api string) *registry {
 	if r := s.registries[key]; r != nil {
 		return r
 	}
-	r := &registry{name: name, token: token, api: api}
+	r := &registry{name: name, token: token, cred: credID(token), api: api}
 	if u, ok := strings.CutPrefix(index, "sparse+"); ok {
 		r.index, r.sparse = strings.TrimSuffix(u, "/"), true
 	} else {

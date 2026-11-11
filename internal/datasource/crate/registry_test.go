@@ -302,3 +302,31 @@ func TestRegistryCredentialHosts(t *testing.T) {
 		}
 	})
 }
+
+// TestTokensNotShared checks that an index is not read with the cached result of a directory
+// holding another token: the memos cache failures, so the 401 of a directory with the wrong
+// token would otherwise be handed to one with the right token.
+func TestTokensNotShared(t *testing.T) {
+	srv := registryServer(t)
+	root, home := t.TempDir(), t.TempDir()
+	writeFiles(t, root, map[string]string{
+		".cargo/config.toml":      "[registries.my-registry]\nindex = \"sparse+" + srv.URL + "/reg/\"\n",
+		"bad/.cargo/config.toml":  "[registries.my-registry]\ntoken = \"wrong\"\n",
+		"bad/Cargo.toml":          "",
+		"good/.cargo/config.toml": "[registries.my-registry]\ntoken = \"" + bookToken + "\"\n",
+		"good/Cargo.toml":         "",
+	})
+	s := New(srv.Client(), nil, nil, envOf(map[string]string{"CARGO_HOME": home}))
+	bad := dep.Dep{Name: "some-crate", Source: "my-registry", File: "bad/Cargo.toml", Version: "1.0.0"}
+	if _, err := s.Releases(t.Context(), bad, filepath.Join(root, "bad")); err == nil {
+		t.Fatal("wrong token: no error")
+	}
+	good := dep.Dep{Name: "some-crate", Source: "my-registry", File: "good/Cargo.toml", Version: "1.0.0"}
+	rels, err := s.Releases(t.Context(), good, filepath.Join(root, "good"))
+	if err != nil {
+		t.Fatalf("right token after a wrong one: %v", err)
+	}
+	if got := versions(rels); got != "1.0.0 1.4.2" {
+		t.Errorf("Releases = %s", got)
+	}
+}

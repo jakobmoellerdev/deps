@@ -10,6 +10,7 @@ package npmds
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -43,15 +44,15 @@ const DefaultRegistry = "https://registry.npmjs.org/"
 // and no `time`.
 const abbreviated = "application/vnd.npm.install-v1+json"
 
-// Source fetches each package's abbreviated metadata once per (registry, name) per run, its
+// Source fetches each package's abbreviated metadata once per (registry, credential, name) per run, its
 // full packument at most once and only for release times and the source repository, and
 // parses each directory's .npmrc once; concurrent callers share the results.
 type Source struct {
 	getter httpx.Getter
 	getenv func(string) string
 
-	packages datasource.Memo[string, *metadata] // registry + "\x00" + name: abbreviated metadata (nil = failed)
-	docs     datasource.Memo[string, packument] // registry + "\x00" + name: full packument
+	packages datasource.Memo[string, *metadata] // location.key: abbreviated metadata (nil = failed)
+	docs     datasource.Memo[string, packument] // location.key: full packument
 
 	mu      sync.Mutex
 	located map[string]location // file + "\x00" + name -> registry of the last Releases lookup
@@ -63,6 +64,23 @@ type Source struct {
 
 // location is the registry (with trailing slash) and token a dependency resolved against.
 type location struct{ reg, token string }
+
+// key is the memo key of a lookup of package name at l. It covers the credential: the memos
+// cache failures, so without it the 401 of a directory without a token would be handed to
+// every later directory that has one, and which of the two runs first is up to the scheduler.
+// The token is hashed so that no secret ends up in a map key.
+func (l location) key(name string) string {
+	return l.reg + "\x00" + credID(l.token) + "\x00" + name
+}
+
+// credID identifies a credential without keeping it; "" stands for no credential.
+func credID(secret string) string {
+	if secret == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(secret))
+	return string(sum[:])
+}
 
 // metadata is what deps keeps of a package's abbreviated metadata document.
 type metadata struct {
@@ -151,9 +169,9 @@ func packageName(d dep.Dep) string {
 }
 
 // load returns the abbreviated metadata of name in loc's registry, fetched once per
-// (registry, name); nil on failure.
+// (registry, credential, name); nil on failure.
 func (s *Source) load(ctx context.Context, loc location, name string) (*metadata, error) {
-	return s.packages.Do(ctx, loc.reg+"\x00"+name, func() (*metadata, error) {
+	return s.packages.Do(ctx, loc.key(name), func() (*metadata, error) {
 		m, err := s.fetchMetadata(ctx, loc, name)
 		if err != nil {
 			return nil, err
@@ -251,7 +269,7 @@ func (s *Source) loaded(d dep.Dep) *metadata {
 	if !ok {
 		return nil
 	}
-	m, _ := s.packages.Peek(loc.reg + "\x00" + name)
+	m, _ := s.packages.Peek(loc.key(name))
 	return m
 }
 
@@ -262,7 +280,7 @@ func (s *Source) SourceRepo(ctx context.Context, d dep.Dep, _ string) (string, e
 	return p.repo, err
 }
 
-// doc returns the full packument of d, fetched once per (registry, name), in the registry of
+// doc returns the full packument of d, fetched once per (registry, credential, name), in the registry of
 // d's earlier Releases lookup (else NPM_CONFIG_REGISTRY or the default): ReleaseTime and
 // SourceRepo share the one request.
 func (s *Source) doc(ctx context.Context, d dep.Dep) (packument, error) {
@@ -273,7 +291,7 @@ func (s *Source) doc(ctx context.Context, d dep.Dep) (packument, error) {
 	if !ok {
 		loc = s.locate(&npmrc{}, name)
 	}
-	return s.docs.Do(ctx, loc.reg+"\x00"+name, func() (packument, error) { return s.fetch(ctx, loc, name) })
+	return s.docs.Do(ctx, loc.key(name), func() (packument, error) { return s.fetch(ctx, loc, name) })
 }
 
 // Digest is unsupported: npm versions are not digest-pinned.
