@@ -27,7 +27,7 @@ func BenchmarkFetchMetadata(b *testing.B) {
 		b.Run(f, func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				if _, _, err := s.fetchMetadata(context.Background(), "https://repo.example/"+f, nil); err != nil {
+				if _, err := s.fetchMetadata(context.Background(), "https://repo.example/"+f, nil); err != nil {
 					b.Fatal(err)
 				}
 			}

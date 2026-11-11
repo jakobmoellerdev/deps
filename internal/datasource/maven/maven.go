@@ -90,9 +90,11 @@ type auth struct {
 
 type header struct{ name, value string }
 
-// metaEntry is the metadata of an artifact in one repository; err is the lookup's failure.
+// metaEntry is the metadata of an artifact in one repository; err is the lookup's failure,
+// which leaves every other field zero (ReleasedBy reads an entry without its error).
 type metaEntry struct {
 	versions []string
+	updated  time.Time // `versioning>lastUpdated`, zero when absent or implausible
 	notFound bool
 	err      error
 }
@@ -311,6 +313,39 @@ func (s *Source) ReleaseTime(ctx context.Context, d dep.Dep, version string) (ti
 	return time.Time{}, nil
 }
 
+// ReleasedBy implements datasource.ReleaseBound with the `versioning>lastUpdated` of the
+// maven-metadata.xml documents of d's earlier Releases lookup: a repository rewrites the
+// document of an artifact when it takes a version of it, so nothing it lists was released
+// later. The engine then spares an idle artifact the per-version POM HEADs of
+// minimumReleaseAge (ReleaseTime), one per candidate and repository.
+//
+// The bound is no better than the documents, so it is taken only when every repository that
+// has the artifact dated its own plausibly, and the newest of those wins:
+//   - A repository manager that regenerates the metadata as it proxies a fetch dates it
+//     after the release it describes. That only moves the bound forward, which costs the
+//     shortcut but never skips a lookup that was due.
+//   - A repository that maintains no lastUpdated, or writes it in some layout other than
+//     Maven's UTC yyyyMMddHHmmss, says nothing about its releases: a missing or implausible
+//     value (parseLastUpdated) drops the bound rather than making up an idle artifact. So
+//     does a repository whose metadata failed or was never fetched, which Peek reports as
+//     the zero entry.
+func (s *Source) ReleasedBy(d dep.Dep) time.Time {
+	s.mu.Lock()
+	repos := s.resolved[depKey(d)]
+	s.mu.Unlock()
+	var bound time.Time
+	for _, r := range repos {
+		switch e, ok := s.meta.Peek(reqKey{r.url, r.auth, d.Name}); {
+		case !ok || e.updated.IsZero() && !e.notFound:
+			return time.Time{}
+		case e.notFound: // the repository does not have the artifact at all
+		case e.updated.After(bound):
+			bound = e.updated
+		}
+	}
+	return bound
+}
+
 // OpenArtifact GETs the artifact at u with the credentials of the repository of d that u is
 // below: u is matched against each repository's declared URLs (rewritten to the mirror, as
 // for Releases) and its effective URL, longest prefix first; other URLs are fetched
@@ -376,60 +411,78 @@ func artifactPath(name string) (base, artifact string, err error) {
 func (s *Source) metadata(ctx context.Context, r repository, name, base string) metaEntry {
 	e, err := s.meta.Do(ctx, reqKey{r.url, r.auth, name}, func() (metaEntry, error) {
 		start := time.Now()
-		versions, notFound, err := s.fetchMetadata(ctx, r.url+base+"maven-metadata.xml", r.auth)
+		e, err := s.fetchMetadata(ctx, r.url+base+"maven-metadata.xml", r.auth)
 		slog.DebugContext(ctx, "maven metadata fetched", "name", name, "repository", r.url, "authenticated", r.auth != nil,
-			"versions", len(versions), "notFound", notFound, "duration", time.Since(start), "err", err)
-		return metaEntry{versions: versions, notFound: notFound}, err
+			"versions", len(e.versions), "notFound", e.notFound, "lastUpdated", e.updated, "duration", time.Since(start), "err", err)
+		return e, err
 	})
 	e.err = err
 	return e
 }
 
-func (s *Source) fetchMetadata(ctx context.Context, u string, a *auth) (versions []string, notFound bool, err error) {
+func (s *Source) fetchMetadata(ctx context.Context, u string, a *auth) (metaEntry, error) {
 	resp, err := s.do(ctx, http.MethodGet, u, a)
 	if err != nil {
-		return nil, false, err
+		return metaEntry{}, err
 	}
 	defer closeBody(resp)
 	switch {
 	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone:
-		return nil, true, nil
+		return metaEntry{notFound: true}, nil
 	case resp.StatusCode != http.StatusOK:
-		return nil, false, fmt.Errorf("GET %s: %w", u, httpx.ResponseError(resp))
+		return metaEntry{}, fmt.Errorf("GET %s: %w", u, httpx.ResponseError(resp))
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, maxMetadata))
 	if err != nil {
-		return nil, false, fmt.Errorf("GET %s: malformed metadata: %w", u, err)
+		return metaEntry{}, fmt.Errorf("GET %s: malformed metadata: %w", u, err)
 	}
-	if versions, ok := scanVersions(b); ok {
-		return versions, false, nil
+	doc, ok := scanVersions(b)
+	if !ok {
+		if doc, err = decodeMetadata(b); err != nil {
+			return metaEntry{}, fmt.Errorf("GET %s: malformed metadata: %w", u, err)
+		}
 	}
-	versions, err = decodeMetadata(b)
-	if err != nil {
-		return nil, false, fmt.Errorf("GET %s: malformed metadata: %w", u, err)
-	}
-	return versions, false, nil
+	return metaEntry{versions: doc.versions, updated: parseLastUpdated(doc.lastUpdated)}, nil
 }
 
-// decodeMetadata reads the versions of a maven-metadata.xml document with encoding/xml;
-// it handles everything scanVersions declines.
-func decodeMetadata(b []byte) ([]string, error) {
+// decodeMetadata reads the versions and `lastUpdated` of a maven-metadata.xml document with
+// encoding/xml; it handles everything scanVersions declines.
+func decodeMetadata(b []byte) (metaDoc, error) {
 	var m struct {
-		Versions []string `xml:"versioning>versions>version"`
+		Versions    []string `xml:"versioning>versions>version"`
+		LastUpdated string   `xml:"versioning>lastUpdated"`
 	}
 	dec := xml.NewDecoder(bytes.NewReader(b))
 	// plugins.gradle.org declares US-ASCII, other repositories ISO-8859-1; versions are ASCII.
 	dec.CharsetReader = func(_ string, r io.Reader) (io.Reader, error) { return r, nil }
 	if err := dec.Decode(&m); err != nil {
-		return nil, err
+		return metaDoc{}, err
 	}
-	versions := make([]string, 0, len(m.Versions))
+	doc := metaDoc{versions: make([]string, 0, len(m.Versions)), lastUpdated: strings.TrimSpace(m.LastUpdated)}
 	for _, v := range m.Versions {
 		if v = strings.TrimSpace(v); v != "" {
-			versions = append(versions, v)
+			doc.versions = append(doc.versions, v)
 		}
 	}
-	return versions, nil
+	return doc, nil
+}
+
+// lastUpdatedLayout is Maven's `versioning>lastUpdated`, a UTC timestamp.
+const lastUpdatedLayout = "20060102150405"
+
+// mavenEpoch is before any Maven repository: Maven 1 and its first repositories are from
+// 2002. An earlier lastUpdated is a placeholder (a zeroed or unset field), not a release.
+var mavenEpoch = time.Date(2002, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// parseLastUpdated returns the time of a `lastUpdated` text, zero unless it is exactly
+// Maven's layout and plausible, so that a repository writing something else is not taken for
+// one whose artifacts are idle (see ReleasedBy).
+func parseLastUpdated(s string) time.Time {
+	t, err := time.ParseInLocation(lastUpdatedLayout, s, time.UTC)
+	if err != nil || t.Before(mavenEpoch) {
+		return time.Time{}
+	}
+	return t
 }
 
 // pomTime HEADs the POM at path below repository r once per run.

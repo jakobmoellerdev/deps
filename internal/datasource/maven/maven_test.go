@@ -2,6 +2,7 @@ package mavends
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -225,5 +226,133 @@ func TestModule(t *testing.T) {
 		if got := Module(name); got != want {
 			t.Errorf("Module(%q) = %q, want %q", name, got, want)
 		}
+	}
+}
+
+// headHits counts the POM HEADs the repository served.
+func (r *repo) headHits() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for req, hits := range r.hits {
+		if strings.HasPrefix(req, http.MethodHead+" ") {
+			n += hits
+		}
+	}
+	return n
+}
+
+// metadataWith renders a maven-metadata.xml listing versions, with the lastUpdated element
+// when it is not empty.
+func metadataWith(lastUpdated string, versions ...string) string {
+	var b strings.Builder
+	b.WriteString("<metadata><versioning><versions>")
+	for _, v := range versions {
+		b.WriteString("<version>" + v + "</version>")
+	}
+	b.WriteString("</versions>")
+	if lastUpdated != "" {
+		b.WriteString("<lastUpdated>" + lastUpdated + "</lastUpdated>")
+	}
+	b.WriteString("</versioning></metadata>")
+	return b.String()
+}
+
+// minAgeLookups does what the engine does for minimumReleaseAge (resolver.releasedBefore):
+// it asks for the time of every candidate unless the datasource already bounds its releases
+// at or before cutoff.
+func minAgeLookups(t *testing.T, s *Source, d dep.Dep, versions []string, cutoff time.Time) {
+	t.Helper()
+	if bound := s.ReleasedBy(d); !bound.IsZero() && !bound.After(cutoff) {
+		return
+	}
+	for _, v := range versions {
+		if _, err := s.ReleaseTime(context.Background(), d, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestReleasedBy(t *testing.T) {
+	versions := []string{"1", "2", "3"}
+	cutoff := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name        string
+		lastUpdated string
+		want        time.Time
+		heads       int // POM HEADs the minimumReleaseAge lookups need
+	}{
+		{"idle", "20250317094500", time.Date(2025, 3, 17, 9, 45, 0, 0, time.UTC), 0},
+		{"recent", "20261102180748", time.Date(2026, 11, 2, 18, 7, 48, 0, time.UTC), 3},
+		{"absent", "", time.Time{}, 3},
+		{"other layout", "2025-03-17T09:45:00Z", time.Time{}, 3},
+		{"placeholder", "19700101000000", time.Time{}, 3},
+		{"not a date", "20251345000000", time.Time{}, 3},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newRepo(t)
+			r.files["/m2/g/a/maven-metadata.xml"] = metadataWith(tt.lastUpdated, versions...)
+			for _, v := range versions {
+				r.times["/m2/g/a/"+v+"/a-"+v+".pom"] = "Mon, 17 Mar 2025 09:45:00 GMT"
+			}
+			srv := r.serve()
+			s := New(srv.Client(), nil, noenv)
+			d := dep.Dep{Name: "g:a", Source: srv.URL + "/m2/"}
+			if _, err := s.Releases(context.Background(), d, ""); err != nil {
+				t.Fatal(err)
+			}
+			var bound datasource.ReleaseBound = s
+			if got := bound.ReleasedBy(d); !got.Equal(tt.want) {
+				t.Errorf("ReleasedBy = %v, want %v", got, tt.want)
+			}
+			minAgeLookups(t, s, d, versions, cutoff)
+			if n := r.headHits(); n != tt.heads {
+				t.Errorf("POM HEADs = %d, want %d", n, tt.heads)
+			}
+		})
+	}
+}
+
+func TestReleasedByRepositories(t *testing.T) {
+	r := newRepo(t)
+	r.files["/dated/g/a/maven-metadata.xml"] = metadataWith("20250317094500", "1")
+	r.files["/undated/g/a/maven-metadata.xml"] = metadataWith("", "1", "2")
+	r.codes["/broken/g/a/maven-metadata.xml"] = http.StatusInternalServerError
+	srv := r.serve()
+	s := New(srv.Client(), nil, noenv)
+	dated := time.Date(2025, 3, 17, 9, 45, 0, 0, time.UTC)
+	tests := []struct {
+		name  string
+		repos string
+		want  time.Time
+	}{
+		// A repository without the artifact says nothing about its releases; one that has it
+		// without a lastUpdated, or that failed, could hold a newer release than the bound.
+		{"missing artifact", "dated missing", dated},
+		{"undated repository", "dated undated", time.Time{}},
+		{"failed repository", "dated broken", time.Time{}},
+		{"nowhere", "missing", time.Time{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var src []string
+			for name := range strings.FieldsSeq(tt.repos) {
+				src = append(src, srv.URL+"/"+name+"/")
+			}
+			// The dep file keeps the repositories of each case apart.
+			d := dep.Dep{Name: "g:a", File: tt.name, Source: strings.Join(src, " ")}
+			_, err := s.Releases(context.Background(), d, "")
+			if err != nil && !errors.Is(err, ErrNotFound) {
+				t.Fatal(err)
+			}
+			if got := s.ReleasedBy(d); !got.Equal(tt.want) {
+				t.Errorf("ReleasedBy = %v, want %v", got, tt.want)
+			}
+		})
+	}
+	// Without a Releases lookup nothing is known of the artifact.
+	if got := s.ReleasedBy(dep.Dep{Name: "g:b", Source: srv.URL + "/dated/"}); !got.IsZero() {
+		t.Errorf("ReleasedBy without a lookup = %v", got)
 	}
 }

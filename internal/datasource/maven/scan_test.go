@@ -6,6 +6,12 @@ import (
 	"testing"
 )
 
+// The documents the lastUpdated assertions of TestScanVersionsSeeds name.
+const (
+	lastUpdatedSeed  = `<metadata><versioning><lastUpdated> 20260102030405 </lastUpdated></versioning></metadata>`
+	strayLastUpdated = `<metadata><lastUpdated>1</lastUpdated><versions><lastUpdated>2</lastUpdated></versions></metadata>`
+)
+
 var scanSeeds = []string{
 	`<metadata><versioning><versions><version>1.0</version><version> 2.0 </version><version></version></versions></versioning></metadata>`,
 	`<?xml version="1.0" encoding="UTF-8"?><metadata modelVersion='1.1.0'><version>9</version><versioning><versions><version>1</version></versions></versioning></metadata>trailing`,
@@ -24,6 +30,11 @@ var scanSeeds = []string{
 	"<metadata><versioning><versions><version>\u00e91</version></versions></versioning></metadata>",
 	`<metadata a="1" a="2"><x a=1/></metadata>`,
 	`text<metadata/>`,
+	lastUpdatedSeed,
+	`<metadata><versioning><lastUpdated>1</lastUpdated><lastUpdated/></versioning></metadata>`,
+	`<metadata><versioning><lastUpdated>1</lastUpdated><lastUpdated>2</lastUpdated></versioning></metadata>`,
+	strayLastUpdated,
+	`<metadata><versioning><lastUpdated><x/>1</lastUpdated></versioning></metadata>`,
 	``,
 }
 
@@ -38,8 +49,11 @@ func checkScanParity(t *testing.T, b []byte) {
 	if err != nil {
 		t.Fatalf("scanVersions accepted %q, encoding/xml: %v", b, err)
 	}
-	if !slices.Equal(got, want) {
-		t.Fatalf("scanVersions(%q) = %q, encoding/xml %q", b, got, want)
+	if !slices.Equal(got.versions, want.versions) {
+		t.Fatalf("scanVersions(%q) = %q, encoding/xml %q", b, got.versions, want.versions)
+	}
+	if got.lastUpdated != want.lastUpdated {
+		t.Fatalf("scanVersions(%q) lastUpdated = %q, encoding/xml %q", b, got.lastUpdated, want.lastUpdated)
 	}
 }
 
@@ -60,8 +74,15 @@ func TestScanVersionsSeeds(t *testing.T) {
 	for _, s := range scanSeeds {
 		checkScanParity(t, []byte(s))
 	}
-	if v, ok := scanVersions([]byte(scanSeeds[0])); !ok || !slices.Equal(v, []string{"1.0", "2.0"}) {
-		t.Errorf("scanVersions(seed 0) = %q, %v", v, ok)
+	if doc, ok := scanVersions([]byte(scanSeeds[0])); !ok || !slices.Equal(doc.versions, []string{"1.0", "2.0"}) {
+		t.Errorf("scanVersions(seed 0) = %q, %v", doc.versions, ok)
+	}
+	// The scanner reads `versioning>lastUpdated` only where encoding/xml does.
+	if doc, ok := scanVersions([]byte(lastUpdatedSeed)); !ok || doc.lastUpdated != "20260102030405" {
+		t.Errorf("scanVersions(lastUpdated seed) = %q, %v", doc.lastUpdated, ok)
+	}
+	if doc, ok := scanVersions([]byte(strayLastUpdated)); !ok || doc.lastUpdated != "" {
+		t.Errorf("scanVersions(lastUpdated outside versioning) = %q, %v", doc.lastUpdated, ok)
 	}
 	for _, s := range scanSeeds[2:8] {
 		if _, ok := scanVersions([]byte(s)); ok {

@@ -14,7 +14,8 @@ var Doc = refdoc.Datasource{
 	Auth: "maven and maven-wrapper deps: `settings.xml` `<servers>` (Basic auth from `<username>`/`<password>`, encrypted passwords included, and `<configuration><httpHeaders>`) of the repository's id after mirroring; " +
 		"gradle deps: the `<name>Username`/`<name>Password` project properties of the named repository. " +
 		"Checksum downloads (`Artifact`) below a dep's repository use the same mirror and credentials",
-	ReleaseTimes: "`HEAD …/<version>/<artifactId>-<version>.pom` `Last-Modified`, only for versions that end up in a PR",
+	ReleaseTimes: "`HEAD …/<version>/<artifactId>-<version>.pom` `Last-Modified`, only for versions that end up in a PR; " +
+		"not asked for `minimumReleaseAge` when every repository holding the artifact dated its `maven-metadata.xml` (`versioning` `lastUpdated`, UTC `yyyyMMddHHmmss`) and the newest of those is already older",
 	Notes: []refdoc.Section{
 		{
 			Title: "Maven repositories",

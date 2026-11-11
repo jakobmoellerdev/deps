@@ -2,68 +2,79 @@ package mavends
 
 import "bytes"
 
-// scanVersions reads the non-empty, trimmed `versioning>versions>version` texts of a
-// maven-metadata.xml document without encoding/xml. It handles only plain markup: an
-// optional leading XML declaration, unprefixed element names, quoted attributes and
-// ASCII text without entities. Anything else (comments, CDATA, processing
-// instructions, entities, non-ASCII bytes, unbalanced or unterminated elements)
-// returns ok == false and the caller decodes with encoding/xml instead, which keeps
-// its results and errors.
-func scanVersions(b []byte) (versions []string, ok bool) {
+// metaDoc is what a maven-metadata.xml document says about an artifact.
+type metaDoc struct {
+	versions    []string
+	lastUpdated string // `versioning>lastUpdated` text, "" when the document has none
+}
+
+// scanVersions reads the non-empty, trimmed `versioning>versions>version` texts and the
+// trimmed `versioning>lastUpdated` text of a maven-metadata.xml document without
+// encoding/xml. It handles only plain markup: an optional leading XML declaration,
+// unprefixed element names, quoted attributes and ASCII text without entities. Anything
+// else (comments, CDATA, processing instructions, entities, non-ASCII bytes, unbalanced or
+// unterminated elements) returns ok == false and the caller decodes with encoding/xml
+// instead, which keeps its results and errors.
+func scanVersions(b []byte) (doc metaDoc, ok bool) {
 	i := skipSpace(b, 0)
 	if bytes.HasPrefix(b[i:], []byte("<?xml")) {
 		end := bytes.Index(b[i:], []byte("?>"))
 		if end < 0 {
-			return nil, false
+			return metaDoc{}, false
 		}
 		decl := b[i+2 : i+end]
 		if _, ok := startTag(bytes.TrimRight(decl, " \t\n\r")); !ok ||
 			!bytes.HasPrefix(decl, []byte(`xml version="1.0"`)) && !bytes.HasPrefix(decl, []byte(`xml version='1.0'`)) {
-			return nil, false
+			return metaDoc{}, false
 		}
 		i += end + 2
 	}
 	var (
-		stack [8][]byte // element names on the path; deeper levels are counted, not kept
-		depth int
-		in    bool // inside versioning>versions>version
+		stack  [8][]byte // element names on the path; deeper levels are counted, not kept
+		depth  int
+		in     bool // inside versioning>versions>version
+		inLast bool // inside versioning>lastUpdated
 	)
 	for {
 		lt := bytes.IndexByte(b[i:], '<')
 		if lt < 0 {
-			return nil, false // root never closed
+			return metaDoc{}, false // root never closed
 		}
 		text := b[i : i+lt]
 		if !plainText(text) || bytes.Contains(text, []byte("]]>")) || depth == 0 && len(bytes.TrimSpace(text)) != 0 {
-			return nil, false
+			return metaDoc{}, false
 		}
-		if in {
+		if in || inLast {
 			if bytes.IndexByte(text, '\r') >= 0 {
-				return nil, false
+				return metaDoc{}, false
 			}
-			if v := bytes.TrimSpace(text); len(v) != 0 {
-				versions = append(versions, string(v))
+			v := bytes.TrimSpace(text)
+			switch {
+			case inLast:
+				doc.lastUpdated = string(v) // the last one wins, as in encoding/xml
+			case len(v) != 0:
+				doc.versions = append(doc.versions, string(v))
 			}
 		}
 		i += lt + 1
 		gt := bytes.IndexByte(b[i:], '>')
 		if gt < 0 {
-			return nil, false
+			return metaDoc{}, false
 		}
 		tag := b[i : i+gt]
 		i += gt + 1
 		if len(tag) > 0 && tag[0] == '/' {
 			name := bytes.TrimRight(tag[1:], " \t\n")
 			if depth == 0 || depth <= len(stack) && !bytes.Equal(name, stack[depth-1]) || !validName(name) {
-				return nil, false
+				return metaDoc{}, false
 			}
 			if depth > len(stack) {
-				return nil, false // cannot check the name; let encoding/xml do it
+				return metaDoc{}, false // cannot check the name; let encoding/xml do it
 			}
 			depth--
-			in = false
+			in, inLast = false, false
 			if depth == 0 {
-				return versions, true
+				return doc, true
 			}
 			continue
 		}
@@ -72,12 +83,16 @@ func scanVersions(b []byte) (versions []string, ok bool) {
 			tag = tag[:len(tag)-1]
 		}
 		name, ok := startTag(tag)
-		if !ok || in {
-			return nil, false // `<version>` with child elements, or odd markup
+		if !ok || in || inLast {
+			return metaDoc{}, false // `<version>` with child elements, or odd markup
 		}
+		last := depth == 2 && bytes.Equal(name, []byte("lastUpdated")) && bytes.Equal(stack[1], []byte("versioning"))
 		if selfClose {
+			if last {
+				doc.lastUpdated = "" // an empty element, as encoding/xml reads it
+			}
 			if depth == 0 {
-				return versions, true
+				return doc, true
 			}
 			continue
 		}
@@ -87,6 +102,7 @@ func scanVersions(b []byte) (versions []string, ok bool) {
 		depth++
 		in = depth == 4 && bytes.Equal(name, []byte("version")) &&
 			bytes.Equal(stack[2], []byte("versions")) && bytes.Equal(stack[1], []byte("versioning"))
+		inLast = last
 	}
 }
 
