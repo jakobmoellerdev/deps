@@ -12,6 +12,7 @@ import (
 	"go.yaml.in/yaml/v4"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/yamlspan"
 )
 
@@ -48,7 +49,7 @@ func checkCRDParity(t *testing.T, file string, src []byte) {
 	if !parsed {
 		return
 	}
-	if gd := got.manifests(file, src, nil); !reflect.DeepEqual(gd, wd) {
+	if gd := got.manifests(file, src, manager.Env{YAML: &yamlspan.Parsed{}}); !reflect.DeepEqual(gd, wd) {
 		t.Fatalf("%s: manifests = %+v\nwhole file = %+v", file, gd, wd)
 	}
 	g, w := &got.links, &want.links
@@ -96,7 +97,7 @@ func TestManifestsUnparsableDocuments(t *testing.T) {
 		chart + "---\n{{ bad\n":           0,
 		"x: [unterminated\n---\n" + chart: 1,
 	} {
-		if got := len((&helmManager{}).manifests("f.yaml", []byte(src), nil)); got != want {
+		if got := len((&helmManager{}).manifests("f.yaml", []byte(src), manager.Env{YAML: &yamlspan.Parsed{}})); got != want {
 			t.Errorf("%q: %d deps, want %d", src, got, want)
 		}
 	}
@@ -121,7 +122,7 @@ func BenchmarkManifestsKeepDocuments(b *testing.B) {
 	b.SetBytes(int64(len(data)))
 	b.ReportAllocs()
 	for b.Loop() {
-		if deps := (&helmManager{}).manifests("install.yaml", data, nil); len(deps) != 3 {
+		if deps := (&helmManager{}).manifests("install.yaml", data, manager.Env{YAML: &yamlspan.Parsed{}}); len(deps) != 3 {
 			b.Fatalf("deps = %d", len(deps))
 		}
 	}

@@ -46,7 +46,7 @@ func checkManifestsParity(t *testing.T, file string, src []byte) {
 		return
 	}
 	got := extractor{file: file, src: src, lines: yamlspan.LineStarts(src)}
-	got.manifests()
+	got.manifests(&yamlspan.Parsed{})
 	if !reflect.DeepEqual(got.deps, want.deps) {
 		t.Fatalf("%s: manifests = %+v\nwhole file = %+v", file, got.deps, want.deps)
 	}
@@ -149,7 +149,7 @@ func BenchmarkManifestsKeepDocuments(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		x := extractor{file: "install.yaml", src: data, lines: yamlspan.LineStarts(data)}
-		x.manifests()
+		x.manifests(&yamlspan.Parsed{})
 		if len(x.deps) != 3 {
 			b.Fatalf("deps = %d", len(x.deps))
 		}

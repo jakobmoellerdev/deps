@@ -4,8 +4,6 @@ package droneci
 
 import (
 	"bytes"
-	"errors"
-	"io"
 	"strings"
 
 	"go.yaml.in/yaml/v4"
@@ -39,23 +37,15 @@ func (droneManager) Match(path string) bool {
 }
 
 // Extract returns the step and service images of every document of src (pipelines, secrets
-// and signatures are separate documents). Documents without "image" are not parsed.
+// and signatures are separate documents), from the documents of env.YAML, the file's shared
+// parse. Documents without "image" are not parsed.
 func (droneManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {
 	x := docker.Images{Manager: Name, File: file, Src: src, Lines: yamlspan.LineStarts(src), Aliases: env.RegistryAliases}
-	dec := yaml.NewDecoder(bytes.NewReader(yamlspan.KeepDocuments(src, func(doc []byte) bool {
+	err := env.YAML.Documents(src, func(doc []byte) bool {
 		return bytes.Contains(doc, []byte("image"))
-	})))
-	for {
-		var doc yaml.Node
-		err := dec.Decode(&doc)
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
+	}, func(doc *yaml.Node) {
 		if len(doc.Content) != 1 {
-			continue
+			return
 		}
 		// steps (Drone 1.0+) and pipeline (0.8) hold steps, as a list or a mapping of names.
 		for _, key := range []string{"steps", "pipeline", "services"} {
@@ -67,6 +57,9 @@ func (droneManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep
 				x.Add(depType, yamlspan.Get(step, "image"))
 			}
 		}
+	})
+	if err != nil {
+		return nil, err
 	}
 	return x.Deps, nil
 }

@@ -3,8 +3,6 @@ package docker
 import (
 	"bytes"
 	"context"
-	"errors"
-	"io"
 	"log/slog"
 	"regexp"
 	"strings"
@@ -35,31 +33,25 @@ var manifestParses atomic.Int64
 
 // manifests extracts Kubernetes container images and Helm image values from every document
 // of a multi-document YAML file; a document shaped like a Compose file (isCompose) is extracted
-// as one. A file that does not parse (a Helm template) is read line by line (imageLines).
-func (x *extractor) manifests() {
+// as one. The documents are those of p, the file's shared parse. A file that does not parse
+// (a Helm template) is read line by line (imageLines).
+func (x *extractor) manifests(p *yamlspan.Parsed) {
 	manifestParses.Add(1)
-	dec := yaml.NewDecoder(bytes.NewReader(yamlspan.KeepDocuments(x.src, mayHaveImage)))
-	for {
-		var doc yaml.Node
-		err := dec.Decode(&doc)
-		if errors.Is(err, io.EOF) {
-			return
-		}
-		if err != nil {
-			x.deps = nil
-			x.imageLines()
-			level := slog.LevelDebug
-			if len(x.deps) > 0 {
-				level = slog.LevelInfo
-			}
-			slog.Log(context.Background(), level, "unparsable yaml, image lines read one by one", "file", x.file, "images", len(x.deps), "err", err)
-			return
-		}
+	err := p.Documents(x.src, mayHaveImage, func(doc *yaml.Node) {
 		if len(doc.Content) == 1 && isCompose(doc.Content[0]) {
 			x.compose(doc.Content[0])
 		} else {
-			x.walk(&doc)
+			x.walk(doc)
 		}
+	})
+	if err != nil {
+		x.deps = nil
+		x.imageLines()
+		level := slog.LevelDebug
+		if len(x.deps) > 0 {
+			level = slog.LevelInfo
+		}
+		slog.Log(context.Background(), level, "unparsable yaml, image lines read one by one", "file", x.file, "images", len(x.deps), "err", err)
 	}
 }
 

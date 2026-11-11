@@ -88,7 +88,7 @@ func (m *helmManager) Extract(file string, src []byte, env manager.Env) ([]dep.D
 	if deps, ok := m.helmsman(file, src); ok {
 		return deps, nil
 	}
-	return m.manifests(file, src, env.RegistryAliases), nil
+	return m.manifests(file, src, env), nil
 }
 
 // Edits replaces the version (rewrites a range, see VersionEdits) and, for a replacement

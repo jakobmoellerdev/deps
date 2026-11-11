@@ -2,8 +2,6 @@ package helm
 
 import (
 	"bytes"
-	"errors"
-	"io"
 	"log/slog"
 	"slices"
 	"strings"
@@ -11,6 +9,7 @@ import (
 	"go.yaml.in/yaml/v4"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/yamlspan"
 )
 
@@ -86,26 +85,21 @@ type crdExtractor struct {
 }
 
 // manifests extracts chart deps from the k0s, Flux and Argo CD resources of a Kubernetes YAML
-// file; aliases are the registryAliases. Unparsable files (templates) yield no deps.
-func (m *helmManager) manifests(file string, src []byte, aliases map[string]string) []dep.Dep {
+// file, from the documents of env.YAML, the file's shared parse. Unparsable files (templates)
+// yield no deps.
+func (m *helmManager) manifests(file string, src []byte, env manager.Env) []dep.Dep {
 	if !hasCRDGroup(src) {
 		return nil
 	}
-	x := crdExtractor{file: file, src: src, lines: yamlspan.LineStarts(src), aliases: aliases}
-	dec := yaml.NewDecoder(bytes.NewReader(yamlspan.KeepDocuments(src, mayHaveCRD)))
-	for {
-		var doc yaml.Node
-		err := dec.Decode(&doc)
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			slog.Debug("skipping unparsable yaml", "file", file, "err", err)
-			return nil
-		}
+	x := crdExtractor{file: file, src: src, lines: yamlspan.LineStarts(src), aliases: env.RegistryAliases}
+	err := env.YAML.Documents(src, mayHaveCRD, func(doc *yaml.Node) {
 		if len(doc.Content) == 1 {
 			x.document(doc.Content[0])
 		}
+	})
+	if err != nil {
+		slog.Debug("skipping unparsable yaml", "file", file, "err", err)
+		return nil
 	}
 	m.links.add(file, &x.fileLinks)
 	return x.deps

@@ -48,9 +48,9 @@ func KeepDocuments(src []byte, keep func(doc []byte) bool) []byte {
 		return src
 	}
 	var out []byte
-	flush := func(start, end int) {
+	eachDocument(src, func(start, end int) {
 		doc := src[start:end]
-		if keep(doc) || bytes.HasPrefix(doc, []byte("%")) || bytes.Contains(doc, []byte("\n%")) {
+		if keep(doc) || hasDirective(doc) {
 			if out != nil {
 				out = append(out, doc...)
 			}
@@ -73,7 +73,19 @@ func KeepDocuments(src []byte, keep func(doc []byte) bool) []byte {
 			}
 			doc = rest
 		}
+	})
+	if out == nil {
+		return src
 	}
+	return out
+}
+
+// eachDocument calls yield with the byte range of every document of src, in order and
+// covering all of src. Documents split at lines starting with "---", except from a document
+// whose root node is a block scalar on ("|" or ">"; its indentation may be 0, so later "---"
+// lines can be its content), which is the last range with everything after it. src must not
+// be unsplittable, whose lines a parser reads differently.
+func eachDocument(src []byte, yield func(start, end int)) {
 	start, split, atRoot := 0, true, true
 	for i := 0; i < len(src) && split; {
 		end := len(src)
@@ -83,7 +95,7 @@ func KeepDocuments(src []byte, keep func(doc []byte) bool) []byte {
 		line := src[i:end]
 		marker := isMarker(line, "---")
 		if i > start && marker {
-			flush(start, i)
+			yield(start, i)
 			start, atRoot = i, true
 		}
 		switch {
@@ -96,11 +108,7 @@ func KeepDocuments(src []byte, keep func(doc []byte) bool) []byte {
 		}
 		i = end
 	}
-	flush(start, len(src))
-	if out == nil {
-		return src
-	}
-	return out
+	yield(start, len(src))
 }
 
 // isMarker reports whether line starts with the document marker m ("---" or "...")

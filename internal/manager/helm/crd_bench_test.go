@@ -8,6 +8,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/yamlspan"
 )
 
 // repoYAML returns the slash path and content of every YAML file of this repository.
@@ -43,8 +46,9 @@ func BenchmarkManifests(b *testing.B) {
 	paths, srcs := repoYAML(b)
 	for b.Loop() {
 		m := &helmManager{}
+		env := manager.Env{YAML: &yamlspan.Parsed{}}
 		for i, p := range paths {
-			m.manifests(p, srcs[i], nil)
+			m.manifests(p, srcs[i], env)
 		}
 	}
 }

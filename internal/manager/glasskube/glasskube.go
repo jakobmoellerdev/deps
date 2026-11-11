@@ -5,8 +5,6 @@ package glasskube
 
 import (
 	"bytes"
-	"errors"
-	"io"
 	"log/slog"
 	"strings"
 
@@ -54,25 +52,19 @@ func (*glasskubeManager) Match(p string) bool {
 // RefSpan on the version, and records the PackageRepository documents and the repository each
 // package names for Link. A file without the Glasskube API group is not parsed; an unparsable
 // one (a template) yields nothing.
-func (m *glasskubeManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
+func (m *glasskubeManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {
 	if !bytes.Contains(src, []byte(group)) {
 		return nil, nil
 	}
 	x := extractor{file: file, src: src, lines: yamlspan.LineStarts(src)}
-	dec := yaml.NewDecoder(bytes.NewReader(yamlspan.KeepDocuments(src, mayHaveResource)))
-	for {
-		var doc yaml.Node
-		err := dec.Decode(&doc)
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			slog.Debug("skipping unparsable yaml", "file", file, "err", err)
-			return nil, nil
-		}
+	err := env.YAML.Documents(src, mayHaveResource, func(doc *yaml.Node) {
 		if len(doc.Content) == 1 {
 			x.document(doc.Content[0])
 		}
+	})
+	if err != nil {
+		slog.Debug("skipping unparsable yaml", "file", file, "err", err)
+		return nil, nil
 	}
 	m.links.add(file, x.repos, x.refs)
 	return x.deps, nil

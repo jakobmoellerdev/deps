@@ -52,9 +52,10 @@ type Env struct {
 	// tree of the scanned root ("" when unset or HEAD is detached), which relative submodule
 	// urls and `branch = .` resolve against. engine.Resolve supplies a git lookup when nil.
 	Superproject func() (origin, branch string, err error)
-	// YAML is the shared single-document parse of the file being extracted: the engine sets
-	// a new one per file and passes the same src to every manager of that file, so managers
-	// reading the same workflow parse it once. nil parses anew.
+	// YAML is the shared parse of the file being extracted: the engine sets a new one per
+	// file and passes the same src to every manager of that file, so managers reading the
+	// same workflow parse it once (Document), and the documents of a multi-document file are
+	// parsed once for all managers keeping them (Documents). nil parses anew.
 	YAML *yamlspan.Parsed
 }
 

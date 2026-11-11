@@ -4,8 +4,6 @@ package crossplane
 
 import (
 	"bytes"
-	"errors"
-	"io"
 	"log/slog"
 	"strings"
 
@@ -55,25 +53,19 @@ func (crossplaneManager) Extract(file string, src []byte, env manager.Env) ([]de
 		return nil, nil
 	}
 	x := docker.Images{Manager: Name, File: file, Src: src, Lines: yamlspan.LineStarts(src), Aliases: env.RegistryAliases}
-	dec := yaml.NewDecoder(bytes.NewReader(yamlspan.KeepDocuments(src, mentionsGroup)))
-	for {
-		var doc yaml.Node
-		err := dec.Decode(&doc)
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			slog.Debug("skipping unparsable yaml", "file", file, "err", err)
-			return nil, nil
-		}
+	err := env.YAML.Documents(src, mentionsGroup, func(doc *yaml.Node) {
 		if len(doc.Content) != 1 {
-			continue
+			return
 		}
 		n := doc.Content[0]
 		g, _, _ := strings.Cut(yamlspan.Value(yamlspan.Get(n, "apiVersion")), "/")
 		if depType := kinds[yamlspan.Value(yamlspan.Get(n, "kind"))]; g == group && depType != "" {
 			x.Add(depType, yamlspan.Get(yamlspan.Get(n, "spec"), "package"))
 		}
+	})
+	if err != nil {
+		slog.Debug("skipping unparsable yaml", "file", file, "err", err)
+		return nil, nil
 	}
 	return x.Deps, nil
 }

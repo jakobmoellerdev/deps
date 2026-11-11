@@ -2,16 +2,18 @@ package yamlspan
 
 import "go.yaml.in/yaml/v4"
 
-// Parsed memoizes the single-document parse (yaml.Unmarshal into a Node) of one file's bytes
-// for the managers extracting that file, so a workflow read by both the github-actions and
-// the docker manager is parsed once. The zero value is ready; a nil *Parsed, or a call with
-// other bytes than the previous call's, parses anew (reusing the node of the previous bytes).
-// A Parsed is not safe for concurrent use, and callers must not modify the returned node.
+// Parsed memoizes the parses of one file's bytes for the managers extracting that file: the
+// single-document parse (yaml.Unmarshal into a Node, Document) of a workflow read by both the
+// github-actions and the docker manager, and the per-document parses of a multi-document file
+// (Documents). The zero value is ready; a nil *Parsed, or a call with other bytes than the
+// previous call's, parses anew (reusing the node of the previous bytes).
+// A Parsed is not safe for concurrent use, and callers must not modify the returned nodes.
 type Parsed struct {
 	src  []byte
 	doc  yaml.Node
 	err  error
 	done bool
+	docs documents
 }
 
 // Document returns the document node of src and the parse error, as yaml.Unmarshal would.

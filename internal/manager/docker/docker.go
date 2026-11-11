@@ -104,7 +104,7 @@ func (dockerManager) Extract(file string, src []byte, env manager.Env) ([]dep.De
 		return nil, nil
 	}
 	x := extractor{file: file, src: src, lines: yamlspan.LineStarts(src), aliases: env.RegistryAliases}
-	x.manifests()
+	x.manifests(env.YAML)
 	return x.deps, nil
 }
 
