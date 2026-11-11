@@ -282,6 +282,13 @@ func parseLine(line string) (pattern, bool) {
 			p.kind, p.text = kindSuffix, line[1:]
 		}
 	}
+	// git's trailing "/**" matches everything inside the prefix but not the prefix itself,
+	// while doublestar's "**" also matches zero path elements. Requiring one more element
+	// keeps a walk from pruning the directory, which would make a later negation
+	// ("build/**" then "!build/go.mod") unreachable.
+	if strings.HasSuffix(p.glob, "/**") {
+		p.glob += "/*"
+	}
 	if p.kind == kindGlob && !doublestar.ValidatePattern(p.glob) {
 		return pattern{}, false
 	}
