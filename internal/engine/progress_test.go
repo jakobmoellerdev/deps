@@ -3,9 +3,14 @@ package engine
 import (
 	"fmt"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/piprequirements"
 )
 
 // recordProgress records the phase events; Done calls are counted per phase.
@@ -61,6 +66,35 @@ func TestResolveProgress(t *testing.T) {
 	}
 	if p.done[PhaseExtract] != 2 || p.errs[PhaseExtract] != 0 || p.done[PhaseResolve] != 3 || p.errs[PhaseResolve] != 1 {
 		t.Errorf("done = %v, errors = %v", p.done, p.errs)
+	}
+}
+
+// Deps looked up only when an advisory affects them (securityOnly: the indirect pins of a
+// compiled requirements file) report their item of the resolve phase too, so the phase
+// reaches the total it started with.
+func TestResolveProgressSecurityOnly(t *testing.T) {
+	root, cfg := setup(t, "", compiledTree())
+	p := &recordProgress{}
+	res, err := Resolve(t.Context(), root, cfg, env, Options{
+		Managers:    []manager.Manager{piprequirements.New()},
+		Datasources: map[string]Datasource{"pypi": compiledReleases},
+		Security:    &fakeSec{vulns: map[string][]Vuln{"urllib3": {vuln("GHSA-u", "2.0.7")}}},
+		Progress:    p,
+	})
+	if err != nil || len(res.Errors) > 0 {
+		t.Fatal(err, res.Errors)
+	}
+	total := -1
+	for _, e := range p.events {
+		if n, ok := strings.CutPrefix(e, "start resolve "); ok {
+			if total, err = strconv.Atoi(n); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	// blinker is an indirect pin without an advisory: it is counted but never resolved.
+	if total < 2 || p.done[PhaseResolve] != total {
+		t.Errorf("resolve done %d of %d, events %q", p.done[PhaseResolve], total, p.events)
 	}
 }
 

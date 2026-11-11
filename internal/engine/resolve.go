@@ -480,6 +480,9 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 		}
 		d := todo[i]
 		t := &outs[i]
+		// Every dep counted in the phase total reports once, the securityOnly deps returning
+		// below included: the phase would otherwise never reach its total.
+		defer func() { prog.Done(PhaseResolve, t.Err) }()
 		if pols[i].securityOnly {
 			if !sec.ready() {
 				free()
@@ -520,7 +523,6 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 			p := r.pending
 			pend[i] = &p
 		}
-		prog.Done(PhaseResolve, t.Err)
 	}
 	// Each dep is resolved on a goroutine of its own, which mostly waits for its lookups. At
 	// most resolveSlots deps of one datasource hold a slot (and a goroutine) at a time:
