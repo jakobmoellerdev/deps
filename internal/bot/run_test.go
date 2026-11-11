@@ -323,6 +323,25 @@ func fingerprintOf(t *testing.T, root string, res *engine.Result, name string) s
 	return ""
 }
 
+// A file the update deletes must not hash like one it empties, and a mode or submodule
+// change is a change of the branch too.
+func TestFingerprintMarkers(t *testing.T) {
+	seen := map[string]string{}
+	for name, changes := range map[string][]engine.FileChange{
+		"content":    {{Path: "f", Mode: 0o644, New: []byte("x")}},
+		"empty":      {{Path: "f", Mode: 0o644, New: []byte{}}},
+		"deleted":    {{Path: "f", Mode: 0o644}},
+		"executable": {{Path: "f", Mode: 0o755, New: []byte("x")}},
+		"gitlink":    {{Path: "f", Mode: 0o644, New: []byte("x"), Gitlink: true}},
+	} {
+		fp := fingerprint(changes)
+		if other, ok := seen[fp]; ok {
+			t.Errorf("%s and %s share the fingerprint %s", name, other, fp)
+		}
+		seen[fp] = name
+	}
+}
+
 func TestRun(t *testing.T) {
 	yes, no := true, false
 	tests := []struct {

@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -1349,12 +1350,26 @@ func build(ctx context.Context, o Options, root, head string, ups []dep.Update, 
 	return changes, nil
 }
 
-// fingerprint hashes the resulting file contents; changes are sorted by path by engine.Build.
+// fingerprint hashes the resulting tree entries: path, whether the file is deleted, its mode
+// and submodule bit and its content. changes are sorted by path by engine.Build.
 func fingerprint(changes []engine.FileChange) string {
 	h := sha256.New()
+	var entry [6]byte // deleted marker, mode, gitlink marker
 	for _, c := range changes {
 		h.Write([]byte(c.Path))
 		h.Write([]byte{0})
+		// Without the markers a deleted file hashes like an empty one, and a mode or
+		// submodule change does not show at all, so the branch is taken as up to date.
+		entry[0] = 'f'
+		if c.New == nil {
+			entry[0] = 'd'
+		}
+		binary.LittleEndian.PutUint32(entry[1:5], uint32(c.Mode))
+		entry[5] = 0
+		if c.Gitlink {
+			entry[5] = 1
+		}
+		h.Write(entry[:])
 		h.Write(c.New)
 		h.Write([]byte{0})
 	}
