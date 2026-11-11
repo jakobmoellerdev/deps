@@ -263,8 +263,10 @@ func readFile(path string) []byte {
 }
 
 // parse compiles the lines of an ignore file, in order. Blank lines, comments ("#", escaped
-// as "\#") and patterns doublestar rejects are dropped.
+// as "\#") and patterns doublestar rejects are dropped. A leading UTF-8 BOM belongs to the
+// file, not to the first pattern, so it is dropped as git's skip_utf8_bom does.
 func parse(data []byte) []pattern {
+	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
 	if len(data) == 0 {
 		return nil
 	}

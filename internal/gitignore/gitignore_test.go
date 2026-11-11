@@ -125,6 +125,13 @@ func TestMatcherRules(t *testing.T) {
 			want: []string{".gitignore", "a.js", "a.ts", "q"},
 		},
 		{
+			// git calls skip_utf8_bom, so with git check-ignore (2.53.0) the first pattern of a
+			// BOM-prefixed file still ignores dist.
+			name: "a leading utf-8 bom is not part of the first pattern",
+			tree: map[string]string{".gitignore": "\ufeffdist\n", "dist/x.txt": "", "keep.txt": ""},
+			want: []string{".gitignore", "keep.txt"},
+		},
+		{
 			name: "comments, blank lines and escapes",
 			tree: map[string]string{".gitignore": "# a comment\n\n\\#hash\n!x.log\n*.log\ntrail   \nkeep\\ me \n", "#hash": "", "x.log": "", "trail": "", "keep me": "", "ok": ""},
 			want: []string{".gitignore", "ok"},
