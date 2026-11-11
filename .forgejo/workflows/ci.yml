@@ -75,19 +75,17 @@ jobs:
           PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
         run: packaging/publish.sh dist/*.deb dist/*.rpm dist/*.pkg.tar.zst dist/*.apk
       - name: Publish release
-        # gt (the Gitea CLI, preinstalled on the runner) uses GITEA_TOKEN and the Actions server URL.
+        # packaging/forge-release.sh talks to the forge API with the job token; no forge CLI on the runner.
         env:
-          GITEA_TOKEN: ${{ github.token }}
-          GITEA_CLI_NO_UPDATE_NOTIFIER: "1"
+          FORGEJO_TOKEN: ${{ github.token }}
         run: |
-          gt release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --notes-file dist/RELEASE_NOTES.md --no-input \
+          packaging/forge-release.sh create "$GITHUB_REF_NAME" dist/RELEASE_NOTES.md \
             dist/deps_*.tar.xz dist/deps_*.zip dist/*.deb dist/*.rpm dist/*.pkg.tar.zst dist/*.apk dist/deps.schema.json dist/checksums.txt
       - name: Attach the GitHub attestations
-        # Gitea has no Actions OIDC, so the release is attested on the GitHub mirror, which builds the
+        # Forgejo has no Actions OIDC, so the release is attested on the GitHub mirror, which builds the
         # same bytes. Waits (up to 30 min) for the GitHub release, verifies every bundle against
         # dist/ with cosign and uploads the bundles and SBOMs here. The release above is already
-        # public, so a failure only leaves it unattested; re-run with .gitea/workflows/attest.yml.
+        # public, so a failure only leaves it unattested; re-run with .forgejo/workflows/attest.yml.
         env:
-          GITEA_TOKEN: ${{ github.token }}
-          GITEA_CLI_NO_UPDATE_NOTIFIER: "1"
+          FORGEJO_TOKEN: ${{ github.token }}
         run: task release:attest-from-github TAG="${GITHUB_REF_NAME}" DIR=dist

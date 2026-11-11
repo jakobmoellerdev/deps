@@ -161,7 +161,7 @@ permissions:
   issues: write # only for dashboard.enabled
 ```
 
-**Where the action comes from.** `uses: jakobmoellerdev/deps@…` resolves to [github.com/jakobmoellerdev/deps](https://github.com/jakobmoellerdev/deps), the public push mirror of the Gitea repository, so any workflow can use it. The defaults download the binary from the mirror's releases.
+**Where the action comes from.** `uses: jakobmoellerdev/deps@…` resolves to [github.com/jakobmoellerdev/deps](https://github.com/jakobmoellerdev/deps), the public push mirror of the Forgejo repository, so any workflow can use it. The defaults download the binary from the mirror's releases.
 
 ### Commit identity of the App
 
@@ -233,7 +233,7 @@ jobs:
           log-level: info
 ```
 
-**`uses:` needs the full URL.** A short `jakobmoellerdev/deps@v0.11.0` is resolved against the instance's `DEFAULT_ACTIONS_URL`, which is github.com by default. This repository's own workflow (`.gitea/workflows/deps.yml`) is this example plus the bot token, signing key and identity, pinned to the latest release; deps opens the PR that bumps that pin after each release. It also has a `dry-run` job for pull requests ([Preview on pull requests](#preview-on-pull-requests)).
+**`uses:` needs the full URL.** A short `jakobmoellerdev/deps@v0.11.0` is resolved against the instance's `DEFAULT_ACTIONS_URL`, which is github.com by default. This repository's own workflow (`.forgejo/workflows/deps.yml`) is this example plus the bot token, signing key and identity, pinned to the latest release; deps opens the PR that bumps that pin after each release. It also has a `dry-run` job for pull requests ([Preview on pull requests](#preview-on-pull-requests)).
 
 **The job token (`GITEA_TOKEN`).** Its permissions come from:
 
@@ -962,7 +962,7 @@ jobs:
 
 On fork PRs `GITHUB_TOKEN` is read-only, so deps prints `note    no check run …` and only writes the job summary.
 
-deps itself previews code changes this way. The `dry-run` job in `.gitea/workflows/deps.yml` builds deps from the PR, runs `plan` on the PR checkout, and runs `run --dry-run` on a checkout of the base branch. So the PR's code runs against the real repository and its open PRs, with the base branch's config. The job has its own concurrency group per PR, so it doesn't queue behind a running deps job:
+deps itself previews code changes this way. The `dry-run` job in `.forgejo/workflows/deps.yml` builds deps from the PR, runs `plan` on the PR checkout, and runs `run --dry-run` on a checkout of the base branch. So the PR's code runs against the real repository and its open PRs, with the base branch's config. The job has its own concurrency group per PR, so it doesn't queue behind a running deps job:
 
 ```yaml
 on:
@@ -1202,7 +1202,7 @@ GitHub runners download from the mirror because the Gitea instance's edge blocks
 - pull requests and issues are disabled on the mirror;
 - the push mirror prunes foreign branches.
 
-Pushing a `v*` tag runs `.gitea/workflows/ci.yml`. Its `check` job (`task check`) and `test` job (`task cover`) run in parallel, each with Go from `actions/setup-go@v7.0.0` (`go-version-file: go.mod`, i.e. `toolchain go1.27.3`, and `cache: true`); `check` also restores the pinned golangci-lint binary from `actions/cache`. Then the `release` job runs (`needs: [check, test]`, `contents: write`):
+Pushing a `v*` tag runs `.forgejo/workflows/ci.yml`. Its `check` job (`task check`) and `test` job (`task cover`) run in parallel, each with Go from `actions/setup-go@v7.0.0` (`go-version-file: go.mod`, i.e. `toolchain go1.27.3`, and `cache: true`); `check` also restores the pinned golangci-lint binary from `actions/cache`. Then the `release` job runs (`needs: [check, test]`, `contents: write`):
 
 1. `task release:build VERSION=<tag>` builds `dist/bin/deps_<os>_<arch>` for `linux`, `darwin` and `windows` (`.exe`) on `amd64` and `arm64` with `CGO_ENABLED=0`, `-trimpath` and `-ldflags "-s -w -buildid= -X main.version=<tag>"`. `task release:archives` (`packaging/archive.sh`, which runs `hack/archive`) packs each into the release archive, and `task release:checksums` writes `dist/checksums.txt` (`sha256sum`) over the files to upload; `dist/bin/` itself is not released:
    - `dist/deps_<linux|darwin>_<arch>.tar.xz`: `deps` (0755), `LICENSE` and `completions/deps.bash`, `completions/_deps` (zsh), `completions/deps.fish` (0644);
@@ -1219,12 +1219,12 @@ Pushing a `v*` tag runs `.gitea/workflows/ci.yml`. Its `check` job (`task check`
    - `dist/deps-<pkgver>-1-x86_64.pkg.tar.zst` and `dist/deps-<pkgver>-1-aarch64.pkg.tar.zst`, by `packaging/nfpm/build.sh archlinux`;
    - `dist/deps-<pkgver>-r0-x86_64.apk` and `dist/deps-<pkgver>-r0-aarch64.apk`, by `packaging/nfpm/build.sh apk`.
 5. `packaging/publish.sh dist/*.deb dist/*.rpm dist/*.pkg.tar.zst dist/*.apk` uploads the packages to the owner's Debian, RPM, Arch Linux and Alpine package registries (see below).
-6. `gt release create <tag> --verify-tag --notes-file dist/RELEASE_NOTES.md` publishes the release with the notes, the archives, the packages, `deps.schema.json` and `checksums.txt`. `gt` is the Gitea CLI on the runner, authenticated with `GITEA_TOKEN`, the job token. The GitHub release gets the same assets.
+6. `packaging/forge-release.sh create <tag> dist/RELEASE_NOTES.md <files>` publishes the release with the notes, the archives, the packages, `deps.schema.json` and `checksums.txt`. It talks to the forge API directly (`POST /releases`, then one asset per file, replacing assets of the same name), authenticated with `FORGEJO_TOKEN`, the job token, so the runner image needs no forge CLI. The GitHub release gets the same assets.
 7. `task release:attest-from-github TAG=<tag> DIR=dist` waits for the GitHub release's attestations, verifies them against `dist/` and attaches them (see [Attestations](#attestations)). The release is already public at this point, so a failure here only leaves it without attestations until the backfill runs.
 
-**Homebrew and Nix.** The repository is its own Homebrew tap (`Formula/deps.rb`) and a flake (`flake.nix`), both installing the `deps_<darwin|linux>_<arch>.tar.xz` release archives per platform: the binary and the completions in the archive. The release job touches neither; deps' own run (`.gitea/workflows/deps.yml`) finds the new release with its `homebrew` and `nix` managers and opens one PR per file that moves the four URLs, their hashes (downloaded and hashed) and the version together.
+**Homebrew and Nix.** The repository is its own Homebrew tap (`Formula/deps.rb`) and a flake (`flake.nix`), both installing the `deps_<darwin|linux>_<arch>.tar.xz` release archives per platform: the binary and the completions in the archive. The release job touches neither; deps' own run (`.forgejo/workflows/deps.yml`) finds the new release with its `homebrew` and `nix` managers and opens one PR per file that moves the four URLs, their hashes (downloaded and hashed) and the version together.
 
-git-cliff is installed from its GitHub release instead of through `orhun/git-cliff-action`. That action always sends `github.token` to api.github.com to find the release, and on Gitea that token is a Gitea token, so the request fails with 401.
+git-cliff is installed from its GitHub release instead of through `orhun/git-cliff-action`. That action always sends `github.token` to api.github.com to find the release, and on Forgejo that token is a Forgejo token, so the request fails with 401.
 
 **Packages.** Each package holds `/usr/bin/deps` and the bash, zsh and fish completions, generated by `deps completion` from the binary of the build machine's architecture (`packaging/common.sh`). None depends on anything for the binary, which is static; `deps run` needs `git`.
 
@@ -1293,21 +1293,21 @@ Users verify downloads with `gh attestation verify` or cosign ([Verify a downloa
 
    The job needs `id-token: write` and `attestations: write` besides `contents: write`; `artifact-metadata: write` is only needed for registry storage records, which deps does not create. The attestations land in the repository's attestations API, and the Sigstore bundles become release assets: `<file>.sigstore.json` for every file (copies of the one provenance bundle; a bundle with several subjects verifies each of them), `deps_linux_<arch>.tar.xz.sbom.sigstore.json` and `deps_linux_<arch>.tar.xz.spdx.json`. The packages are not SBOM-attested on their own: they contain the same binary, whose SBOM describes them.
 2. **Gitea reuses them.** Gitea can't sign itself:
-   - Gitea 28 Actions has no OIDC tokens ([go-gitea/gitea#39052](https://github.com/go-gitea/gitea/issues/39052), planned for 29.0);
-   - the public Fulcio trusts only known OIDC issuers, and no Gitea instance is one of them;
-   - Gitea has no attestations API, so `gh attestation verify` without `--bundle` works only against GitHub.
+   - Forgejo Actions has no OIDC tokens (as Gitea 28, [go-gitea/gitea#39052](https://github.com/go-gitea/gitea/issues/39052));
+   - the public Fulcio trusts only known OIDC issuers, and no Forgejo instance is one of them;
+   - Forgejo has no attestations API, so `gh attestation verify` without `--bundle` works only against GitHub.
 
-   Both forges build the same commit reproducibly, so the files are byte-identical and GitHub's attestations hold for the Gitea files as well. `packaging/attest-from-github.sh <tag> [dir]` (via `task release:attest-from-github`, which installs cosign at the version and sha256 pinned in `.env`):
-   1. checks the Gitea files (`dir`, or downloaded from the Gitea release with `gt release download`) against their `checksums.txt`;
+   Both forges build the same commit reproducibly, so the files are byte-identical and GitHub's attestations hold for the Forgejo files as well. `packaging/attest-from-github.sh <tag> [dir]` (via `task release:attest-from-github`, which installs cosign at the version and sha256 pinned in `.env`):
+   1. checks the Forgejo files (`dir`, or downloaded from the Forgejo release with `packaging/forge-release.sh download`) against their `checksums.txt`;
    2. polls `https://github.com/jakobmoellerdev/deps/releases/download/<tag>/<asset>` anonymously every 30 s (`ATTEST_INTERVAL`) for up to 30 min (`ATTEST_TIMEOUT`) until every bundle and SBOM exists. The tag first has to reach GitHub through the push mirror, and the GitHub build takes a few minutes;
-   3. verifies every bundle against the Gitea file with `cosign verify-blob-attestation` (`--type slsaprovenance1` for provenance, `--type https://spdx.dev/Document/v2.3` for SBOMs), checks that each SBOM asset equals the attested predicate, and fails before uploading anything if one doesn't match. A pass also proves that both builders produced the same bytes;
-   4. uploads the bundles and SBOMs to the Gitea release with `gt release upload --clobber`, so re-runs are idempotent.
+   3. verifies every bundle against the Forgejo file with `cosign verify-blob-attestation` (`--type slsaprovenance1` for provenance, `--type https://spdx.dev/Document/v2.3` for SBOMs), checks that each SBOM asset equals the attested predicate, and fails before uploading anything if one doesn't match. A pass also proves that both builders produced the same bytes;
+   4. uploads the bundles and SBOMs to the Forgejo release with `packaging/forge-release.sh upload`, which replaces assets of the same name, so re-runs are idempotent.
 
 **Identity.** The certificates are issued by `https://token.actions.githubusercontent.com` to the workflow `https://github.com/jakobmoellerdev/deps/.github/workflows/release.yml@<ref>`, where `<ref>` is `refs/tags/<tag>` for a tag push. A `workflow_dispatch` republish signs as the ref it was dispatched on, normally `refs/heads/main`, even though it builds the tag; the script accepts exactly these two identities, and its provenance names `main` as the workflow ref. Dispatch with `--ref <tag>` to sign as the tag, but only tags whose `release.yml` already attests (after v0.4.0) have the attest steps.
 
 **Republishing old tags.** The build uses the tag's Taskfile, while `release:sbom` comes from the Taskfile of the workflow's own revision (a sparse checkout into `.release-tooling`), so tags older than the SBOM task can be republished and attested.
 
-**Backfill.** `.gitea/workflows/attest.yml` (`workflow_dispatch`, input `tag`) runs the script against the files of an existing Gitea release: for releases made before attestations existed, after a GitHub republish, or when the release job's attest step failed. To attest an older release, republish it on GitHub first, then backfill:
+**Backfill.** `.forgejo/workflows/attest.yml` (`workflow_dispatch`, input `tag`) runs the script against the files of an existing Forgejo release: for releases made before attestations existed, after a GitHub republish, or when the release job's attest step failed. To attest an older release, republish it on GitHub first, then backfill:
 
 ```sh
 gh workflow run release.yml -R jakobmoellerdev/deps -f tag=v0.6.0   # wait for it: gh run watch -R jakobmoellerdev/deps

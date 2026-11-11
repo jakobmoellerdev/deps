@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Attaches the GitHub mirror's Sigstore attestations of a release to the Gitea release of the same
+# Attaches the GitHub mirror's Sigstore attestations of a release to the Forgejo release of the same
 # tag. Usage: attest-from-github.sh <tag> [dir]
 #
-# Gitea Actions has no OIDC tokens, so Gitea cannot sign keyless itself. The GitHub release of the
+# Forgejo Actions has no OIDC tokens, so Forgejo cannot sign keyless itself. The GitHub release of the
 # same tag is built from the same commit with the same reproducible build and attested there. This
 # script waits until the GitHub release has every bundle, verifies each one with cosign against the
-# Gitea-built file (which also proves both builders produced the same bytes) and uploads the
-# bundles and SBOMs to the Gitea release. Any mismatch fails the script before anything is uploaded.
+# Forgejo-built file (which also proves both builders produced the same bytes) and uploads the
+# bundles and SBOMs to the Forgejo release. Any mismatch fails the script before anything is uploaded.
 #
-# <dir> holds the Gitea-built release files (dist/ in the release job). Without it, the files are
-# downloaded from the Gitea release.
+# <dir> holds the Forgejo-built release files (dist/ in the release job). Without it, the files are
+# downloaded from the Forgejo release.
 #
 # Environment:
 #   COSIGN            cosign binary (default cosign; `task release:attest-from-github` passes the
@@ -17,9 +17,9 @@
 #   GITHUB_REPO       GitHub repository with the attestations (default jakobmoellerdev/deps)
 #   ATTEST_TIMEOUT    seconds to wait for the GitHub assets (default 1800)
 #   ATTEST_INTERVAL   seconds between polls (default 30)
-#   GITEA_TOKEN       token for gt (the job token in Actions)
+#   FORGEJO_TOKEN     forge API token for packaging/forge-release.sh (the job token in Actions)
 #
-# Re-runs are idempotent: the assets are uploaded with --clobber.
+# Re-runs are idempotent: an asset of the same name is replaced.
 set -euo pipefail
 
 tag=${1:?usage: attest-from-github.sh <tag> [dir]}
@@ -39,9 +39,9 @@ trap 'rm -rf "$tmp"' EXIT
 
 if [[ -z $dir ]]; then
 	dir=$tmp/release
-	gt release download "$tag" checksums.txt --dir "$dir" --no-input
+	packaging/forge-release.sh download "$tag" "$dir" checksums.txt
 	mapfile -t files < <(awk '{print $2}' "$dir/checksums.txt")
-	gt release download "$tag" "${files[@]}" --dir "$dir" --no-input
+	packaging/forge-release.sh download "$tag" "$dir" "${files[@]}"
 fi
 (cd "$dir" && sha256sum -c --quiet checksums.txt)
 
@@ -104,4 +104,4 @@ for f in "${linux[@]}"; do
 done
 echo "verified ${#want[@]} attestation assets of $tag against $dir"
 
-gt release upload "$tag" --clobber --no-input "${want[@]/#/$out/}"
+packaging/forge-release.sh upload "$tag" "${want[@]/#/$out/}"

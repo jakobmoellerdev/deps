@@ -1,8 +1,8 @@
 # Runs deps on the GitHub mirror of git.jakob-moeller.cloud/jakobmoellerdev/deps.
-# The mirror has pull requests and issues disabled, and it is a Gitea push mirror (every sync
-# force-pushes Gitea's refs and prunes all others), so deps cannot open PRs here. It runs `plan`
-# instead: the same action, binary download, platform setup and resolution as on Gitea, with
-# the updates listed in the job summary. PRs are made on Gitea.
+# The mirror has pull requests and issues disabled, and it is a Forgejo push mirror (every sync
+# force-pushes Forgejo's refs and prunes all others), so deps cannot open PRs here. It runs `plan`
+# instead: the same action, binary download, platform setup and resolution as on Forgejo, with
+# the updates listed in the job summary. PRs are made on Forgejo.
 name: deps
 on:
   schedule:

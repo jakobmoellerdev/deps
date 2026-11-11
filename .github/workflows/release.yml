@@ -1,10 +1,10 @@
 # Publishes each v* release on the GitHub mirror too, so GitHub runners download the action's
-# binary from github.com. The tag arrives through the Gitea push mirror; tests already ran on
-# Gitea for that commit, so this only builds, writes the notes, attests and publishes.
+# binary from github.com. The tag arrives through the Forgejo push mirror; tests already ran on
+# Forgejo for that commit, so this only builds, writes the notes, attests and publishes.
 #
 # The release files are attested keyless with Sigstore (SLSA build provenance for every file, an
 # SPDX SBOM of each Linux binary for the archive that ships it). The bundles are release assets
-# too; the Gitea release job verifies them against its own byte-identical build and attaches them
+# too; the Forgejo release job verifies them against its own byte-identical build and attaches them
 # there (packaging/attest-from-github.sh).
 name: release
 on:
