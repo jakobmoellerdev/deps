@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 
 	mavends "git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource/maven"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -44,16 +45,17 @@ var verificationTypes = [...]struct{ name, elem string }{
 // engine.LockMaintainer,
 // engine.ScopeSiblingLister): it rewrites the dependency lockfiles and the dependency
 // verification metadata of a Gradle build after deps patched its build files, by running
-// the build's `dependencies` tasks on a temporary copy.
-type GradleLocker struct{}
+// the build's `dependencies` tasks on a temporary copy. Scopes memoizes the scans of the
+// build roots; without it every call scans again.
+type GradleLocker struct{ Scopes *ScopeCache }
 
 // Scope is the build root, the nearest directory at or above the manifest with a settings
 // script (else the manifest's directory, or the parent of a gradle/ directory); sources under
 // buildSrc/ (shared versions) belong to the build above buildSrc, whose scripts use them. ok
 // only when the build locks dependencies or verifies them.
-func (GradleLocker) Scope(_ context.Context, root, manifest string) (string, bool) {
+func (g GradleLocker) Scope(_ context.Context, root, manifest string) (string, bool) {
 	dir := GradleRoot(root, manifest)
-	l := scanGradle(filepath.Join(root, filepath.FromSlash(dir)), true)
+	l := g.Scopes.scan(filepath.Join(root, filepath.FromSlash(dir)), true)
 	return dir, len(l.lockfiles) > 0 || l.verification
 }
 
@@ -97,8 +99,8 @@ func (GradleLocker) Siblings() []string {
 
 // ScopeSiblings lists the lockfiles of every project of the build at dir, its verification
 // metadata and keyrings.
-func (GradleLocker) ScopeSiblings(dir string) []string {
-	l := scanGradle(dir, false)
+func (g GradleLocker) ScopeSiblings(dir string) []string {
+	l := g.Scopes.scan(dir, false)
 	if !l.verification {
 		return l.lockfiles
 	}
@@ -112,15 +114,57 @@ func (GradleLocker) ScopeSiblings(dir string) []string {
 	return names
 }
 
+// ScopeCache memoizes the scans of Gradle build roots (scanGradle) by absolute directory, so
+// that the files of one build patched in a run, which all have the same build root, scan it
+// once instead of once each. The files must not change while it is in use; the zero value is
+// not usable, use NewScopeCache.
+type ScopeCache struct {
+	mu sync.Mutex
+	m  map[scanKey]*scanEntry
+}
+
+type scanKey struct {
+	dir   string
+	first bool
+}
+
+type scanEntry struct {
+	once   sync.Once
+	layout gradleLayout
+}
+
+// NewScopeCache returns an empty ScopeCache.
+func NewScopeCache() *ScopeCache { return &ScopeCache{m: map[scanKey]*scanEntry{}} }
+
+// scan is scanGradle of dir, memoized when c is not nil; a full scan answers a first one too.
+func (c *ScopeCache) scan(dir string, first bool) gradleLayout {
+	if c == nil {
+		return scanGradle(dir, first)
+	}
+	key := scanKey{dir, first}
+	c.mu.Lock()
+	e := c.m[key]
+	if e == nil && first {
+		e = c.m[scanKey{dir: dir}]
+	}
+	if e == nil {
+		e = &scanEntry{}
+		c.m[key] = e
+	}
+	c.mu.Unlock()
+	e.once.Do(func() { e.layout = scanGradle(dir, first) })
+	return e.layout
+}
+
 // gradleLayout is what a build root contains of the files GradleLocker maintains.
 type gradleLayout struct {
 	lockfiles    []string // slash paths relative to the build root, sorted
 	verification bool
 }
 
-// scanGradle finds the lockfiles below the build root dir, leaving out .git, .gradle,
-// projects' build directories and nested builds (buildSrc and directories with a settings
-// script); with first it stops at the first one.
+// scanGradle finds the lockfiles below the build root dir, leaving out .git, .gradle, other
+// dot directories, node_modules, projects' build directories and nested builds (buildSrc and
+// directories with a settings script); with first it stops at the first one.
 func scanGradle(dir string, first bool) gradleLayout {
 	var l gradleLayout
 	l.verification = hasAny(dir, filepath.FromSlash(VerificationMetadata))
@@ -133,7 +177,7 @@ func scanGradle(dir string, first bool) gradleLayout {
 			return nil //nolint:nilerr // unreadable parts of the tree are not scanned
 		}
 		if d.IsDir() {
-			if p != dir && (gradleSkip(p, d) || d.Name() == "buildSrc" || hasAny(p, settingsFiles...)) {
+			if p != dir && (gradleSkip(p, d) || scanSkip(d.Name()) || hasAny(p, settingsFiles...)) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -152,6 +196,13 @@ func scanGradle(dir string, first bool) gradleLayout {
 	})
 	slices.Sort(l.lockfiles)
 	return l
+}
+
+// scanSkip reports the directories scanGradle does not descend into beyond those gradleSkip
+// leaves out of a copy: nested builds (buildSrc), the dot directories of tools (.idea,
+// .github) and node_modules, which hold no Gradle lockfile but most of the files of a repo.
+func scanSkip(name string) bool {
+	return name == "buildSrc" || name == "node_modules" || strings.HasPrefix(name, ".")
 }
 
 // isLockfile reports whether the slash path is a Gradle lockfile.

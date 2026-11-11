@@ -51,6 +51,8 @@ func TestGradleScope(t *testing.T) {
 			"buildSrc/build.gradle.kts", "buildSrc", true},
 		{"buildSrc locks not the root's", map[string]string{"settings.gradle.kts": "", "build.gradle.kts": "", "buildSrc/gradle.lockfile": lock},
 			"build.gradle.kts", ".", false},
+		{"node_modules ignored", map[string]string{"settings.gradle": "", "build.gradle": "", "web/node_modules/p/gradle.lockfile": lock}, "build.gradle", ".", false},
+		{"dot directory ignored", map[string]string{"settings.gradle": "", "build.gradle": "", ".idea/gradle.lockfile": lock}, "build.gradle", ".", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -60,6 +62,30 @@ func TestGradleScope(t *testing.T) {
 				t.Errorf("Scope = %q, %v; want %q, %v", dir, ok, tc.dir, tc.ok)
 			}
 		})
+	}
+}
+
+// TestScopeCache checks that a ScopeCache answers the repeated Scope calls of the files of
+// one build with what a scan returns, and that a full scan it holds answers them too.
+func TestScopeCache(t *testing.T) {
+	lock := fixture(t, "solr-gradle.lockfile")
+	root := t.TempDir()
+	write(t, root, map[string]string{"settings.gradle": "", "a/build.gradle": "", "b/build.gradle": "", "a/gradle.lockfile": lock})
+	plain := t.TempDir()
+	write(t, plain, map[string]string{"settings.gradle": "", "a/build.gradle": ""})
+	l := GradleLocker{Scopes: NewScopeCache()}
+	for range 2 {
+		for _, m := range []string{"a/build.gradle", "b/build.gradle"} {
+			if dir, ok := l.Scope(t.Context(), root, m); dir != "." || !ok {
+				t.Errorf("Scope(%s) = %q, %v", m, dir, ok)
+			}
+			if dir, ok := l.Scope(t.Context(), plain, "a/build.gradle"); dir != "." || ok {
+				t.Errorf("Scope without a lockfile = %q, %v", dir, ok)
+			}
+		}
+		if got := l.ScopeSiblings(root); !slices.Equal(got, []string{"a/gradle.lockfile"}) {
+			t.Errorf("ScopeSiblings = %v", got)
+		}
 	}
 }
 
