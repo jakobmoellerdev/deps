@@ -113,12 +113,12 @@ func TestVersions(t *testing.T) {
 				envCalls.Add(1)
 				return gotool.GoEnv{Proxy: strings.ReplaceAll(tt.proxy, "{}", srv.URL), NoProxy: tt.noProxy}, nil
 			}
-			s.list = func(_ context.Context, dir, path string) ([]string, error) {
+			s.list = func(_ context.Context, dir string, mods ...string) (map[string]gotool.ModuleVersions, error) {
 				listCalls.Add(1)
-				if dir != "/mod/dir" || path != tt.modPath {
-					t.Errorf("list(%q, %q)", dir, path)
+				if dir != "/mod/dir" || len(mods) != 1 || mods[0] != tt.modPath {
+					t.Errorf("list(%q, %q)", dir, mods)
 				}
-				return listed, nil
+				return map[string]gotool.ModuleVersions{tt.modPath: {Versions: listed}}, nil
 			}
 
 			for range 2 { // second call must be served from the in-run cache
@@ -161,9 +161,9 @@ func TestDatasource(t *testing.T) {
 	s := New(http.DefaultClient, nil)
 	s.env = func(context.Context) (gotool.GoEnv, error) { return gotool.GoEnv{Proxy: "direct"}, nil }
 	var gotDir string
-	s.list = func(_ context.Context, dir, _ string) ([]string, error) {
+	s.list = func(_ context.Context, dir string, mods ...string) (map[string]gotool.ModuleVersions, error) {
 		gotDir = dir
-		return []string{"v1.0.0", "v1.1.0"}, nil
+		return map[string]gotool.ModuleVersions{mods[0]: {Versions: []string{"v1.0.0", "v1.1.0"}}}, nil
 	}
 	var ds datasource.Datasource = s
 	d := dep.Dep{Name: "example.com/m"}
@@ -232,6 +232,71 @@ func TestReleasesPackagePath(t *testing.T) {
 	}
 }
 
+// The prefixes of a package path whose lookups end at the go command (a GONOPROXY module, or
+// `direct`) are listed by one `go list` run, where every prefix used to start one of its own,
+// each fetching from the module's repository. A `|` behind `direct` keeps them apart: it
+// retries the next GOPROXY entry after a failure, which a batched run would skip.
+func TestReleasesPackagePathOneGoList(t *testing.T) {
+	const pkg = "private.example/tools/v2/cmd/lint"
+	wantMods := []string{pkg, "private.example/tools/v2/cmd", "private.example/tools/v2", "private.example/tools"}
+	tests := []struct {
+		name, proxy, noProxy string
+		wantRuns             [][]string
+	}{
+		{"GONOPROXY module", "https://proxy.test", "private.example", [][]string{wantMods}},
+		{"direct first", "direct,https://proxy.test", "", [][]string{wantMods}},
+		{"direct with a fallback", "direct|https://proxy.test", "", [][]string{{wantMods[0]}, {wantMods[1]}, {wantMods[2]}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			notFound := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusNotFound, Body: http.NoBody, Request: r}, nil
+			})
+			s := New(&http.Client{Transport: notFound}, make(chan struct{}, 2))
+			s.env = func(context.Context) (gotool.GoEnv, error) {
+				return gotool.GoEnv{Proxy: tt.proxy, NoProxy: tt.noProxy}, nil
+			}
+			var runs [][]string
+			s.list = func(_ context.Context, dir string, mods ...string) (map[string]gotool.ModuleVersions, error) {
+				if dir != "/mod/dir" {
+					t.Errorf("list dir = %q", dir)
+				}
+				runs = append(runs, mods)
+				res := make(map[string]gotool.ModuleVersions, len(mods))
+				for _, m := range mods {
+					if m == "private.example/tools/v2" {
+						res[m] = gotool.ModuleVersions{Versions: []string{"v2.0.0", "v2.1.0"}}
+						continue
+					}
+					res[m] = gotool.ModuleVersions{Err: errors.New("no matching versions for " + m)}
+				}
+				return res, nil
+			}
+			d := dep.Dep{Manager: "mise", Name: pkg}
+			for range 2 { // the second lookup is served from the in-run cache
+				rels, err := s.Releases(t.Context(), d, "/mod/dir")
+				if err != nil || !reflect.DeepEqual(rels, []datasource.Release{{Version: "v2.0.0"}, {Version: "v2.1.0"}}) {
+					t.Fatalf("Releases = %+v, %v", rels, err)
+				}
+			}
+			if !reflect.DeepEqual(runs, tt.wantRuns) {
+				t.Errorf("go list runs = %q, want %q", runs, tt.wantRuns)
+			}
+		})
+	}
+}
+
+// listing is a `go list` stub answering every module it is asked for with vs.
+func listing(vs ...string) func(context.Context, string, ...string) (map[string]gotool.ModuleVersions, error) {
+	return func(_ context.Context, _ string, mods ...string) (map[string]gotool.ModuleVersions, error) {
+		res := make(map[string]gotool.ModuleVersions, len(mods))
+		for _, m := range mods {
+			res[m] = gotool.ModuleVersions{Versions: vs}
+		}
+		return res, nil
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
@@ -268,7 +333,7 @@ func TestVersionsTransportErrors(t *testing.T) {
 			s.env = func(context.Context) (gotool.GoEnv, error) {
 				return gotool.GoEnv{Proxy: "https://proxy.test,direct"}, nil
 			}
-			s.list = func(context.Context, string, string) ([]string, error) {
+			s.list = func(context.Context, string, ...string) (map[string]gotool.ModuleVersions, error) {
 				t.Error("comma must not fall through on a transport error")
 				return nil, nil
 			}
@@ -290,7 +355,7 @@ func TestVersionsCanceledWaitingForSlot(t *testing.T) {
 				return nil, errors.New("unexpected")
 			})}, sem)
 			s.env = func(context.Context) (gotool.GoEnv, error) { return gotool.GoEnv{Proxy: proxy}, nil }
-			s.list = func(context.Context, string, string) ([]string, error) {
+			s.list = func(context.Context, string, ...string) (map[string]gotool.ModuleVersions, error) {
 				t.Error("go list run without a slot")
 				return nil, nil
 			}
@@ -393,7 +458,7 @@ func TestReleaseTime(t *testing.T) {
 			s.env = func(context.Context) (gotool.GoEnv, error) {
 				return gotool.GoEnv{Proxy: strings.ReplaceAll(tt.proxy, "{}", srv.URL), NoProxy: tt.noProxy}, nil
 			}
-			s.list = func(context.Context, string, string) ([]string, error) { return []string{"v1.0.0"}, nil }
+			s.list = listing("v1.0.0")
 			var infoCalls atomic.Int32
 			s.info = func(_ context.Context, dir, path, version string) (time.Time, error) {
 				infoCalls.Add(1)
@@ -642,7 +707,7 @@ func TestMajorPathsReuseLookup(t *testing.T) {
 	s.env = func(context.Context) (gotool.GoEnv, error) {
 		return gotool.GoEnv{Proxy: srv.URL + "/p,direct"}, nil
 	}
-	s.list = func(context.Context, string, string) ([]string, error) { return []string{"v2.0.0"}, nil }
+	s.list = listing("v2.0.0")
 	names := func(ps []datasource.ModulePath) []string {
 		var out []string
 		for _, p := range ps {
@@ -728,7 +793,7 @@ func TestMajorPaths(t *testing.T) {
 	s.env = func(context.Context) (gotool.GoEnv, error) {
 		return gotool.GoEnv{Proxy: srv.URL + "/p,direct", NoProxy: "private.example"}, nil
 	}
-	s.list = func(context.Context, string, string) ([]string, error) {
+	s.list = func(context.Context, string, ...string) (map[string]gotool.ModuleVersions, error) {
 		t.Error("major paths must not run go list")
 		return nil, nil
 	}
@@ -823,7 +888,7 @@ func TestFileProxy(t *testing.T) {
 			s.env = func(context.Context) (gotool.GoEnv, error) {
 				return gotool.GoEnv{Proxy: strings.ReplaceAll(tt.proxy, "{}", srv.URL)}, nil
 			}
-			s.list = func(context.Context, string, string) ([]string, error) {
+			s.list = func(context.Context, string, ...string) (map[string]gotool.ModuleVersions, error) {
 				t.Error("a file proxy must not run go list")
 				return nil, nil
 			}

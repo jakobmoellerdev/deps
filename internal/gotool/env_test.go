@@ -118,20 +118,25 @@ func TestListVersions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	vs, err := ListVersions(t.Context(), dir, "example.com/My/mod")
+	// One run answers every module: the one the proxy has, and next to it the one it does
+	// not, which alone would have ended the run.
+	res, err := ListVersions(t.Context(), dir, "example.com/My/mod", "example.com/missing")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"v1.0.0", "v1.1.0", "v1.2.0"}; !slices.Equal(vs, want) {
-		t.Fatalf("versions = %v, want %v", vs, want)
+	if len(res) != 2 {
+		t.Fatalf("listed %d modules, want 2: %v", len(res), res)
 	}
-
-	_, err = ListVersions(t.Context(), dir, "example.com/missing")
-	if err == nil || !strings.HasPrefix(err.Error(), "go list -m -versions -json example.com/missing: ") {
-		t.Fatalf("err = %v", err)
+	listed := res["example.com/My/mod"]
+	if want := []string{"v1.0.0", "v1.1.0", "v1.2.0"}; listed.Err != nil || !slices.Equal(listed.Versions, want) {
+		t.Fatalf("versions = %v, %v, want %v", listed.Versions, listed.Err, want)
 	}
-	if strings.HasSuffix(err.Error(), ": ") {
-		t.Fatalf("err lacks stderr tail: %v", err)
+	missing := res["example.com/missing"]
+	if missing.Err == nil || !strings.HasPrefix(missing.Err.Error(), "go list -m -versions example.com/missing: ") {
+		t.Fatalf("missing module err = %v", missing.Err)
+	}
+	if strings.HasSuffix(missing.Err.Error(), ": ") {
+		t.Fatalf("err lacks what go reported: %v", missing.Err)
 	}
 }
 

@@ -6,9 +6,11 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -83,17 +85,45 @@ func defaultModCache() string {
 	return ""
 }
 
-// ListVersions returns the known versions of module mod via `go list -m -versions -json`, run in dir.
-func ListVersions(ctx context.Context, dir, mod string) ([]string, error) {
-	out, err := run(ctx, dir, []string{"GOFLAGS=-mod=mod", "GOWORK=off"}, "list", "-m", "-versions", "-json", mod)
+// ModuleVersions is what one module of a ListVersions run resolved to.
+type ModuleVersions struct {
+	Versions []string
+	Err      error // what the go command reported for this module; nil when it answered
+}
+
+// ListVersions returns the known versions of each of mods, by module path, via one
+// `go list -m -e -versions -json` run in dir. `-e` keeps a module the go command cannot
+// resolve from ending the run, so that the modules asked for next to it are still answered;
+// its error is in ModuleVersions.Err, as a run of that module alone would have failed.
+func ListVersions(ctx context.Context, dir string, mods ...string) (map[string]ModuleVersions, error) {
+	args := make([]string, 0, len(mods)+5)
+	args = append(append(args, "list", "-m", "-e", "-versions", "-json"), mods...)
+	out, err := run(ctx, dir, []string{"GOFLAGS=-mod=mod", "GOWORK=off"}, args...)
 	if err != nil {
 		return nil, err
 	}
-	var m struct{ Versions []string }
-	if err := json.Unmarshal(out, &m); err != nil {
-		return nil, fmt.Errorf("go list -m -versions %s: %w", mod, err)
+	res := make(map[string]ModuleVersions, len(mods))
+	// The go command writes one object per module, one after the other.
+	dec := jsontext.NewDecoder(bytes.NewReader(out))
+	for {
+		var m struct {
+			Path     string
+			Versions []string
+			Error    *struct{ Err string }
+		}
+		if err := json.UnmarshalDecode(dec, &m); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return nil, fmt.Errorf("go list -m -versions %s: %w", strings.Join(mods, " "), err)
+		}
+		v := ModuleVersions{Versions: m.Versions}
+		if m.Error != nil {
+			v.Err = fmt.Errorf("go list -m -versions %s: %s", m.Path, strings.TrimSpace(m.Error.Err))
+		}
+		res[m.Path] = v
 	}
-	return m.Versions, nil
+	return res, nil
 }
 
 // ModuleTime returns the publication time of module mod at version via

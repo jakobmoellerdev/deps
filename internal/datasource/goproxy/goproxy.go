@@ -34,7 +34,7 @@ import (
 type Source struct {
 	getter       httpx.Getter
 	env          func(ctx context.Context) (gotool.GoEnv, error)
-	list         func(ctx context.Context, dir, path string) ([]string, error)
+	list         func(ctx context.Context, dir string, mods ...string) (map[string]gotool.ModuleVersions, error)
 	info         func(ctx context.Context, dir, path, version string) (time.Time, error)
 	latest       func(ctx context.Context, dir, path string) (gotool.Module, error)
 	probeTimeout time.Duration // per proxy request of a major path probe; 0 = probeTimeout
@@ -98,7 +98,9 @@ func (s *Source) module(ctx context.Context, d dep.Dep, dir string) string {
 		return d.Name
 	}
 	mod, _ := s.modules.Do(ctx, d.Name, func() (string, error) {
-		for p := d.Name; strings.Contains(p, "/"); p = p[:strings.LastIndexByte(p, '/')] {
+		prefixes := pathPrefixes(d.Name)
+		s.prime(ctx, prefixes, dir)
+		for _, p := range prefixes {
 			if e, err := s.get(ctx, p, dir); err == nil && len(e.versions) > 0 {
 				if p != d.Name {
 					slog.DebugContext(ctx, "package resolved to module", "package", d.Name, "module", p)
@@ -109,6 +111,73 @@ func (s *Source) module(ctx context.Context, d dep.Dep, dir string) string {
 		return d.Name, nil
 	})
 	return mod
+}
+
+// pathPrefixes returns pkg and the prefixes of it that can be module paths, longest first:
+// those ending before a "/" that keep at least one "/".
+func pathPrefixes(pkg string) []string {
+	var out []string
+	for p := pkg; strings.Contains(p, "/"); p = p[:strings.LastIndexByte(p, '/')] {
+		out = append(out, p)
+	}
+	return out
+}
+
+// prime resolves paths in one `go list` run and shares each answer with their lookups, when
+// the go command is what those would use anyway: a GONOPROXY/GOPRIVATE module, or a GOPROXY
+// whose first entry is `direct`. A package path of five elements otherwise starts five go
+// commands, each of which fetches from the module's repository. A path the run does not
+// answer, an unreadable go environment and a failing run are left to the per-path lookup.
+func (s *Source) prime(ctx context.Context, paths []string, dir string) {
+	env, err := s.loadEnv(ctx)
+	if err != nil {
+		return
+	}
+	batch := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if usesGoCommand(env, p) {
+			batch = append(batch, p)
+		}
+	}
+	if len(batch) < 2 {
+		return
+	}
+	release, err := httpx.Acquire(ctx, s.getter.Sem)
+	if err != nil {
+		return
+	}
+	defer release()
+	res, err := s.list(ctx, dir, batch...)
+	if err != nil {
+		return
+	}
+	for _, p := range batch {
+		if m, ok := res[p]; ok {
+			_, _ = s.entry(ctx, p, dir, func() ([]string, bool, error) { return m.Versions, false, m.Err })
+		}
+	}
+}
+
+// usesGoCommand reports whether the lookup of modPath ends at the go command: a
+// GONOPROXY/GOPRIVATE module, or a GOPROXY whose first entry is `direct` and is not followed
+// by a `|`, which would retry the next entry after a failure (see walk).
+func usesGoCommand(env gotool.GoEnv, modPath string) bool {
+	if module.MatchPrefixPatterns(env.NoProxy, modPath) {
+		return true
+	}
+	for rest := env.Proxy; rest != ""; {
+		entry, anyErr := rest, false
+		if i := strings.IndexAny(rest, ",|"); i >= 0 {
+			entry, anyErr, rest = rest[:i], rest[i] == '|', rest[i+1:]
+		} else {
+			rest = ""
+		}
+		if entry = strings.TrimSpace(entry); entry == "" {
+			continue
+		}
+		return entry == "direct" && !anyErr
+	}
+	return false
 }
 
 // resolved returns the module an earlier Releases resolved d's package path to (see module),
@@ -276,6 +345,12 @@ func timedOut(ctx context.Context, err error) bool {
 // get returns the versions of modPath, resolved once; dir is used by the first lookup. The
 // entry is never nil.
 func (s *Source) get(ctx context.Context, modPath, dir string) (*entry, error) {
+	return s.entry(ctx, modPath, dir, func() ([]string, bool, error) { return s.resolve(ctx, modPath, dir) })
+}
+
+// entry shares what resolve returns for modPath with every lookup of it, resolving once; dir
+// is the directory of the first lookup. The entry is never nil.
+func (s *Source) entry(ctx context.Context, modPath, dir string, resolve func() (vs []string, proxied bool, err error)) (*entry, error) {
 	s.mu.Lock()
 	if _, ok := s.dirs[modPath]; !ok {
 		s.dirs[modPath] = dir
@@ -284,7 +359,7 @@ func (s *Source) get(ctx context.Context, modPath, dir string) (*entry, error) {
 	return s.cache.Do(ctx, modPath, func() (*entry, error) {
 		e := &entry{}
 		var err error
-		e.versions, e.proxied, err = s.resolve(ctx, modPath, dir)
+		e.versions, e.proxied, err = resolve()
 		e.rels = make([]datasource.Release, len(e.versions))
 		for i, v := range e.versions {
 			e.rels[i] = datasource.Release{Version: v}
@@ -516,7 +591,18 @@ func (s *Source) direct(ctx context.Context, dir, modPath string) ([]string, err
 		return nil, err
 	}
 	defer release()
-	return s.list(ctx, dir, modPath)
+	res, err := s.list(ctx, dir, modPath)
+	if err != nil {
+		return nil, err
+	}
+	m, ok := res[modPath]
+	switch {
+	case !ok:
+		return nil, fmt.Errorf("go list -m -versions %s: no answer", modPath)
+	case m.Err != nil:
+		return nil, m.Err
+	}
+	return m.Versions, nil
 }
 
 // Body caps of the proxy endpoints: an `@latest` or `.info` document, a `.mod` file. A version
