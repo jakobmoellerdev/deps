@@ -212,22 +212,35 @@ func (Locker) ProcessLocked(ctx context.Context, dir string, manifests, files ma
 // pinManifests returns the manifests holding lockfile-only updates (by path relative to dir)
 // with each updated dep's constraint replaced by `==<version>`, and their content without
 // the pins (the patched manifest, else the file in dir).
+//
+// The spans of the updates were taken on the file in the checkout, while the manifest to pin
+// is the patched one, where a bump of a different length has moved everything behind it. Each
+// span is therefore mapped onto the patched manifest through the TOML value holding it
+// (spanMap).
 func pinManifests(dir string, manifests map[string][]byte, locks map[string][]dep.Update) (pinned, restore map[string][]byte, err error) {
 	pinned, restore = map[string][]byte{}, map[string][]byte{}
 	for m, ups := range locks {
-		src := manifests[m]
-		if src == nil {
-			if src, err = os.ReadFile(filepath.Join(dir, filepath.FromSlash(m))); err != nil {
-				return nil, nil, err
-			}
+		orig, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(m)))
+		if err != nil {
+			return nil, nil, err
+		}
+		src := orig
+		if patched := manifests[m]; patched != nil {
+			src = patched
+		}
+		move, err := spanMap(orig, src)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%s: %w", m, err)
 		}
 		edits := make([]patch.Edit, 0, len(ups))
 		for _, u := range ups {
 			sp := u.Dep.RefSpan
-			if sp.Start >= sp.End || sp.End > len(src) {
+			at, ok := move(sp)
+			if !ok {
 				return nil, nil, fmt.Errorf("%s: cannot pin %s to %s: no constraint", m, u.Dep.Name, u.NewVersion)
 			}
-			edits = append(edits, patch.Edit{Start: sp.Start, End: sp.End, Old: string(src[sp.Start:sp.End]), New: "==" + u.NewVersion})
+			old := string(orig[sp.Start:sp.End])
+			edits = append(edits, patch.Edit{Start: at, End: at + len(old), Old: old, New: "==" + u.NewVersion})
 		}
 		out, err := patch.Apply(slices.Clone(src), edits)
 		if err != nil {
@@ -236,6 +249,63 @@ func pinManifests(dir string, manifests map[string][]byte, locks map[string][]de
 		pinned[m], restore[m] = out, src
 	}
 	return pinned, restore, nil
+}
+
+// spanMap maps a span of orig onto patched, which holds the same TOML document with some of
+// its values replaced in place: an offset inside a value both share keeps its offset within
+// that value. The mapping reports false for a span outside any string or scalar value, one
+// the patch changed, and one outside orig.
+func spanMap(orig, patched []byte) (func(dep.Span) (int, bool), error) {
+	inOrig := func(s dep.Span) bool { return s.Start >= 0 && s.Start < s.End && s.End <= len(orig) }
+	if bytes.Equal(orig, patched) {
+		return func(s dep.Span) (int, bool) { return s.Start, inOrig(s) }, nil
+	}
+	from, err := tomlspan.Parse(orig)
+	if err != nil {
+		return nil, err
+	}
+	to, err := tomlspan.Parse(patched)
+	if err != nil {
+		return nil, err
+	}
+	was, is := atoms(from, nil), atoms(to, nil)
+	if len(was) != len(is) {
+		return nil, fmt.Errorf("the patched manifest holds %d values, the file %d", len(is), len(was))
+	}
+	return func(s dep.Span) (int, bool) {
+		if !inOrig(s) {
+			return 0, false
+		}
+		for i, v := range was {
+			if v.Start > s.Start || s.End > v.End {
+				continue
+			}
+			w := is[i]
+			if !bytes.Equal(orig[v.Start:v.End], patched[w.Start:w.End]) {
+				return 0, false
+			}
+			return w.Start + s.Start - v.Start, true
+		}
+		return 0, false
+	}, nil
+}
+
+// atoms appends the string and scalar values below v to out, in document order: the same
+// values in the same order for a document and its patched copy.
+func atoms(v *tomlspan.Value, out []*tomlspan.Value) []*tomlspan.Value {
+	switch v.Kind {
+	case tomlspan.String, tomlspan.Scalar:
+		return append(out, v)
+	case tomlspan.Array:
+		for _, it := range v.Items {
+			out = atoms(it, out)
+		}
+	case tomlspan.Table:
+		for _, k := range v.Keys {
+			out = atoms(v.Fields[k], out)
+		}
+	}
+	return out
 }
 
 // lockStep is one command lockIn runs and the files (slash paths relative to dir) it writes

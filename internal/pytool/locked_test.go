@@ -265,8 +265,48 @@ func TestProcessLockedPins(t *testing.T) {
 			}
 		})
 	}
-	if _, err := (Locker{}).ProcessLocked(t.Context(), t.TempDir(), map[string][]byte{Pyproject: []byte(src)}, map[string][]byte{PoetryLock: []byte("v1\n")}, lockUp(Pyproject, "x", "1", dep.Span{})); err == nil {
+	noConstraint := t.TempDir()
+	write(t, noConstraint, map[string]string{Pyproject: src})
+	if _, err := (Locker{}).ProcessLocked(t.Context(), noConstraint, map[string][]byte{Pyproject: []byte(src)}, map[string][]byte{PoetryLock: []byte("v1\n")}, lockUp(Pyproject, "x", "1", dep.Span{})); err == nil {
 		t.Error("no constraint: no error")
+	}
+}
+
+// TestProcessLockedPinsPatched pins a lockfile-only update of a manifest an earlier bump has
+// already moved: the spans of the updates are the checkout's, not the patched manifest's, so
+// pinning them where they are now would write over the wrong bytes.
+func TestProcessLockedPinsPatched(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not in PATH")
+	}
+	cat, err := exec.LookPath("cat")
+	if err != nil {
+		t.Skip("cat not in PATH")
+	}
+	const src = "[project]\nname = \"demo\"\ndependencies = [\"flask>=3.0\", \"requests>=2.32\"]\n\n[tool.poetry.dependencies]\nidna = \"^3.4\"\n"
+	// The engine patched flask's constraint, which is two bytes longer than before.
+	patched := strings.Replace(src, ">=3.0", ">=3.1.2", 1)
+	locks := map[string][]dep.Update{Pyproject: {
+		{Dep: dep.Dep{Name: "requests", Range: ">=2.32", RefSpan: span(src, ">=2.32")}, NewVersion: "2.33.0", Lockfile: true},
+		{Dep: dep.Dep{Name: "idna", Range: "^3.4", RefSpan: span(src, "^3.4")}, NewVersion: "3.7", Lockfile: true},
+	}}
+	bin, log := t.TempDir(), filepath.Join(t.TempDir(), "log")
+	script := "#!" + sh + "\n[ \"$1\" = --version ] && { echo 'Poetry (version 2.1.3)'; exit 0; }\n'" + cat + "' " + Pyproject + " >> '" + log + "'\necho locked >> " + PoetryLock + "\n"
+	if err := os.WriteFile(filepath.Join(bin, "poetry"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	dir := t.TempDir()
+	write(t, dir, map[string]string{Pyproject: src, PoetryLock: "v1\n"})
+	out, err := Locker{}.ProcessLocked(t.Context(), dir, map[string][]byte{Pyproject: []byte(patched)},
+		map[string][]byte{PoetryLock: []byte("v1\n")}, locks)
+	if err != nil || string(out[PoetryLock]) != "v1\nlocked\nlocked\n" {
+		t.Fatalf("out = %q, err = %v", out, err)
+	}
+	pinned := strings.NewReplacer(">=2.32", "==2.33.0", "^3.4", "==3.7").Replace(patched)
+	if got := readLog(t, log); got != pinned+patched {
+		t.Errorf("manifests =\n%s\nwant\n%s", got, pinned+patched)
 	}
 }
 
