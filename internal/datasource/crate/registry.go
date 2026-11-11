@@ -1,6 +1,7 @@
 package crate
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -33,6 +35,7 @@ type registry struct {
 	api    string // web API base for source repositories; "" = read from config.json
 
 	clone datasource.Once[string] // git: the clone's directory
+	blobs blobs                   // git: the cat-file processes reading the clone
 }
 
 // key is the memo key of a lookup of suffix in r. It covers the token: the memos cache
@@ -232,23 +235,206 @@ type configEntry struct {
 	err  error
 }
 
-// open returns the index file at p (IndexPath, or "config.json").
+// open returns the index file at p (IndexPath, or "config.json"). A git index is read through
+// a `git cat-file --batch` of its clone while holding a request slot, as the sparse index's
+// GET does: a blob of a blob-less clone is fetched from the index host on demand, so those
+// reads are requests like any other and the registry's limit has to bound them.
 func (s *Source) open(ctx context.Context, r *registry, p string) (io.ReadCloser, error) {
 	if r.sparse {
 		return s.get(ctx, r, r.index+"/"+p)
 	}
+	release, err := httpx.Acquire(ctx, s.sem)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	dir, err := r.clone.Do(ctx, func() (string, error) { return s.clone(ctx, r.index) })
 	if err != nil {
 		return nil, err
 	}
-	out, err := git(ctx, dir, "cat-file", "blob", "HEAD:"+p)
+	out, err := r.blobs.read(ctx, dir, "HEAD:"+p)
 	if err != nil {
-		if strings.Contains(err.Error(), "does not exist") || strings.Contains(err.Error(), "Not a valid object name") {
-			return nil, errNotFound
-		}
 		return nil, err
 	}
 	return io.NopCloser(bytes.NewReader(out)), nil
+}
+
+// blobs reads the files of a git index clone through `git cat-file --batch` processes that
+// stay alive until Close: a crate then costs a request line and its answer on a running
+// process, where every crate used to fork a `git cat-file` of its own. One process answers one
+// read at a time, so a read that finds them all busy starts another; the request slots held by
+// open bound how many that can be.
+type blobs struct {
+	mu     sync.Mutex
+	free   []*catFile // processes ready for the next read
+	all    []*catFile // every process started, ended by close
+	closed bool
+}
+
+// read returns the blob at spec (`HEAD:<path>`) of the clone in dir, errNotFound when the
+// index has no such file.
+func (b *blobs) read(ctx context.Context, dir, spec string) ([]byte, error) {
+	c, err := b.take(dir)
+	if err != nil {
+		return nil, err
+	}
+	out, err := c.read(ctx, spec)
+	if err != nil && !errors.Is(err, errNotFound) {
+		c.close() // the answer stopped halfway: what the stream holds next is unknown
+		return nil, err
+	}
+	b.put(c)
+	return out, err
+}
+
+// take returns a process ready for a read, starting one when every started process is busy.
+func (b *blobs) take(dir string) (*catFile, error) {
+	b.mu.Lock()
+	if n := len(b.free); n > 0 && !b.closed {
+		c := b.free[n-1]
+		b.free = b.free[:n-1]
+		b.mu.Unlock()
+		return c, nil
+	}
+	b.mu.Unlock()
+	c, err := startCatFile(dir)
+	if err != nil {
+		return nil, err
+	}
+	b.mu.Lock()
+	b.all = append(b.all, c)
+	closed := b.closed
+	b.mu.Unlock()
+	if closed {
+		c.close()
+		return nil, errClosed
+	}
+	return c, nil
+}
+
+// put hands the process to the next read.
+func (b *blobs) put(c *catFile) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed {
+		return // close already ended it
+	}
+	b.free = append(b.free, c)
+}
+
+// close ends every process of the clone.
+func (b *blobs) close() {
+	b.mu.Lock()
+	all := b.all
+	b.all, b.free, b.closed = nil, nil, true
+	b.mu.Unlock()
+	for _, c := range all {
+		c.close()
+	}
+}
+
+// errClosed is the read of a Source that was closed while the read's process started.
+var errClosed = errors.New("crate index closed")
+
+// catFile is one `git cat-file --batch` process of a clone: a request line `<rev>:<path>` is
+// answered by `<oid> blob <size>`, the blob and a newline, or by `<spec> missing` for a path
+// the commit does not have.
+type catFile struct {
+	cancel context.CancelFunc
+	cmd    *exec.Cmd
+	in     io.WriteCloser
+	out    *bufio.Reader
+	stderr *syncBuffer
+}
+
+// startCatFile starts the process in the clone directory dir. It outlives the context of the
+// read that started it, so that the next read finds it running; close ends it.
+func startCatFile(dir string) (*catFile, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd := exec.CommandContext(ctx, "git", "cat-file", "--batch")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	stderr := &syncBuffer{}
+	cmd.Stderr = stderr
+	in, err := cmd.StdinPipe()
+	if err == nil {
+		var out io.ReadCloser
+		if out, err = cmd.StdoutPipe(); err == nil {
+			if err = cmd.Start(); err == nil {
+				return &catFile{cancel: cancel, cmd: cmd, in: in, out: bufio.NewReader(out), stderr: stderr}, nil
+			}
+		}
+	}
+	cancel()
+	return nil, err
+}
+
+// read returns the blob at spec; errNotFound when the commit has no such path. The caller
+// must not use the process concurrently.
+func (c *catFile) read(ctx context.Context, spec string) ([]byte, error) {
+	// A read of a blob-less clone fetches the blob from the index host, which can take as
+	// long as any other request: end it with the caller's context.
+	defer context.AfterFunc(ctx, c.cancel)()
+	if _, err := io.WriteString(c.in, spec+"\n"); err != nil {
+		return nil, c.fail(ctx, err)
+	}
+	header, err := c.out.ReadString('\n')
+	if err != nil {
+		return nil, c.fail(ctx, err)
+	}
+	fields := strings.Fields(header)
+	if len(fields) == 2 && (fields[1] == "missing" || fields[1] == "ambiguous") {
+		return nil, errNotFound
+	}
+	if len(fields) != 3 || fields[1] != "blob" {
+		return nil, fmt.Errorf("git cat-file %s: unexpected answer %q", spec, strings.TrimSuffix(header, "\n"))
+	}
+	size, err := strconv.Atoi(fields[2])
+	if err != nil || size < 0 {
+		return nil, fmt.Errorf("git cat-file %s: invalid size %q", spec, fields[2])
+	}
+	buf := make([]byte, size+1) // the blob and the newline git writes after it
+	if _, err := io.ReadFull(c.out, buf); err != nil {
+		return nil, c.fail(ctx, err)
+	}
+	return buf[:size], nil
+}
+
+// fail reports what ended a read: the caller's context, else git's stderr as the git helper
+// reports it, else the read error itself.
+func (c *catFile) fail(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if msg := strings.TrimSpace(c.stderr.String()); msg != "" {
+		return errors.New(msg)
+	}
+	return err
+}
+
+// close ends the process: git exits at the end of its input, a hanging one is killed.
+func (c *catFile) close() {
+	_ = c.in.Close()
+	c.cancel()
+	_ = c.cmd.Wait()
+}
+
+// syncBuffer collects the stderr of a process, which os/exec copies from another goroutine.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }
 
 // clone makes a shallow, blob-less clone of a git index; blobs are fetched on demand by
@@ -270,10 +456,13 @@ func (s *Source) clone(ctx context.Context, index string) (string, error) {
 	return dir, nil
 }
 
-// Close removes the clones of git indexes.
+// Close ends the cat-file processes of the git indexes and removes their clones.
 func (s *Source) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for _, r := range s.registries {
+		r.blobs.close()
+	}
 	errs := make([]error, 0, len(s.clones))
 	for _, d := range s.clones {
 		errs = append(errs, os.RemoveAll(d))
