@@ -352,12 +352,14 @@ func TestSanitize(t *testing.T) {
 		r              repoRef
 	}{
 		{"mention", "thanks @alice and (@bob-2)", "thanks @\u200balice and (@\u200bbob-2)", gh},
-		{"email and scoped package untouched", "mail a@b.c, use x/@y", "mail a@b.c, use x/@y", gh},
+		{"mention after markup", `**@dependabot** [@user] "@user" _@user_ ,@user x/@y`, "**@\u200bdependabot** [@\u200buser] \"@\u200buser\" _@\u200buser_ ,@\u200buser x/@\u200by", gh},
+		{"email untouched", "mail a@b.c", "mail a@b.c", gh},
 		{"issue", "fixes #12 and #3.", "fixes [#12](https://redirect.github.com/o/r/issues/12) and [#3](https://redirect.github.com/o/r/issues/3).", gh},
 		{"gitea issue", "#7", "[#7](https://git.example/o/r/issues/7)", gt},
 		{"cross repo", "see other/repo#5", "see [other/repo#5](https://redirect.github.com/other/repo/issues/5)", gh},
 		{"gitea cross repo", "see a/b#5", "see [a/b#5](https://git.example/a/b/issues/5)", gt},
-		{"not references", "## 1.2 #x [#9](u) a#1 #12abc a/b/c#1 /a#1 a/#1 a/b#", "## 1.2 #x [#9](u) a#1 #12abc a/b/c#1 /a#1 a/#1 a/b#", gt},
+		{"reference after markup", `**#12** and "#3"`, "**[#12](https://git.example/o/r/issues/12)** and \"[#3](https://git.example/o/r/issues/3)\"", gt},
+		{"not references", "## 1.2 #x [#9](u) a#1 #12abc a/b/c#1 /a#1 a/b#", "## 1.2 #x [#9](u) a#1 #12abc a/b/c#1 /a#1 a/b#", gt},
 		{"gitlab issue and merge request", "fixes #1 and (!2)", "fixes [#1](https://gl.example/g/sub/p/-/issues/1) and ([!2](https://gl.example/g/sub/p/-/merge_requests/2))", gl},
 		{"gitlab cross project", "see g/q#3 and a/b/c!4", "see [g/q#3](https://gl.example/g/q/-/issues/3) and [a/b/c!4](https://gl.example/a/b/c/-/merge_requests/4)", gl},
 		{"gitlab not references", "wow! !x a!1 a//b#1 /a!1", "wow! !x a!1 a//b#1 /a!1", gl},

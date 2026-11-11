@@ -472,8 +472,11 @@ func writeProse(b *strings.Builder, s, base string, r repoRef) {
 		}
 		return "", false
 	}
-	boundary := func(i int) bool { // s[i-1] may start a mention or reference
-		return i == 0 || strings.IndexByte(" \t\n(", s[i-1]) >= 0
+	// boundary reports whether s[i] can start a mention or reference: GitHub autolinks one
+	// after any non-word character, and the markdown around it ("**@user**", "_#1_") is gone
+	// by the time it does, so only a letter or digit in front rules it out.
+	boundary := func(i int) bool {
+		return i == 0 || !isAlnum(s[i-1])
 	}
 	for i := 0; i < len(s); i++ {
 		c := s[i]
@@ -519,8 +522,13 @@ func writeProse(b *strings.Builder, s, base string, r repoRef) {
 	}
 }
 
+// isWord reports whether c is a character of a repository or user name.
 func isWord(c byte) bool {
-	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-'
+	return isAlnum(c) || c == '_' || c == '-'
+}
+
+func isAlnum(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
 }
 
 func digitsEnd(s string, i int) int {
