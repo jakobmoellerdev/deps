@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"os/exec"
 	"testing"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -151,5 +152,59 @@ func TestGroupUpdatesPolicyGroupsAndSecurity(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Each group keeps a branch of its own that git accepts: names rendering alike ("@types/node"
+// and "types/node", a bucket suffix against a name ending in it) would otherwise push two PRs
+// into one branch, and a name git rejects as a ref would lose its PR altogether.
+func TestGroupUpdatesBranchNames(t *testing.T) {
+	gomod := func(name string) dep.Dep { return dep.Dep{Manager: "gomod", Name: name} }
+	updates := []dep.Update{
+		{Dep: gomod("example.com/a"), NewVersion: "v1.1.0"},
+		{Dep: gomod("@types/node"), NewVersion: "v22.0.0"},
+		{Dep: gomod("types/node"), NewVersion: "v22.0.0"},
+		{Dep: gomod("react"), NewVersion: "v19.0.0", Bucket: "major"},
+		{Dep: gomod("react-major"), NewVersion: "v2.0.0"},
+		{Dep: gomod("foo.lock"), NewVersion: "v1.1.0"},
+		{Dep: gomod("a..b"), NewVersion: "v1.1.0"},
+		{Dep: gomod(".hidden."), NewVersion: "v1.1.0"},
+		{Dep: gomod("日本語"), NewVersion: "v1.1.0"},
+		{Dep: gomod("中文"), NewVersion: "v1.1.0"},
+	}
+	// "" is any branch of the group's own: the second claimant of a branch carries a hash.
+	want := map[string]string{
+		"example.com/a": "deps/example.com-a",
+		"@types/node":   "deps/types-node",
+		"types/node":    "",
+		"react":         "deps/react-major",
+		"react-major":   "",
+		"foo.lock":      "deps/foo-lock",
+		"a..b":          "deps/a-b",
+		".hidden.":      "deps/hidden",
+		"日本語":           "",
+		"中文":            "",
+	}
+	groups := GroupUpdates(updates, "")
+	if len(groups) != len(updates) {
+		t.Fatalf("groups = %+v", groups)
+	}
+	byBranch := map[string]string{}
+	for _, g := range groups {
+		w, ok := want[g.Name]
+		switch {
+		case !ok:
+			t.Fatalf("unexpected group %q", g.Name)
+		case w != "" && g.Branch != w:
+			t.Errorf("group %q is on %q, want %q", g.Name, g.Branch, w)
+		}
+		if other, ok := byBranch[g.Branch]; ok {
+			t.Errorf("groups %q and %q share the branch %q", other, g.Name, g.Branch)
+		}
+		byBranch[g.Branch] = g.Name
+		out, err := exec.CommandContext(t.Context(), "git", "check-ref-format", "refs/heads/"+g.Branch).CombinedOutput()
+		if err != nil {
+			t.Errorf("git rejects the branch %q of %q: %v %s", g.Branch, g.Name, err, out)
+		}
 	}
 }

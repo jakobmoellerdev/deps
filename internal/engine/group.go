@@ -3,8 +3,10 @@ package engine
 import (
 	"cmp"
 	"fmt"
+	"hash/fnv"
 	"log/slog"
 	"slices"
+	"strconv"
 	"strings"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
@@ -56,11 +58,13 @@ const MaintenanceBranch = "lock-file-maintenance"
 // expanded additionalBranchPrefix). Security updates with a dep.Update.SecurityGroup share a
 // group of that name apart from the policy group of the same name. Updates of a shared version
 // definition carry the group Resolve gave them (unifyShared), security updates included: they
-// edit the same bytes. Branches are <branchPrefix><topicPrefix><slug(name)> and
-// <branchPrefix><topicPrefix>group/<slug(group)>, with "-<bucket>" appended for a non-empty
-// bucket, then "-security" for a security group; "" means config.DefaultBranchPrefix. Lock
-// file maintenance updates share one group (Kind and Name MaintenanceBranch) on
-// <branchPrefix>lock-file-maintenance. Sorted by Kind, Name, then Branch.
+// edit the same bytes. Branches are <branchPrefix><topicPrefix><branchSlug(name)> and
+// <branchPrefix><topicPrefix>group/<branchSlug(group)>, with "-<bucket>" appended for a
+// non-empty bucket, then "-security" for a security group; "" means
+// config.DefaultBranchPrefix. A branch a group already holds gets a short hash of the later
+// group's key appended, since two groups must never share one. Lock file maintenance updates
+// share one group (Kind and Name MaintenanceBranch) on <branchPrefix>lock-file-maintenance.
+// Sorted by Kind, Name, then Branch.
 func GroupUpdates(updates []dep.Update, branchPrefix string) []Group {
 	branchPrefix = cmp.Or(branchPrefix, config.DefaultBranchPrefix)
 	type key struct {
@@ -68,6 +72,10 @@ func GroupUpdates(updates []dep.Update, branchPrefix string) []Group {
 		security                        bool
 	}
 	idx := map[key]int{}
+	// Different groups can render into one branch: "@types/node" and "types/node" slug alike,
+	// and so do the dep "react" in bucket "major" and the dep "react-major". Their two PRs
+	// would push over each other, so a branch is handed out once.
+	taken := map[string]bool{}
 	var groups []Group
 	for _, u := range updates {
 		k := key{topicPrefix: u.BranchTopicPrefix, name: u.Dep.Name, bucket: u.Bucket}
@@ -88,9 +96,9 @@ func GroupUpdates(updates []dep.Update, branchPrefix string) []Group {
 			case MaintenanceBranch:
 				branch = branchPrefix + MaintenanceBranch
 			case GroupKind:
-				branch = branchPrefix + k.topicPrefix + GroupKind + "/" + slug(k.name)
+				branch = branchPrefix + k.topicPrefix + GroupKind + "/" + branchSlug(k.name)
 			default:
-				branch = branchPrefix + k.topicPrefix + slug(k.name)
+				branch = branchPrefix + k.topicPrefix + branchSlug(k.name)
 			}
 			if k.bucket != "" {
 				branch += "-" + k.bucket
@@ -98,6 +106,10 @@ func GroupUpdates(updates []dep.Update, branchPrefix string) []Group {
 			if k.security {
 				branch += "-security"
 			}
+			for taken[branch] {
+				branch += "-" + nameHash(k.topicPrefix, k.kind, k.name, k.bucket, strconv.FormatBool(k.security))
+			}
+			taken[branch] = true
 			groups = append(groups, Group{Kind: k.kind, Name: k.name, Branch: branch})
 		}
 		groups[i].Updates = append(groups[i].Updates, u)
@@ -420,4 +432,30 @@ func slug(s string) string {
 		b = append(b, c)
 	}
 	return strings.Trim(string(b), "-")
+}
+
+// branchSlug is slug(s) as a branch may carry it: git rejects a ref whose last component is
+// empty, begins with '.', ends with '.' or ".lock", or holds "..", and such a name would cost
+// the whole run its PR. A name slug leaves nothing of (one of non-ASCII bytes only) becomes
+// its hash, so two of them stay apart.
+func branchSlug(s string) string {
+	b := strings.Trim(strings.ReplaceAll(slug(s), "..", "-"), ".-")
+	if rest, ok := strings.CutSuffix(b, ".lock"); ok {
+		b = rest + "-lock"
+	}
+	if b == "" {
+		return nameHash(s)
+	}
+	return b
+}
+
+// nameHash is a short stable hash of parts, which a branch carries where the names it is made
+// of do not tell two groups apart.
+func nameHash(parts ...string) string {
+	h := fnv.New64a()
+	for _, p := range parts {
+		_, _ = h.Write([]byte(p))
+		_, _ = h.Write([]byte{0})
+	}
+	return strconv.FormatUint(h.Sum64(), 36)
 }
