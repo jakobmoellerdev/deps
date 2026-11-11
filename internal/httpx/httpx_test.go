@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -116,6 +117,78 @@ func TestClientResumesTLSSessions(t *testing.T) {
 			t.Errorf("connection %d: DidResume = %v, want %v", i+1, resp.TLS.DidResume, want)
 		}
 		tr.CloseIdleConnections() // the next request dials again
+	}
+}
+
+// TestClientRedirectDropsCredentials covers the headers a datasource sets itself: net/http
+// only strips Authorization and friends when a redirect leaves the host.
+func TestClientRedirectDropsCredentials(t *testing.T) {
+	var mu sync.Mutex
+	seen := map[string]http.Header{}
+	record := func(name string) http.HandlerFunc {
+		return func(_ http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			defer mu.Unlock()
+			seen[name] = r.Header.Clone()
+		}
+	}
+	other := httptest.NewServer(record("other"))
+	t.Cleanup(other.Close)
+	mux := http.NewServeMux()
+	mux.Handle("GET /here", record("here"))
+	mux.HandleFunc("GET /to-other", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+"/here", http.StatusFound)
+	})
+	mux.HandleFunc("GET /to-here", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/here", http.StatusFound)
+	})
+	mux.HandleFunc("GET /loop", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/loop", http.StatusFound)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	c := NewClient()
+	get := func(path string) error {
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL+path, http.NoBody)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("JOB-TOKEN", "secret")
+		req.Header.Set("Circle-Token", "secret")
+		req.Header.Set("Accept", "application/json")
+		resp, err := c.Do(req)
+		if err != nil {
+			return err
+		}
+		return resp.Body.Close()
+	}
+
+	for _, tt := range []struct {
+		name, path, at string
+		wantToken      bool
+	}{
+		{"cross host", "/to-other", "other", false},
+		{"same host", "/to-here", "here", true},
+	} {
+		if err := get(tt.path); err != nil {
+			t.Fatalf("%s: %v", tt.name, err)
+		}
+		mu.Lock()
+		h := seen[tt.at]
+		mu.Unlock()
+		for _, name := range []string{"JOB-TOKEN", "Circle-Token"} {
+			if got := h.Get(name) != ""; got != tt.wantToken {
+				t.Errorf("%s: %s sent = %v, want %v", tt.name, name, got, tt.wantToken)
+			}
+		}
+		if h.Get("Accept") != "application/json" {
+			t.Errorf("%s: Accept = %q", tt.name, h.Get("Accept"))
+		}
+	}
+
+	if err := get("/loop"); err == nil || !strings.Contains(err.Error(), "stopped after 10 redirects") {
+		t.Errorf("redirect loop = %v, want the redirect limit", err)
 	}
 }
 

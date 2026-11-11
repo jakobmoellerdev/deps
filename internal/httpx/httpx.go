@@ -26,7 +26,8 @@ func UserAgent() string { return "deps/" + Version }
 // environment). Idempotent requests are retried (see Idempotent) and rate limits waited out
 // briefly; every attempt is logged at debug level. RequestTimeout bounds single requests.
 // Requests to an HTTPS host wait for its first connection (see firstConnTransport); gzip and
-// zstd responses are decompressed with klauspost/compress (see newClient).
+// zstd responses are decompressed with klauspost/compress (see newClient). A redirect to
+// another host loses the request's credentials (see checkRedirect).
 func NewClient() *http.Client { return newClient(newTransport()) }
 
 // newClient wraps base in the shared transport chain. gzhttp.Transport asks for zstd and gzip
@@ -38,7 +39,10 @@ func NewClient() *http.Client { return newClient(newTransport()) }
 // for free. Both decoders come from pools, so a response costs no window allocation.
 // Tests build a client over their own base transport.
 func newClient(base *http.Transport) *http.Client {
-	return &http.Client{Transport: timeoutTransport{newRetryTransport(logTransport{&firstConnTransport{next: gzhttp.Transport(base)}})}}
+	return &http.Client{
+		CheckRedirect: checkRedirect,
+		Transport:     timeoutTransport{newRetryTransport(logTransport{&firstConnTransport{next: gzhttp.Transport(base)}})},
+	}
 }
 
 func newTransport() *http.Transport {
@@ -59,6 +63,27 @@ func newTransport() *http.Transport {
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 30 * time.Second,
 	}
+}
+
+// credentialHeaders are the request headers of a datasource that carry a secret the way
+// Authorization does: GitLab's CI job token (forge, gitlabpackages) and CircleCI's API token
+// (orb). net/http only knows about Authorization, Www-Authenticate, Cookie and Cookie2.
+var credentialHeaders = [...]string{"JOB-TOKEN", "Circle-Token"}
+
+// checkRedirect keeps net/http's limit of ten redirects and drops the credential headers a
+// datasource set itself once a redirect leaves the host they were meant for, so a registry
+// that redirects a download to a CDN or a mirror cannot collect them. Headers a package
+// takes from its configuration are its own business (see maven's stripHeadersOnRedirect).
+func checkRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	if req.URL.Host != via[0].URL.Host {
+		for _, h := range credentialHeaders {
+			req.Header.Del(h)
+		}
+	}
+	return nil
 }
 
 // logTransport logs method, URL (without credentials), status, time to first response byte and
