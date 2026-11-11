@@ -315,7 +315,7 @@ Updates container image references in Dockerfiles, Compose files, workflows, act
 
 | Dep type | Extracted | Datasource | Versioning | Default |
 |---|---|---|---|---|
-| `dockerfile` | `FROM` (flags skipped, line continuations and `# escape=` honored), `COPY --from=<image>`, `RUN --mount=…,from=<image>` | `docker` | `docker` | updated |
+| `dockerfile` | `FROM` (flags skipped, line continuations and `# escape=` honored, heredoc bodies skipped), `COPY --from=<image>`, `RUN --mount=…,from=<image>` | `docker` | `docker` | updated |
 | `compose` | `services.*.image` (also through `<<:` merges and aliases), `image` in mappings at any depth of top-level `x-*` extension fields, `services.*.build.additional_contexts` entries `docker-image://<ref>` | `docker` | `docker` | updated |
 | `workflow` | `jobs.*.container` (string or `.image`), `jobs.*.services.*.image`, `uses: docker://…` | `docker` | `docker` | updated |
 | `action` | `runs.image: docker://…` (with `runs.using: docker`), `uses: docker://…` in `runs.steps` | `docker` | `docker` | updated |

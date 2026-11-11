@@ -153,6 +153,31 @@ func TestExtractDockerfileBOM(t *testing.T) {
 	})
 }
 
+// TestExtractDockerfileHeredoc: the body of a BuildKit heredoc is content, so the images it
+// names are no dependencies of the image being built.
+func TestExtractDockerfileHeredoc(t *testing.T) {
+	const src = "FROM alpine:3.20\n" +
+		"RUN <<EOF\n" +
+		"FROM nope:1.0\n" +
+		"apk add --no-cache curl=8.9.1-r0\n" +
+		"EOF\n" +
+		"COPY <<-\"DOC\" /Dockerfile\n" +
+		"\tFROM also-nope:2.0\n" +
+		"\tDOC\n" +
+		"RUN python3 <<'PY'\n" +
+		"COPY --from=bogus:1.0 /a /b\n" +
+		"PY\n" +
+		"FROM busybox:1.36\n"
+	for name, v := range variants(src) {
+		t.Run(name, func(t *testing.T) {
+			check(t, []byte(v), extract(t, "Dockerfile", v), []want{
+				{line: 1, name: "alpine", source: "docker.io/library/alpine", version: "3.20", depT: TypeDockerfile},
+				{line: 12, name: "busybox", source: "docker.io/library/busybox", version: "1.36", depT: TypeDockerfile},
+			})
+		})
+	}
+}
+
 const compose = `services:
   db:
     image: postgres:16.2-alpine

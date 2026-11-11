@@ -12,6 +12,10 @@ import (
 // directiveRe matches a parser directive such as `# escape=` + "`".
 var directiveRe = regexp.MustCompile(`^#[ \t]*([a-zA-Z][a-zA-Z0-9]*)[ \t]*=[ \t]*(\S+)[ \t]*\r?$`)
 
+// heredocRe matches a BuildKit heredoc redirection starting a token (`<<EOF`, `<<-"EOF"`):
+// group 1 the dash stripping the terminator's indentation, group 2 the terminator.
+var heredocRe = regexp.MustCompile(`^<<(-?)["']?([A-Za-z_][\w.-]*)["']?`)
+
 type token struct{ start, end int }
 
 // arg is a resolvable ARG default: the literal value at byte offset off, or skip when the
@@ -77,6 +81,7 @@ func (x *extractor) dockerfile() {
 			continue
 		}
 		toks, i = x.instruction(toks[:0], s, esc)
+		i = x.heredocBodies(toks, i)
 		if len(toks) < 2 {
 			continue
 		}
@@ -381,6 +386,32 @@ func (x *extractor) instruction(toks []token, i int, esc byte) ([]token, int) {
 	}
 	flush(i)
 	return toks, i
+}
+
+// heredocBodies returns the offset after the bodies of the BuildKit heredocs the tokens of
+// the instruction ending at i open (`RUN <<EOF`, `COPY <<"EOF" /file`, also several at once):
+// their lines are content, not instructions.
+func (x *extractor) heredocBodies(toks []token, i int) int {
+	src := x.src
+	for _, t := range toks {
+		m := heredocRe.FindSubmatch(src[t.start:t.end])
+		if m == nil {
+			continue
+		}
+		for i < len(src) {
+			le := lineEnd(src, i)
+			s := i
+			if len(m[1]) == 1 {
+				// `<<-` lets the terminator be indented.
+				s = skipBlank(src, i, le)
+			}
+			i = le + 1
+			if bytes.Equal(bytes.TrimSuffix(src[s:le], []byte("\r")), m[2]) {
+				break
+			}
+		}
+	}
+	return min(i, len(src))
 }
 
 func (x *extractor) text(t token) string { return string(x.src[t.start:t.end]) }

@@ -17,7 +17,7 @@ var Doc = refdoc.Manager{
 		"other `*.y(a)ml` containing `image:` (DepType `kubernetes`) or `repository:` (DepType `helm`)",
 	},
 	DepTypes: []refdoc.DepType{
-		{Name: "dockerfile", What: "`FROM` (flags skipped, line continuations and `# escape=` honored), `COPY --from=<image>`, `RUN --mount=…,from=<image>`", Versioning: "`docker`", Datasources: []string{"docker"}},
+		{Name: "dockerfile", What: "`FROM` (flags skipped, line continuations and `# escape=` honored, heredoc bodies skipped), `COPY --from=<image>`, `RUN --mount=…,from=<image>`", Versioning: "`docker`", Datasources: []string{"docker"}},
 		{Name: "compose", What: "`services.*.image` (also through `<<:` merges and aliases), `image` in mappings at any depth of top-level `x-*` extension fields, `services.*.build.additional_contexts` entries `docker-image://<ref>`", Versioning: "`docker`", Datasources: []string{"docker"}},
 		{Name: "workflow", What: "`jobs.*.container` (string or `.image`), `jobs.*.services.*.image`, `uses: docker://…`", Versioning: "`docker`", Datasources: []string{"docker"}},
 		{Name: "action", What: "`runs.image: docker://…` (with `runs.using: docker`), `uses: docker://…` in `runs.steps`", Versioning: "`docker`", Datasources: []string{"docker"}},
