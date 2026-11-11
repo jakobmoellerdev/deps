@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"maps"
 	"net/url"
 	"os"
@@ -154,7 +155,9 @@ func (r TaskRun) env() []string {
 
 // runTasks performs runs one after another with sh -c in dir, each with a 15 minute timeout and
 // deps' environment without droppedEnv (plus the DEPS_* variables of an update-mode run); the
-// first failure stops them.
+// first failure stops them. Every run gets a process group of its own (taskGroup), which is
+// killed once it is over: a command that times out, is canceled or backgrounds a child would
+// otherwise leave that child writing into dir after runTasks returned.
 func runTasks(ctx context.Context, dir string, runs []TaskRun) error {
 	env := taskEnv()
 	for _, r := range runs {
@@ -163,7 +166,11 @@ func runTasks(ctx context.Context, dir string, runs []TaskRun) error {
 		cmd.Dir, cmd.Env, cmd.WaitDelay = dir, append(slices.Clip(env), r.env()...), 10*time.Second
 		out := &toolrun.TailBuffer{Max: 64 << 10}
 		cmd.Stdout, cmd.Stderr = out, out
+		taskGroup(cmd)
 		err := cmd.Run()
+		if kerr := killTaskGroup(cmd); kerr != nil && !errors.Is(kerr, os.ErrProcessDone) {
+			slog.DebugContext(ctx, "killing the task's process group failed", "task", r.String(), "err", kerr)
+		}
 		cancel()
 		if err != nil {
 			return fmt.Errorf("postUpgradeTasks: %s: %w: %s", r, err, toolrun.Tail(out.Bytes(), 20))
