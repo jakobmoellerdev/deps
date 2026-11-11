@@ -186,3 +186,26 @@ func BenchmarkExtractReleases(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkResultSkipDep marks 200 of the 3,000 deps of a resolved monorepo as skipped, as
+// `deps plan` does for the updates a group leaves out.
+func BenchmarkResultSkipDep(b *testing.B) {
+	res := Result{Deps: make([]dep.Dep, 3000)}
+	for i := range res.Deps {
+		res.Deps[i] = dep.Dep{
+			Manager: gomod.Name, Datasource: "go", File: fmt.Sprintf("m%d/go.mod", i/150),
+			Line: i%150 + 5, Name: fmt.Sprintf("example.com/dep%d", i), Version: "v1.0.0",
+		}
+	}
+	skip := make([]dep.Dep, 0, 200)
+	for i := 0; i < len(res.Deps); i += 15 {
+		skip = append(skip, res.Deps[i])
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		res.Skipped = res.Skipped[:0]
+		for _, d := range skip {
+			res.SkipDep(d, "superseded by another update")
+		}
+	}
+}
