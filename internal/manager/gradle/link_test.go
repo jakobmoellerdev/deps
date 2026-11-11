@@ -473,7 +473,7 @@ func TestRepositories(t *testing.T) {
 		"app/extra.gradle":              "dependencies { implementation 'g:applied:1' }\n",
 		"lib/build.gradle.kts":          "dependencies { implementation(\"g:lib:1\") }\n",
 		"gradle/libs.versions.toml":     "[libraries]\nc = \"g:cat:1\"\n[plugins]\ncp = \"cat.plugin:1\"\n",
-		"buildSrc/src/main/kotlin/D.kt": "object D { const val x = \"g:bs:1\" }\n",
+		"buildSrc/src/main/kotlin/D.kt": "object D { const val x = \"g:bs:1.0\" }\n",
 		"other/settings.gradle": "dependencyResolutionManagement {\n  repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)\n" +
 			"  repositories { maven { url 'https://settings.example' } }\n}\n",
 		"other/build.gradle":       "repositories { mavenCentral() }\ndependencies { implementation 'g:other:1' }\n",

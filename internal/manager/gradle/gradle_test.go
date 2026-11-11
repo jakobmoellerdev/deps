@@ -347,6 +347,35 @@ func TestExtractScript(t *testing.T) {
 	}
 }
 
+// TestStrictCoordinates covers the string literals of a buildSrc convention plugin, where no
+// configuration name says that a literal is a dependency: only those that can be Maven
+// coordinates are.
+func TestStrictCoordinates(t *testing.T) {
+	for _, tc := range []struct {
+		src  string
+		want []string
+	}{
+		{"val t = \"12:30:45\"\n", nil},
+		{"val jdbc = \"jdbc:postgresql:localhost\"\n", nil},
+		{"val task = \"app:lib:build\"\n", nil},
+		{"val addr = \"redis:6379:0\"\n", nil},
+		{"val lib = \"com.example:lib:1.0\"\n", []string{"com.example:lib"}},
+		{"val junit = \"junit:junit:4.13.2\"\n", []string{"junit:junit"}},
+		{"val ktx = \"androidx:core-ktx:1\"\n", []string{"androidx:core-ktx"}},
+		{"val v = \"g.x:a:$ver\"\n", []string{"g.x:a"}},
+		{"val r = \"org.slf4j:slf4j-api:[1.7,1.8[\"\n", []string{"org.slf4j:slf4j-api"}},
+	} {
+		deps, _, _, _ := extractScript("buildSrc/src/main/kotlin/C.kt", []byte(tc.src), kindSource)
+		var got []string
+		for _, d := range deps {
+			got = append(got, d.Name)
+		}
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("%s: got %v, want %v", strings.TrimSpace(tc.src), got, tc.want)
+		}
+	}
+}
+
 func TestEdits(t *testing.T) {
 	for _, tc := range []struct {
 		name, file, src, dep, to, want string

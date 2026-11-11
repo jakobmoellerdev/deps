@@ -134,8 +134,9 @@ func (x *extractor) add(off int, d dep.Dep, meta depMeta) {
 }
 
 // coordinate extracts `group:name:version[:classifier][@ext]` from the literal l and reports
-// whether it is one. Strict (outside dependency declarations) requires plain group and
-// artifact ids. A version that is exactly one variable reference is left to Link.
+// whether it is one. Strict (outside dependency declarations) requires a coordinate a build
+// script would not write any other way (strictCoordinate). A version that is exactly one
+// variable reference is left to Link.
 func (x *extractor) coordinate(l strLit, class depClass, strict bool) bool {
 	if x.taken[l.start] {
 		return true
@@ -145,11 +146,11 @@ func (x *extractor) coordinate(l strLit, class depClass, strict bool) bool {
 	if len(parts) < 3 || len(parts) > 4 || parts[0] == "" || parts[1] == "" {
 		return false
 	}
-	if strict && (!gaRe.MatchString(parts[0]) || !gaRe.MatchString(parts[1]) || strings.ContainsAny(s, " \t")) {
-		return false
-	}
 	v, _, _ := strings.Cut(parts[2], "@")
 	if v == "" {
+		return false
+	}
+	if strict && (strings.ContainsAny(s, " \t") || !strictCoordinate(parts[0], parts[1], v)) {
 		return false
 	}
 	d := newDep(x.file, DepTypeDependencies, x.s.lines.at(l.start))
@@ -167,6 +168,29 @@ func (x *extractor) coordinate(l strLit, class depClass, strict bool) bool {
 	x.taken[l.start] = true
 	x.add(l.start, d, meta)
 	return true
+}
+
+// strictCoordinate reports whether `group:artifact:version` is a Maven coordinate when it is
+// written where no dependency is declared: any string literal of a buildSrc source, any
+// assigned literal. Besides plain ids it takes a letter in the group and a version starting
+// with a digit, a variable reference or a range bound; a group without a dot and an artifact
+// without a dash (`junit:junit`) additionally take a dotted, variable or range version.
+// Times (`12:30:45`), JDBC URLs (`jdbc:postgresql:localhost`), Gradle project paths
+// (`app:lib:build`) and `host:port:index` strings are no coordinates.
+func strictCoordinate(group, artifact, version string) bool {
+	letter := func(r rune) bool { return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' }
+	if !gaRe.MatchString(group) || !gaRe.MatchString(artifact) || !strings.ContainsFunc(group, letter) {
+		return false
+	}
+	switch c := version[0]; {
+	case c >= '0' && c <= '9':
+		return strings.Contains(group, ".") || strings.Contains(artifact, "-") || strings.Contains(version, ".")
+	case c == '$':
+		return true
+	default:
+		// A Gradle version range: `[1.0,2.0)`, `(,1.0]`, `]1.0,2.0[`.
+		return c == '[' || c == '(' || c == ']'
+	}
 }
 
 // richCoordinate extracts `implementation("g:a") { version { strictly("1.0") } }` (Groovy

@@ -32,7 +32,7 @@ var Doc = refdoc.Manager{
 				"Kotlin named arguments `implementation(group = \"g\", name = \"n\", version = \"v\")` and rich version blocks `implementation(\"group:name\") { version { strictly(\"v\") } }` " +
 				"(Groovy `implementation('group:name') { version { require 'v' } }`, also in `constraints { }`; exactly one of `strictly`, `require` and `prefer` is the version an update rewrites); " +
 				"coordinates assigned to variables or map entries (`def lib = \"g:n:v\"`, `libs += [x: \"g:n:$versions.x\"]`, `mapOf(\"x\" to \"g:n:v\")`); " +
-				"in `buildSrc`/convention-plugin sources every string literal of the form `group:name:version`; the name is `group:name`",
+				"in `buildSrc`/convention-plugin sources every string literal of the form `group:name:version` (with a letter in the group and a version starting with a digit, a variable or a range bound); the name is `group:name`",
 			Versioning: "`maven`", Datasources: []string{"maven"}},
 		{Name: DepTypePlugin,
 			What: "catalog `[plugins]` and settings catalog `plugin(\"a\", \"id\").version(\"v\")`/`.versionRef(\"k\")`; build-script and settings `plugins { id(\"x\") version \"y\" }`, `id 'x' version 'y'`, `id(\"x\").version(\"y\")`, " +
