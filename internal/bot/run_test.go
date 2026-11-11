@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -170,6 +171,7 @@ type fakePC struct {
 
 	issues        []platform.Issue
 	issuePages    int
+	issueOldest   bool
 	createdIssues []platform.Issue // title, body
 	issueLabels   [][]string
 	updatedIssues []platform.Issue // number, body
@@ -261,11 +263,34 @@ func (c *fakePC) MergePR(_ context.Context, pr platform.PR, strategy string) err
 	c.merged = append(c.merged, fmt.Sprintf("%d:%s@%s", pr.Number, strategy, pr.HeadSHA))
 	return nil
 }
-func (c *fakePC) ListIssues(_ context.Context, maxPages int) ([]platform.Issue, error) {
+
+// fakeIssuesPerPage is the page size the fake pages c.issues in, like the forges.
+const fakeIssuesPerPage = 100
+
+func (c *fakePC) ListIssues(_ context.Context, maxPages int, f platform.IssueFilter) ([]platform.Issue, error) {
 	fakeListMu.Lock()
-	c.issuePages = maxPages
+	c.issuePages, c.issueOldest = maxPages, f.Oldest
 	fakeListMu.Unlock()
-	return c.issues, fail(c.fail, "ListIssues", "")
+	if err := fail(c.fail, "ListIssues", ""); err != nil {
+		return nil, err
+	}
+	// The forges list the newest issue first unless the filter asks for the oldest.
+	is := slices.Clone(c.issues)
+	slices.SortFunc(is, func(a, b platform.Issue) int {
+		if f.Oldest {
+			return cmp.Compare(a.Number, b.Number)
+		}
+		return cmp.Compare(b.Number, a.Number)
+	})
+	var out []platform.Issue
+	for page := 0; page < maxPages && page*fakeIssuesPerPage < len(is); page++ {
+		p := is[page*fakeIssuesPerPage : min((page+1)*fakeIssuesPerPage, len(is))]
+		out = append(out, p...)
+		if f.Stop != nil && slices.ContainsFunc(p, f.Stop) {
+			break
+		}
+	}
+	return out, nil
 }
 func (c *fakePC) CreateIssue(_ context.Context, title, body string, labels []string) (platform.Issue, error) {
 	if err := fail(c.fail, "CreateIssue", ""); err != nil {

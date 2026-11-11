@@ -44,7 +44,7 @@ type dashboard struct {
 // loadDashboard finds the open issue titled title whose body has the dashboard marker (the
 // lowest number if there are several) and parses its ticked checkboxes.
 func loadDashboard(ctx context.Context, pc platform.Client, title string) (*dashboard, error) {
-	issues, err := pc.ListIssues(ctx, dashboardIssuePages)
+	issues, err := pc.ListIssues(ctx, dashboardIssuePages, platform.IssueFilter{})
 	if err != nil {
 		return nil, fmt.Errorf("list issues: %w", err)
 	}

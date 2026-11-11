@@ -222,18 +222,25 @@ func TestGitHubIssues(t *testing.T) {
 		}
 	}
 	srv, calls := routes(t, map[string]route{
-		"GET /repos/o/r/issues?state=open&per_page=100&page=1": {body: "[" + strings.Join(page1, ",") + "]"},
-		"GET /repos/o/r/issues?state=open&per_page=100&page=2": {body: `[{"number":200,"title":"Dependency Dashboard","body":"x"}]`},
-		"POST /repos/o/r/issues":                               {code: http.StatusCreated, body: `{"number":201,"title":"Dependency Dashboard","html_url":"https://x/issues/201"}`},
-		"PATCH /repos/o/r/issues/201":                          {body: `{}`},
+		"GET /repos/o/r/issues?state=open&per_page=100&page=1":                            {body: "[" + strings.Join(page1, ",") + "]"},
+		"GET /repos/o/r/issues?state=open&per_page=100&page=2":                            {body: `[{"number":200,"title":"Dependency Dashboard","body":"x"}]`},
+		"GET /repos/o/r/issues?state=open&sort=created&direction=asc&per_page=100&page=1": {body: "[" + strings.Join(page1, ",") + "]"},
+		"POST /repos/o/r/issues":      {code: http.StatusCreated, body: `{"number":201,"title":"Dependency Dashboard","html_url":"https://x/issues/201"}`},
+		"PATCH /repos/o/r/issues/201": {body: `{}`},
 	})
 	c := NewClient(Info{Kind: GitHub, APIURL: srv.URL, Repo: "o/r"}, "tok", srv.Client())
-	is, err := c.ListIssues(t.Context(), 10)
+	is, err := c.ListIssues(t.Context(), 10, IssueFilter{})
 	if err != nil || len(is) != 51 || is[0] != (Issue{Number: 1, Title: "t1", Body: "b", URL: "u1"}) || is[50].Number != 200 {
 		t.Fatalf("ListIssues %d %v %v", len(is), err, is[:1])
 	}
-	if is, _ := c.ListIssues(t.Context(), 1); len(is) != 50 {
+	if is, _ := c.ListIssues(t.Context(), 1, IssueFilter{}); len(is) != 50 {
 		t.Errorf("maxPages: %d issues", len(is))
+	}
+	// Oldest asks for ascending creation order, and Stop ends the paging on the page of the
+	// first issue it accepts: the second page is never requested.
+	stop := IssueFilter{Oldest: true, Stop: func(i Issue) bool { return i.Number == 3 }}
+	if is, err := c.ListIssues(t.Context(), 10, stop); err != nil || len(is) != 50 {
+		t.Errorf("ListIssues oldest = %d %v", len(is), err)
 	}
 	created, err := c.CreateIssue(t.Context(), "Dependency Dashboard", "body", []string{"dependencies", "bot"})
 	if err != nil || created.Number != 201 || created.URL != "https://x/issues/201" {
@@ -243,10 +250,10 @@ func TestGitHubIssues(t *testing.T) {
 		t.Fatal(err)
 	}
 	cs := calls()
-	if b := cs[3].body; b["title"] != "Dependency Dashboard" || b["body"] != "body" || fmt.Sprint(b["labels"]) != "[dependencies bot]" {
+	if b := cs[4].body; b["title"] != "Dependency Dashboard" || b["body"] != "body" || fmt.Sprint(b["labels"]) != "[dependencies bot]" {
 		t.Errorf("create body %v", b)
 	}
-	if b := cs[4].body; b["body"] != "new" || len(b) != 1 {
+	if b := cs[5].body; b["body"] != "new" || len(b) != 1 {
 		t.Errorf("update body %v", b)
 	}
 	for _, c := range cs {
@@ -324,16 +331,16 @@ func TestGiteaIssues(t *testing.T) {
 		labels = append(labels, fmt.Sprintf(`{"id":%d,"name":"l%d"}`, i+1, i))
 	}
 	srv, calls := routes(t, map[string]route{
-		"GET /repos/o/r/issues?state=open&type=issues&limit=50&page=1": {body: `[{"number":3,"title":"Dependency Dashboard","body":"b","html_url":"u3"}]`},
-		"GET /repos/o/r/labels?limit=50&page=1":                        {body: "[" + strings.Join(labels, ",") + "]"},
-		"GET /repos/o/r/labels?limit=50&page=2":                        {body: `[{"id":99,"name":"Dependencies"}]`},
-		"GET /orgs/o/labels?limit=50&page=1":                           {body: `[{"id":7,"name":"bot"}]`},
-		"POST /repos/o/r/issues":                                       {code: http.StatusCreated, body: `{"number":4,"title":"Dependency Dashboard","html_url":"u4"}`},
-		"PATCH /repos/o/r/issues/3":                                    {code: http.StatusCreated, body: `{}`},
+		"GET /repos/o/r/issues?state=open&type=issues&sort=oldest&limit=50&page=1": {body: `[{"number":3,"title":"Dependency Dashboard","body":"b","html_url":"u3"}]`},
+		"GET /repos/o/r/labels?limit=50&page=1":                                    {body: "[" + strings.Join(labels, ",") + "]"},
+		"GET /repos/o/r/labels?limit=50&page=2":                                    {body: `[{"id":99,"name":"Dependencies"}]`},
+		"GET /orgs/o/labels?limit=50&page=1":                                       {body: `[{"id":7,"name":"bot"}]`},
+		"POST /repos/o/r/issues":                                                   {code: http.StatusCreated, body: `{"number":4,"title":"Dependency Dashboard","html_url":"u4"}`},
+		"PATCH /repos/o/r/issues/3":                                                {code: http.StatusCreated, body: `{}`},
 	})
 	c := NewClient(Info{Kind: Gitea, APIURL: srv.URL, Repo: "o/r"}, "tok", srv.Client())
 	ctx := t.Context()
-	is, err := c.ListIssues(ctx, 10)
+	is, err := c.ListIssues(ctx, 10, IssueFilter{Oldest: true})
 	if err != nil || len(is) != 1 || is[0] != (Issue{Number: 3, Title: "Dependency Dashboard", Body: "b", URL: "u3"}) {
 		t.Fatalf("ListIssues %v %v", is, err)
 	}
@@ -345,7 +352,7 @@ func TestGiteaIssues(t *testing.T) {
 		t.Fatal(err)
 	}
 	cs := calls()
-	want := []string{"GET /repos/o/r/issues?state=open&type=issues&limit=50&page=1", "GET /repos/o/r/labels?limit=50&page=1", "GET /repos/o/r/labels?limit=50&page=2",
+	want := []string{"GET /repos/o/r/issues?state=open&type=issues&sort=oldest&limit=50&page=1", "GET /repos/o/r/labels?limit=50&page=1", "GET /repos/o/r/labels?limit=50&page=2",
 		"GET /orgs/o/labels?limit=50&page=1", "POST /repos/o/r/issues", "PATCH /repos/o/r/issues/3"}
 	if !slices.Equal(uris(cs), want) {
 		t.Fatalf("calls %v", uris(cs))
@@ -378,7 +385,7 @@ func TestIssuesDisabled(t *testing.T) {
 	srv, _ := routes(t, map[string]route{
 		"GET /repos/o/r/issues?state=open&per_page=100&page=1": {code: http.StatusGone, body: `{"message":"Issues are disabled for this repo"}`},
 	})
-	_, err := NewClient(Info{Kind: GitHub, APIURL: srv.URL, Repo: "o/r"}, "tok", srv.Client()).ListIssues(t.Context(), 1)
+	_, err := NewClient(Info{Kind: GitHub, APIURL: srv.URL, Repo: "o/r"}, "tok", srv.Client()).ListIssues(t.Context(), 1, IssueFilter{})
 	if !errors.Is(err, ErrIssuesDisabled) || !strings.Contains(err.Error(), "410 Gone") {
 		t.Errorf("GitHub 410: %v", err)
 	}
@@ -388,7 +395,7 @@ func TestIssuesDisabled(t *testing.T) {
 		`{"has_issues":true,"external_tracker":null}`:                                                     false,
 	} {
 		srv, _ := routes(t, map[string]route{"GET /repos/o/r": {body: repo}})
-		_, err := NewClient(Info{Kind: Gitea, APIURL: srv.URL, Repo: "o/r"}, "tok", srv.Client()).ListIssues(t.Context(), 1)
+		_, err := NewClient(Info{Kind: Gitea, APIURL: srv.URL, Repo: "o/r"}, "tok", srv.Client()).ListIssues(t.Context(), 1, IssueFilter{})
 		if err == nil || errors.Is(err, ErrIssuesDisabled) != want || !strings.Contains(err.Error(), "404 Not Found") {
 			t.Errorf("Gitea 404 with repo %s: %v, want disabled %v", repo, err, want)
 		}

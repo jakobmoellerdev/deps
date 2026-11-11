@@ -525,15 +525,22 @@ func TestGitLabListIssues(t *testing.T) {
 	}
 	c, calls := gitlabTestClient(t, map[string]route{
 		"GET " + glAPI: {body: `{"default_branch":"main","issues_enabled":true}`},
-		"GET " + glAPI + "/issues?state=opened&per_page=100&page=1": {body: "[" + strings.Join(full, ",") + "]"},
-		"GET " + glAPI + "/issues?state=opened&per_page=100&page=2": {body: `[{"iid":101,"title":"Dependency Dashboard","description":"d","web_url":"u"}]`},
+		"GET " + glAPI + "/issues?state=opened&per_page=100&page=1":                              {body: "[" + strings.Join(full, ",") + "]"},
+		"GET " + glAPI + "/issues?state=opened&per_page=100&page=2":                              {body: `[{"iid":101,"title":"Dependency Dashboard","description":"d","web_url":"u"}]`},
+		"GET " + glAPI + "/issues?state=opened&order_by=created_at&sort=asc&per_page=100&page=1": {body: "[" + strings.Join(full, ",") + "]"},
 	})
-	is, err := c.ListIssues(t.Context(), 3)
+	is, err := c.ListIssues(t.Context(), 3, IssueFilter{})
 	if err != nil || len(is) != 101 || is[100] != (Issue{Number: 101, Title: "Dependency Dashboard", Body: "d", URL: "u"}) {
 		t.Fatalf("ListIssues = %d %v", len(is), err)
 	}
 	if n := len(calls()); n != 3 {
 		t.Errorf("calls = %v", uris(calls()))
+	}
+	// Oldest orders by creation ascending, and Stop ends the paging on the first match's
+	// page, so page 2 is not requested.
+	stop := IssueFilter{Oldest: true, Stop: func(i Issue) bool { return i.Number == 7 }}
+	if is, err := c.ListIssues(t.Context(), 3, stop); err != nil || len(is) != 100 {
+		t.Errorf("ListIssues oldest = %d %v", len(is), err)
 	}
 
 	issues := "GET " + glAPI + "/issues?state=opened&per_page=100&page=1"
@@ -552,7 +559,7 @@ func TestGitLabListIssues(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, _ := gitlabTestClient(t, map[string]route{issues: tc.issues, "GET " + glAPI: tc.project})
-			_, err := c.ListIssues(t.Context(), 1)
+			_, err := c.ListIssues(t.Context(), 1, IssueFilter{})
 			if (err != nil) != tc.err || errors.Is(err, ErrIssuesDisabled) != tc.disabled {
 				t.Fatalf("err = %v, want err %v disabled %v", err, tc.err, tc.disabled)
 			}

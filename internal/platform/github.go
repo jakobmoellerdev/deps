@@ -541,9 +541,13 @@ func (g *githubClient) MergePR(ctx context.Context, pr PR, strategy string) erro
 
 // ListIssues pages through open issues; GitHub lists PRs as issues, they are dropped. GitHub
 // answers 410 Gone when issues are disabled.
-func (g *githubClient) ListIssues(ctx context.Context, maxPages int) ([]Issue, error) {
-	is, err := listIssues(ctx, &g.rest, g.headers, 100, maxPages, func(page int) string {
-		return "/repos/" + g.repo + "/issues?state=open&per_page=100&page=" + strconv.Itoa(page)
+func (g *githubClient) ListIssues(ctx context.Context, maxPages int, f IssueFilter) ([]Issue, error) {
+	order := ""
+	if f.Oldest {
+		order = "&sort=created&direction=asc"
+	}
+	is, err := listIssues(ctx, &g.rest, g.headers, 100, maxPages, f.Stop, func(page int) string {
+		return "/repos/" + g.repo + "/issues?state=open" + order + "&per_page=100&page=" + strconv.Itoa(page)
 	})
 	if hasStatus(err, http.StatusGone, "") {
 		return nil, fmt.Errorf("%w: %w", ErrIssuesDisabled, err)
@@ -600,20 +604,25 @@ func listPRs(ctx context.Context, r *rest, h func(http.Header), conv func(*apiPR
 	return out, nil
 }
 
-// listIssues pages through an issue list; a short page (PRs included) ends it.
-func listIssues(ctx context.Context, r *rest, h func(http.Header), per, maxPages int, path func(int) string) ([]Issue, error) {
+// listIssues pages through an issue list; a short page (PRs included), or a page holding an
+// issue stop accepts, ends it.
+func listIssues(ctx context.Context, r *rest, h func(http.Header), per, maxPages int, stop func(Issue) bool, path func(int) string) ([]Issue, error) {
 	var out []Issue
 	for page := 1; page <= maxPages; page++ {
 		var is []apiIssue
 		if err := r.do(ctx, http.MethodGet, path(page), nil, &is, h); err != nil {
 			return nil, err
 		}
+		found := false
 		for i := range is {
-			if !is[i].isPR() {
-				out = append(out, is[i].issue())
+			if is[i].isPR() {
+				continue
 			}
+			v := is[i].issue()
+			out = append(out, v)
+			found = found || (stop != nil && stop(v))
 		}
-		if len(is) < per {
+		if found || len(is) < per {
 			break
 		}
 	}

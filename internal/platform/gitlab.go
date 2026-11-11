@@ -512,7 +512,7 @@ func (i *gitlabIssue) issue() Issue {
 // ListIssues pages through the open issues. A project with issues disabled (issues_enabled
 // false in the project, cached from DefaultBranch) is ErrIssuesDisabled: GitLab lists no
 // issues for it and refuses to create one with 403.
-func (g *gitlabClient) ListIssues(ctx context.Context, maxPages int) ([]Issue, error) {
+func (g *gitlabClient) ListIssues(ctx context.Context, maxPages int, f IssueFilter) ([]Issue, error) {
 	p, err := g.projectInfo(ctx)
 	if err != nil {
 		return nil, err
@@ -521,16 +521,23 @@ func (g *gitlabClient) ListIssues(ctx context.Context, maxPages int) ([]Issue, e
 		return nil, fmt.Errorf("%w: issues_enabled is false in %s", ErrIssuesDisabled, g.r.repo)
 	}
 	const per = 100
+	order := ""
+	if f.Oldest {
+		order = "&order_by=created_at&sort=asc"
+	}
 	var out []Issue
 	for page := 1; page <= maxPages; page++ {
 		var is []gitlabIssue
-		if err := g.do(ctx, http.MethodGet, g.project+"/issues?state=opened&per_page=100&page="+strconv.Itoa(page), nil, &is); err != nil {
+		if err := g.do(ctx, http.MethodGet, g.project+"/issues?state=opened"+order+"&per_page=100&page="+strconv.Itoa(page), nil, &is); err != nil {
 			return nil, err
 		}
+		found := false
 		for i := range is {
-			out = append(out, is[i].issue())
+			v := is[i].issue()
+			out = append(out, v)
+			found = found || (f.Stop != nil && f.Stop(v))
 		}
-		if len(is) < per {
+		if found || len(is) < per {
 			break
 		}
 	}

@@ -28,9 +28,9 @@ func (c *slowListPC) ListPRs(ctx context.Context, state string, n int) ([]platfo
 	return c.fakePC.ListPRs(ctx, state, n)
 }
 
-func (c *slowListPC) ListIssues(ctx context.Context, maxPages int) ([]platform.Issue, error) {
+func (c *slowListPC) ListIssues(ctx context.Context, maxPages int, f platform.IssueFilter) ([]platform.Issue, error) {
 	time.Sleep(listLatency)
-	return c.fakePC.ListIssues(ctx, maxPages)
+	return c.fakePC.ListIssues(ctx, maxPages, f)
 }
 
 // BenchmarkRunListLatency runs the bot with 20 ms on each of the four state
