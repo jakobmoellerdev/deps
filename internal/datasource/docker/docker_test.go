@@ -376,6 +376,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestRepository(t *testing.T) {
+	t.Setenv(insecureRegistriesEnv, "registry.corp:5000, 10.0.0.0/8 ,[fd00::1], bad/cidr/entry")
 	s := newSource(nil, nil, anon)
 	for ref, want := range map[string]struct {
 		pageSize, maxPages int
@@ -388,8 +389,14 @@ func TestRepository(t *testing.T) {
 		"gcr.io/o/i":               {pageSize, maxTagPages, false},
 		"127.0.0.1:5000/x":         {pageSize, maxTagPages, true},
 		"localhost:5000/x":         {pageSize, maxTagPages, true},
-		"10.1.2.3/x":               {pageSize, maxTagPages, true},
 		"[::1]:5000/x":             {pageSize, maxTagPages, true},
+		// A private address is HTTPS unless DEPS_INSECURE_REGISTRIES names it.
+		"192.168.1.5:5000/x":   {pageSize, maxTagPages, false},
+		"172.16.0.1/x":         {pageSize, maxTagPages, false},
+		"10.1.2.3/x":           {pageSize, maxTagPages, true}, // in the CIDR entry
+		"registry.corp:5000/x": {pageSize, maxTagPages, true},
+		"registry.corp:5001/x": {pageSize, maxTagPages, false}, // the entry names another port
+		"[fd00::1]:5000/x":     {pageSize, maxTagPages, true},  // the entry names no port
 	} {
 		name, err := repoName(dep.Dep{Name: ref})
 		if err != nil {
@@ -402,6 +409,57 @@ func TestRepository(t *testing.T) {
 		if repo.TagListPageSize != want.pageSize || repo.TagListMaxPages != want.maxPages || repo.Registry.PlainHTTP != want.plain {
 			t.Errorf("%s: page size %d, max pages %d, plain HTTP %v; want %d, %d, %v", ref, repo.TagListPageSize, repo.TagListMaxPages, repo.Registry.PlainHTTP, want.pageSize, want.maxPages, want.plain)
 		}
+	}
+}
+
+// TestPrivateRegistryScheme: a registry on a private address is spoken to over HTTPS, a loopback
+// one and a registry DEPS_INSECURE_REGISTRIES names over plain HTTP. The requests reach the test
+// registry through a transport that records the scheme deps asked for.
+func TestPrivateRegistryScheme(t *testing.T) {
+	t.Setenv("DOCKER_CONFIG", t.TempDir()) // no credentials: anonymous
+	f := newFixture(t)
+	var (
+		mu      sync.Mutex
+		schemes []string
+	)
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		mu.Lock()
+		schemes = append(schemes, r.URL.Scheme)
+		mu.Unlock()
+		r = r.Clone(r.Context())
+		r.URL.Scheme, r.URL.Host = "http", f.host
+		return f.srv.Client().Transport.RoundTrip(r)
+	})}
+	for _, tc := range []struct {
+		registry, insecure, want string
+	}{
+		{registry: "10.1.2.3:5000", want: "https"},
+		{registry: "192.168.1.5:5000", want: "https"},
+		{registry: "127.0.0.1:5000", want: "http"},
+		{registry: "10.1.2.3:5000", insecure: "10.1.2.3:5000", want: "http"},
+		{registry: "192.168.1.5:5000", insecure: "10.0.0.0/8,192.168.0.0/16", want: "http"},
+	} {
+		t.Run(tc.registry+" "+tc.insecure, func(t *testing.T) {
+			t.Setenv(insecureRegistriesEnv, tc.insecure)
+			mu.Lock()
+			schemes = schemes[:0]
+			mu.Unlock()
+			s := newSource(client, nil, anon)
+			rels, err := s.Releases(t.Context(), dep.Dep{Name: tc.registry + "/img"}, "")
+			if err != nil || len(rels) != 3 {
+				t.Fatalf("Releases = %v, %v", rels, err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if len(schemes) == 0 {
+				t.Fatal("no request")
+			}
+			for _, got := range schemes {
+				if got != tc.want {
+					t.Errorf("scheme = %q, want %q (all: %q)", got, tc.want, schemes)
+				}
+			}
+		})
 	}
 }
 

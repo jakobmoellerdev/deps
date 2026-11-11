@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -54,6 +55,9 @@ type Source struct {
 	// scopes are the bearer scopes per registry that its challenges ask for besides the
 	// repository's pull scope (registryScopes).
 	scopes map[string][]auth.Scope
+	// insecure are the registries that are spoken to over plain HTTP besides loopback
+	// (insecureRegistriesEnv).
+	insecure []insecureRegistry
 
 	tags    datasource.Memo[string, tagListing]  // canonical repository
 	digests datasource.Memo[string, string]      // canonical repository + ":" + tag
@@ -185,20 +189,21 @@ func newSource(client *http.Client, sem chan struct{}, cred credentials.Credenti
 		pullLimited: hubRegistry,
 		challenger:  ch,
 		scopes:      registryScopes,
+		insecure:    insecureRegistries(),
 	}
 }
 
 // repository returns the registry client for the canonical repository name (as returned by
 // repoName). Tags are listed with hubPageSize on Docker Hub and pageSize elsewhere, up to
-// tagPageCap pages; registries on loopback, private addresses and localhost are reached over
-// plain HTTP.
+// tagPageCap pages; registries on loopback and those named insecure are reached over plain
+// HTTP.
 func (s *Source) repository(name string) (*remote.Repository, error) {
 	r, err := remote.NewRepository(name)
 	if err != nil {
 		return nil, err
 	}
 	r.Registry.Client = s.client
-	r.Registry.PlainHTTP = plainHTTP(r.Registry.Reference.Registry)
+	r.Registry.PlainHTTP = s.plainHTTP(r.Registry.Reference.Registry)
 	r.Registry.MaxMetadataBytes = maxMetadataBytes
 	r.TagListPageSize = pageSize
 	if r.Registry.Reference.Registry == hubRegistry {
@@ -216,18 +221,73 @@ func (s *Source) pullContext(ctx context.Context, repo *remote.Repository) conte
 	return auth.AppendScopesForResource(ctx, ref.Resource(), s.scopes[ref.Registry]...)
 }
 
-// plainHTTP reports whether registry (host[:port]) is local: localhost, a loopback or a private
-// address.
-func plainHTTP(registry string) bool {
-	host := registry
-	if h, _, err := net.SplitHostPort(registry); err == nil {
-		host = h
+// insecureRegistriesEnv names the registries deps speaks plain HTTP to besides loopback, as
+// `dockerd --insecure-registry` does: comma-separated `host[:port]` entries (one without a port
+// matches every port) and CIDR ranges, which match a registry whose host is an address in them.
+const insecureRegistriesEnv = "DEPS_INSECURE_REGISTRIES"
+
+// insecureRegistry is one parsed insecureRegistriesEnv entry: a CIDR range, else a host with an
+// optional port.
+type insecureRegistry struct {
+	cidr *net.IPNet
+	host string
+	port string // "" matches every port
+}
+
+// insecureRegistries parses insecureRegistriesEnv; an entry that is neither a CIDR range nor a
+// host[:port] matches no registry.
+func insecureRegistries() []insecureRegistry {
+	env := os.Getenv(insecureRegistriesEnv)
+	if env == "" {
+		return nil
 	}
-	if host == "localhost" {
+	var out []insecureRegistry
+	for entry := range strings.SplitSeq(env, ",") {
+		switch entry = strings.TrimSpace(entry); {
+		case entry == "":
+		case strings.Contains(entry, "/"):
+			if _, n, err := net.ParseCIDR(entry); err == nil {
+				out = append(out, insecureRegistry{cidr: n})
+			}
+		default:
+			host, port := splitRegistry(entry)
+			out = append(out, insecureRegistry{host: host, port: port})
+		}
+	}
+	return out
+}
+
+// splitRegistry splits registry (host[:port]) into its host, an IPv6 address without brackets,
+// and its port, "" when it names none.
+func splitRegistry(registry string) (host, port string) {
+	if h, p, err := net.SplitHostPort(registry); err == nil {
+		return h, p
+	}
+	return strings.Trim(registry, "[]"), ""
+}
+
+// plainHTTP reports whether registry (host[:port]) is spoken to over plain HTTP: localhost and
+// loopback addresses, which the Docker daemon treats as insecure by default too, and the
+// registries of insecureRegistriesEnv. Other private addresses are reached over HTTPS: a TLS
+// registry on 10.0.0.0/8 or 192.168.0.0/16 (a homelab or in-cluster registry) would answer a
+// plain request with 400 "HTTP request to an HTTPS server", and its credentials would go over
+// the wire in cleartext.
+func (s *Source) plainHTTP(registry string) bool {
+	host, port := splitRegistry(registry)
+	ip := net.ParseIP(host)
+	if host == "localhost" || (ip != nil && ip.IsLoopback()) {
 		return true
 	}
-	ip := net.ParseIP(host)
-	return ip != nil && (ip.IsLoopback() || ip.IsPrivate())
+	for _, r := range s.insecure {
+		if r.cidr != nil {
+			if ip != nil && r.cidr.Contains(ip) {
+				return true
+			}
+		} else if strings.EqualFold(r.host, host) && (r.port == "" || r.port == port) {
+			return true
+		}
+	}
+	return false
 }
 
 // Releases lists every tag of the image (d.Source, or d.Name when Source is empty). Only tags
