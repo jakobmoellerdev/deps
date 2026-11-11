@@ -93,7 +93,7 @@ func postProcessors(s *session) map[string]engine.PostProcessor {
 		piprequirements.Name: pytool.Compiler{Hashes: hashes},
 		gradle.Name:          jvmtool.GradleLocker{Scopes: jvmtool.NewScopeCache()}, gradlewrapper.Name: jvmtool.GradleWrapper{}, mavenwrapper.Name: jvmtool.MavenWrapper{},
 		swift.Name: swiftLocker(s), julia.Name: julia.Locker{}, pub.Name: pub.Locker{}, beam.NameMix: beam.MixLocker{}, beam.NameGleam: beam.GleamLocker{},
-		nix.Name: nixLocker(s), nuget.Name: nuget.Locker{}, conda.Name: conda.Locker{}, paket.Name: paket.Locker{}, bundler.NameCocoaPods: bundler.PodLocker{}, deno.Name: deno.Locker{}, jsonnetbundler.Name: jsonnetbundler.Locker{}, copier.Name: copier.Updater{},
+		nix.Name: nixLocker(s), nuget.Name: nuget.Locker{Locks: nuget.NewLockCache()}, conda.Name: conda.Locker{}, paket.Name: paket.Locker{}, bundler.NameCocoaPods: bundler.PodLocker{}, deno.Name: deno.Locker{}, jsonnetbundler.Name: jsonnetbundler.Locker{}, copier.Name: copier.Updater{},
 	}
 }
 

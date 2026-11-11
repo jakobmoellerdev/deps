@@ -90,6 +90,27 @@ func TestLockerScope(t *testing.T) {
 	}
 }
 
+// TestLockCache checks that a LockCache answers the repeated Scope calls of the MSBuild files
+// of a repository, and ScopeSiblings, with what a scan returns.
+func TestLockCache(t *testing.T) {
+	root := lockTree(t)
+	plain := write(t, map[string]string{"a/A.csproj": ""})
+	l := Locker{Locks: NewLockCache()}
+	for range 2 {
+		for _, f := range []string{lockRepo, "src/App/App.csproj"} {
+			if dir, ok := l.Scope(t.Context(), root, f); !ok || dir != "." {
+				t.Errorf("Scope(%s) = %q, %v", f, dir, ok)
+			}
+		}
+		if _, ok := l.Scope(t.Context(), plain, "a/A.csproj"); ok {
+			t.Error("scope without a lockfile")
+		}
+		if got := strings.Join(l.ScopeSiblings(root), " "); got != "src/App/packages.lock.json src/Lib/packages.lock.json" {
+			t.Errorf("ScopeSiblings = %s", got)
+		}
+	}
+}
+
 func TestLockerProcess(t *testing.T) {
 	log := stubDotnet(t)
 	root := lockTree(t)

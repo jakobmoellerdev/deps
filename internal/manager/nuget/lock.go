@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
@@ -52,9 +54,10 @@ func skipDir(name string) bool {
 }
 
 // locks returns the slash paths, relative to dir, of every packages.lock.json below dir that
-// sits next to a project, sorted.
-func locks(dir string) []string {
+// sits next to a project, sorted; with first it stops at the first one.
+func locks(dir string, first bool) []string {
 	var out []string
+	errStop := errors.New("stop")
 	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		switch {
 		case err != nil:
@@ -72,10 +75,55 @@ func locks(dir string) []string {
 		}
 		if rel, err := filepath.Rel(dir, p); err == nil {
 			out = append(out, filepath.ToSlash(rel))
+			if first {
+				return errStop
+			}
 		}
 		return nil
 	})
 	return out
+}
+
+// LockCache memoizes the packages.lock.json scans of a repository (locks) by absolute
+// directory, so that the MSBuild files patched in a run, whose scope is the repository, scan
+// it once instead of once each. The files must not change while it is in use; the zero value
+// is not usable, use NewLockCache.
+type LockCache struct {
+	mu sync.Mutex
+	m  map[lockKey]*lockEntry
+}
+
+type lockKey struct {
+	dir   string
+	first bool
+}
+
+type lockEntry struct {
+	once  sync.Once
+	locks []string
+}
+
+// NewLockCache returns an empty LockCache.
+func NewLockCache() *LockCache { return &LockCache{m: map[lockKey]*lockEntry{}} }
+
+// scan is locks of dir, memoized when c is not nil; a full scan answers a first one too.
+func (c *LockCache) scan(dir string, first bool) []string {
+	if c == nil {
+		return locks(dir, first)
+	}
+	key := lockKey{dir, first}
+	c.mu.Lock()
+	e := c.m[key]
+	if e == nil && first {
+		e = c.m[lockKey{dir: dir}]
+	}
+	if e == nil {
+		e = &lockEntry{}
+		c.m[key] = e
+	}
+	c.mu.Unlock()
+	e.once.Do(func() { e.locks = locks(dir, first) })
+	return e.locks
 }
 
 // projects returns the names of the MSBuild projects in the directory dir, sorted.
@@ -112,20 +160,20 @@ func (*nugetManager) LockRoots(root string, files []string) []manager.LockRoot {
 // restore --use-lock-file` in a temporary copy of it. A version an MSBuild file sets can reach
 // any project below it (Directory.Packages.props, Directory.Build.props, imports), so the
 // scope is the repository and every lockfile in it is restored. The working tree is never
-// touched.
-type Locker struct{}
+// touched. Locks memoizes the scans of the repository; without it every call scans again.
+type Locker struct{ Locks *LockCache }
 
 // Scope returns the repository (".") for an MSBuild file when it holds a packages.lock.json
 // next to a project; global.json, dotnet-tools.json and nuget.config have no lockfile.
-func (Locker) Scope(_ context.Context, root, manifest string) (string, bool) {
-	return ".", isMSBuild(manifest) && len(locks(root)) > 0
+func (l Locker) Scope(_ context.Context, root, manifest string) (string, bool) {
+	return ".", isMSBuild(manifest) && len(l.Locks.scan(root, true)) > 0
 }
 
 // Siblings is unused: ScopeSiblings lists the lockfiles.
 func (Locker) Siblings() []string { return nil }
 
 // ScopeSiblings lists every packages.lock.json below dir next to a project.
-func (Locker) ScopeSiblings(dir string) []string { return locks(dir) }
+func (l Locker) ScopeSiblings(dir string) []string { return l.Locks.scan(dir, false) }
 
 // Process restores every project with a packages.lock.json against the patched MSBuild files:
 // NuGet re-resolves a project whose package references no longer match its lockfile, and
