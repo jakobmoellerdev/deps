@@ -90,7 +90,7 @@ func postProcessors(s *session) map[string]engine.PostProcessor {
 		gomod.Name: gotool.Tidier{Imports: gotool.NewImportCache()}, npm.Name: nodetool.Locker{}, helm.Name: helm.Locker{}, cargo.Name: cargo.Locker{}, bundler.Name: bundler.Locker{}, composer.Name: composer.Locker{IgnorePlatformReqs: s.env.ComposerIgnorePlatformReqs},
 		terraform.Name: terraform.Locker{}, terraform.TerragruntName: terraform.TerragruntLocker{}, bazel.Name: bazel.Locker{}, bazel.BazeliskName: bazel.Locker{},
 		pep621.Name: pytool.Locker{}, poetry.Name: pytool.Locker{}, pipenv.Name: pytool.Locker{},
-		piprequirements.Name: pytool.Compiler{Hashes: hashes},
+		piprequirements.Name: pytool.Compiler{Hashes: hashes, Outputs: piprequirements.NewOutputCache()},
 		gradle.Name:          jvmtool.GradleLocker{Scopes: jvmtool.NewScopeCache()}, gradlewrapper.Name: jvmtool.GradleWrapper{}, mavenwrapper.Name: jvmtool.MavenWrapper{},
 		swift.Name: swiftLocker(s), julia.Name: julia.Locker{}, pub.Name: pub.Locker{}, beam.NameMix: beam.MixLocker{}, beam.NameGleam: beam.GleamLocker{},
 		nix.Name: nixLocker(s), nuget.Name: nuget.Locker{Locks: nuget.NewLockCache()}, conda.Name: conda.Locker{}, paket.Name: paket.Locker{}, bundler.NameCocoaPods: bundler.PodLocker{}, deno.Name: deno.Locker{}, jsonnetbundler.Name: jsonnetbundler.Locker{}, copier.Name: copier.Updater{},

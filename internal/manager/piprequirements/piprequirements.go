@@ -34,15 +34,16 @@ const (
 var matchRe = regexp.MustCompile(`(^|/)[\w-]*requirements([-.]\w+)?\.(txt|pip)$`)
 
 // pipManager rewrites specifiers with pyreq.Ranges and records the compile graph sources of
-// the files Extract sees until Link.
+// the files Extract sees until Link. outs memoizes the compiled files FileEdits looks up.
 type pipManager struct {
 	pyreq.Ranges
 	mu   sync.Mutex
 	srcs map[string]source
+	outs *OutputCache
 }
 
 // New returns the pip_requirements manager.
-func New() manager.Manager { return &pipManager{} }
+func New() manager.Manager { return &pipManager{outs: NewOutputCache()} }
 
 func (*pipManager) Name() string { return Name }
 
@@ -105,8 +106,8 @@ func (m *pipManager) Link(files [][]dep.Dep) {
 // rewrites its pin in each compiled file regenerated from it (CompiledOutputs), so the
 // post-processor regenerates them with the new version: to the new version for an update of
 // the input's specifier, and for a lockfile-only update where the pin is older.
-func (*pipManager) FileEdits(root string, u dep.Update) (map[string][]patch.Edit, error) {
-	outs, _, ok := CompiledOutputs(root, u.Dep.File)
+func (m *pipManager) FileEdits(root string, u dep.Update) (map[string][]patch.Edit, error) {
+	outs, _, ok := m.outs.Outputs(root, u.Dep.File)
 	if !ok {
 		return nil, nil
 	}

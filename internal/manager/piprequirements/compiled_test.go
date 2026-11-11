@@ -246,3 +246,22 @@ func TestHeaderBase(t *testing.T) {
 		}
 	}
 }
+
+// TestOutputCache checks that an OutputCache answers the repeated lookups of a run, of the
+// manager and of the post-processor, with what a scan returns, and that a nil one scans.
+func TestOutputCache(t *testing.T) {
+	root := writeTree(t, compileTree)
+	c := NewOutputCache()
+	var nilCache *OutputCache
+	for range 2 {
+		for _, input := range []string{"app/requirements.in", "app/base.in", "reqs/prod.in", "plain/requirements.txt", "missing.in"} {
+			wantOuts, wantBase, wantOK := CompiledOutputs(root, input)
+			for name, got := range map[string]func(string, string) ([]string, string, bool){"cached": c.Outputs, "nil": nilCache.Outputs} {
+				outs, base, ok := got(root, input)
+				if !slices.Equal(outs, wantOuts) || base != wantBase || ok != wantOK {
+					t.Errorf("%s Outputs(%s) = %v, %q, %v; want %v, %q, %v", name, input, outs, base, ok, wantOuts, wantBase, wantOK)
+				}
+			}
+		}
+	}
+}

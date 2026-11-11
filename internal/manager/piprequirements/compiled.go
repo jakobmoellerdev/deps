@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pyreq"
@@ -234,26 +235,13 @@ func isInput(p string) bool { return strings.HasSuffix(p, ".in") }
 // Link to the files on disk: the compiled files are looked for in input's directory and its
 // ancestors; ok is false when there is none or they run in different directories.
 func CompiledOutputs(root, input string) (outputs []string, base string, ok bool) {
-	srcs := map[string]source{}
-	exists := func(p string) bool {
-		_, err := os.Stat(filepath.Join(root, filepath.FromSlash(p)))
-		return err == nil
-	}
-	lookup := func(p string) (source, bool) {
-		if s, ok := srcs[p]; ok {
-			return s, true
-		}
-		if !match(p) {
-			return source{}, false
-		}
-		b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(p)))
-		if err != nil {
-			return source{}, false
-		}
-		s := newSource(p, b, nil, exists)
-		srcs[p] = s
-		return s, true
-	}
+	return compiledOutputs(root, input, newSourceCache())
+}
+
+// compiledOutputs is CompiledOutputs with the parsed requirements files it reads taken from
+// and added to srcs, which a run shares between the inputs of one root.
+func compiledOutputs(root, input string, srcs *sourceCache) (outputs []string, base string, ok bool) {
+	lookup := func(p string) (source, bool) { return srcs.get(root, p) }
 	if _, ok := lookup(input); !ok {
 		return nil, "", false
 	}
@@ -281,4 +269,86 @@ func CompiledOutputs(root, input string) (outputs []string, base string, ok bool
 	}
 	slices.Sort(outputs)
 	return outputs, base, len(outputs) > 0
+}
+
+// sourceCache holds the requirements files of a root parsed as compile graph sources, by
+// slash path, so that the scans of several inputs read and parse each of them once.
+type sourceCache struct {
+	mu sync.Mutex
+	m  map[string]cachedSource
+}
+
+type cachedSource struct {
+	s  source
+	ok bool // the path is a requirements file that could be read
+}
+
+func newSourceCache() *sourceCache { return &sourceCache{m: map[string]cachedSource{}} }
+
+// get is the source of the requirements file p (a slash path relative to the absolute root),
+// read once.
+func (c *sourceCache) get(root, p string) (source, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e, ok := c.m[p]; ok {
+		return e.s, e.ok
+	}
+	e := cachedSource{}
+	if match(p) {
+		if b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(p))); err == nil {
+			exists := func(q string) bool {
+				_, err := os.Stat(filepath.Join(root, filepath.FromSlash(q)))
+				return err == nil
+			}
+			e = cachedSource{s: newSource(p, b, nil, exists), ok: true}
+		}
+	}
+	c.m[p] = e
+	return e.s, e.ok
+}
+
+// OutputCache memoizes the compiled files of the requirements files of a run (CompiledOutputs)
+// by root and input, and the requirements files read on the way: an update of an input looks
+// them up for every update and every scope it is in. The files must not change while it is in
+// use; the zero value is not usable, use NewOutputCache.
+type OutputCache struct {
+	mu    sync.Mutex
+	srcs  map[string]*sourceCache
+	scans map[outputKey]*outputEntry
+}
+
+type outputKey struct{ root, input string }
+
+type outputEntry struct {
+	once    sync.Once
+	outputs []string
+	base    string
+	ok      bool
+}
+
+// NewOutputCache returns an empty OutputCache.
+func NewOutputCache() *OutputCache {
+	return &OutputCache{srcs: map[string]*sourceCache{}, scans: map[outputKey]*outputEntry{}}
+}
+
+// Outputs is CompiledOutputs of input below the absolute root, memoized when c is not nil.
+func (c *OutputCache) Outputs(root, input string) (outputs []string, base string, ok bool) {
+	if c == nil {
+		return CompiledOutputs(root, input)
+	}
+	c.mu.Lock()
+	srcs := c.srcs[root]
+	if srcs == nil {
+		srcs = newSourceCache()
+		c.srcs[root] = srcs
+	}
+	key := outputKey{root, input}
+	e := c.scans[key]
+	if e == nil {
+		e = &outputEntry{}
+		c.scans[key] = e
+	}
+	c.mu.Unlock()
+	e.once.Do(func() { e.outputs, e.base, e.ok = compiledOutputs(root, input, srcs) })
+	return e.outputs, e.base, e.ok
 }
