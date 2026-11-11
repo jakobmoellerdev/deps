@@ -4,7 +4,6 @@ package velaci
 
 import (
 	"path"
-	"regexp"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
@@ -23,9 +22,6 @@ const (
 	TypeSecret  = "secret"
 )
 
-// fileRe is Renovate's pattern `(^|/)\.vela\.ya?ml$` for the base name.
-var fileRe = regexp.MustCompile(`^\.vela\.ya?ml$`)
-
 type velaManager struct{}
 
 // New returns the velaci manager.
@@ -33,8 +29,12 @@ func New() manager.Manager { return velaManager{} }
 
 func (velaManager) Name() string { return Name }
 
-// Match reports whether path is `.vela.y(a)ml`, in any directory.
-func (velaManager) Match(p string) bool { return fileRe.MatchString(path.Base(p)) }
+// Match reports whether path is `.vela.y(a)ml`, in any directory (Renovate's
+// `(^|/)\.vela\.ya?ml$`).
+func (velaManager) Match(p string) bool {
+	b := path.Base(p)
+	return b == ".vela.yaml" || b == ".vela.yml"
+}
 
 // Extract returns the images of the steps, services, stage steps and secret origins of src.
 func (velaManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {
