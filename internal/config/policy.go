@@ -389,12 +389,16 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Polic
 			continue
 		}
 		p.Rules = append(p.Rules, i)
-		if r.ReplacementName != "" && strings.HasPrefix(d.Name, r.ReplacementPrefix) {
-			name := r.ReplacementName
-			if r.ReplacementPrefix != "" {
-				name += d.Name[len(r.ReplacementPrefix):]
+		if r.ReplacementName != "" {
+			// The prefix matches the name Renovate's replacementNameTemplate sees (packageName),
+			// not Dep.Name: an OCI helm chart's Name is the chart alone.
+			if name := packageName(d); strings.HasPrefix(name, r.ReplacementPrefix) {
+				to := r.ReplacementName
+				if r.ReplacementPrefix != "" {
+					to += name[len(r.ReplacementPrefix):]
+				}
+				p.Replacement, p.ReplacementName, p.ReplacementVersion = "", to, r.ReplacementVersion
 			}
-			p.Replacement, p.ReplacementName, p.ReplacementVersion = "", name, r.ReplacementVersion
 		}
 		if r.Ignore != nil {
 			p.Ignore, p.IgnoredByDefault = *r.Ignore, false

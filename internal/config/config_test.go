@@ -1009,7 +1009,8 @@ func TestMonorepoList(t *testing.T) {
 // entries) set the pre-policy's replacement, a rule's replacementName replaces the built-in
 // one with its own version, and replacements: false turns the built-in list off only.
 func TestReplacementPolicy(t *testing.T) {
-	const rules = "rules: [{names: [request], replacementName: got, replacementVersion: 12.0.0}, {names: [jade], replacementName: '@x/pug'}, {managers: [docker], replacementPrefix: quay.io/old/, replacementName: ghcr.io/new/}]\n"
+	const rules = "rules: [{names: [request], replacementName: got, replacementVersion: 12.0.0}, {names: [jade], replacementName: '@x/pug'}, {managers: [docker], replacementPrefix: quay.io/old/, replacementName: ghcr.io/new/}," +
+		" {managers: [helm], replacementPrefix: 'ghcr.io/old/charts/', replacementName: 'ghcr.io/new/charts/'}]\n"
 	c, err := load(t, ".deps.yaml", rules)
 	if err != nil {
 		t.Fatal(err)
@@ -1036,6 +1037,10 @@ func TestReplacementPolicy(t *testing.T) {
 		{off, dep.Dep{Manager: "npm", Name: "cucumber", Version: "6.0.0", Versioning: "semver"}, "", "", ""},
 		{c, dep.Dep{Manager: "docker", Name: "quay.io/old/app", Version: "1.0", Versioning: "docker"}, "ghcr.io/new/app", "", ""},
 		{c, dep.Dep{Manager: "docker", Name: "quay.io/other/app", Version: "1.0", Versioning: "docker"}, "", "", ""},
+		// An OCI helm chart matches the prefix with its full reference (packageName), not its
+		// bare chart name.
+		{c, dep.Dep{Manager: "helm", Name: "cilium", Source: "oci://ghcr.io/old/charts", Version: "1.18.6", Versioning: "semver"}, "ghcr.io/new/charts/cilium", "", ""},
+		{c, dep.Dep{Manager: "helm", Name: "cilium", Source: "oci://ghcr.io/other/charts", Version: "1.18.6", Versioning: "semver"}, "", "", ""},
 		{off, dep.Dep{Manager: "npm", Name: "request", Version: "2.88.0", Versioning: "semver"}, "got", "12.0.0", ""},
 	} {
 		p := tc.cfg.Policy(tc.d)
