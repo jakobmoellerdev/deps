@@ -44,7 +44,7 @@ func TestDiscoverIgnorePaths(t *testing.T) {
 		{"custom dir glob", []string{"a/**"}, []string{"examples/x/go.mod", "go.mod", "lib/go.mod", "pkg/__fixtures__/go.mod", "pkg/__tests__/go.mod", "test/go.mod", "testx/go.mod", "web/bower_components/go.mod"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := discover(root, tc.ignore, []manager.Manager{suffixManager{}})
+			got, err := discover(root, tc.ignore, true, []manager.Manager{suffixManager{}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -52,6 +52,47 @@ func TestDiscoverIgnorePaths(t *testing.T) {
 				t.Errorf("discovered %v, want %v", got[0], tc.want)
 			}
 		})
+	}
+}
+
+// TestDiscoverGitIgnore: with gitIgnore on, the repository's .gitignore files and
+// .git/info/exclude keep paths out of discovery; off, only ignorePaths does.
+func TestDiscoverGitIgnore(t *testing.T) {
+	root := t.TempDir()
+	for f, body := range map[string]string{
+		".git/HEAD":             "ref: refs/heads/main\n",
+		".git/info/exclude":     "excluded/\n",
+		".gitignore":            "dist/\ngenerated/go.mod\n",
+		"go.mod":                "",
+		"dist/go.mod":           "",
+		"generated/go.mod":      "",
+		"excluded/go.mod":       "",
+		"lib/go.mod":            "",
+		"lib/.gitignore":        "*.mod\n!go.mod\n",
+		"lib/deep/vendored.mod": "",
+	} {
+		p := filepath.Join(root, filepath.FromSlash(f))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		gitIgnore bool
+		want      []string
+	}{
+		{true, []string{"go.mod", "lib/go.mod"}},
+		{false, []string{"dist/go.mod", "excluded/go.mod", "generated/go.mod", "go.mod", "lib/go.mod"}},
+	} {
+		got, err := discover(root, []string{}, tc.gitIgnore, []manager.Manager{suffixManager{}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(got[0], tc.want) {
+			t.Errorf("gitIgnore=%v: discovered %v, want %v", tc.gitIgnore, got[0], tc.want)
+		}
 	}
 }
 
@@ -91,7 +132,7 @@ func TestDiscoverRootForms(t *testing.T) {
 	} {
 		t.Run(tc.cwd+":"+tc.root, func(t *testing.T) {
 			t.Chdir(filepath.Join(tmp, tc.cwd))
-			got, err := discover(tc.root, nil, []manager.Manager{suffixManager{}})
+			got, err := discover(tc.root, nil, true, []manager.Manager{suffixManager{}})
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -162,7 +162,7 @@ func TestSchema(t *testing.T) {
 			t.Errorf("%s pattern %q is too loose", name, n.Pattern)
 		}
 	}
-	if want := []string{"version", "pin", "rangeStrategy", "schedule", "timezone", "branchPrefix", "baseBranches", "additionalBranchPrefix", "useBaseBranchConfig", "rebaseWhen", "builtins", "git", "prConcurrentLimit", "prHourlyLimit", "actions", "terraform", "gomod", "gitlabci", "composer", "minimumReleaseAge", "minimumReleaseAgeBehaviour", "abandonmentThreshold", "ignorePaths",
+	if want := []string{"version", "pin", "rangeStrategy", "schedule", "timezone", "branchPrefix", "baseBranches", "additionalBranchPrefix", "useBaseBranchConfig", "rebaseWhen", "builtins", "git", "prConcurrentLimit", "prHourlyLimit", "actions", "terraform", "gomod", "gitlabci", "composer", "minimumReleaseAge", "minimumReleaseAgeBehaviour", "abandonmentThreshold", "ignorePaths", "gitIgnore",
 		"separate", "updateNotScheduled", "automerge", "automergeStrategy", "automergeType", "draftPR", "prCreation", "prNotPendingHours", "labels", "reviewers", "assignees", "prTitle", "prHeader", "prFooter", "rebaseLabel", "stopUpdatingLabel",
 		"dashboard", "dashboardApproval", "extends", "rules", "custom", "customDatasources", "groups", "registryAliases", "lockFileMaintenance"}; len(s.Properties) != len(want) {
 		t.Errorf("root properties = %d, want %v", len(s.Properties), want)
