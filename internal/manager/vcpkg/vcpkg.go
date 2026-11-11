@@ -7,7 +7,6 @@ package vcpkg
 
 import (
 	"path"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -43,8 +42,6 @@ const (
 	dsRefs      = "git-refs"
 	headVersion = "HEAD"
 )
-
-var fileRe = regexp.MustCompile(`(^|/)vcpkg(-configuration)?\.json$`)
 
 // registry is where ports resolve to: the versions database at base, or skip.
 type registry struct {
@@ -87,7 +84,8 @@ func (*vcpkgManager) Name() string { return Name }
 
 // Match reports whether the slash path is a vcpkg.json or vcpkg-configuration.json.
 func (*vcpkgManager) Match(p string) bool {
-	return strings.HasSuffix(p, ".json") && fileRe.MatchString(p)
+	b := path.Base(p)
+	return b == "vcpkg.json" || b == "vcpkg-configuration.json"
 }
 
 // Extract returns the baselines of the file and, for a manifest, its port version deps, whose

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path"
 	"regexp"
 	"strings"
 
@@ -34,11 +35,8 @@ const (
 	TypeHelm       = "helm"
 )
 
-var (
-	dockerfileRe    = regexp.MustCompile(`(^|/)(Dockerfile|Containerfile)(\.[^/]*)?$`)
-	dockerfileExtRe = regexp.MustCompile(`(^|/)[^/]*\.(Dockerfile|Containerfile)$`)
-	composeRe       = regexp.MustCompile(`(^|/)([^/]*\.)?(docker-)?compose(\.[^/]*)?\.ya?ml$`)
-)
+// composeRe matches the compose file names; it runs per extracted file, not per walked path.
+var composeRe = regexp.MustCompile(`(^|/)([^/]*\.)?(docker-)?compose(\.[^/]*)?\.ya?ml$`)
 
 type dockerManager struct{}
 
@@ -49,17 +47,27 @@ func (dockerManager) Name() string { return Name }
 
 // Match reports whether the slash path is a Dockerfile/Containerfile or a YAML file (compose,
 // workflow, action, or any other YAML scanned for Kubernetes and Helm images).
-func (dockerManager) Match(path string) bool {
-	return isDockerfile(path) || strings.HasSuffix(path, ".yaml") || strings.HasSuffix(path, ".yml")
+func (dockerManager) Match(p string) bool {
+	return isDockerfile(p) || strings.HasSuffix(p, ".yaml") || strings.HasSuffix(p, ".yml")
 }
 
-// isDockerfile excludes `Dockerfile.dockerignore`, which is an ignore file, not a Dockerfile.
-// The name check skips the regexps for the paths that cannot match.
-func isDockerfile(path string) bool {
-	if !strings.Contains(path, "Dockerfile") && !strings.Contains(path, "Containerfile") {
+// isDockerfile reports whether the base name is Dockerfile/Containerfile, with or without an
+// extension (`Dockerfile.dev`, `dev.Dockerfile`). `Dockerfile.dockerignore` is an ignore
+// file, not a Dockerfile. Matching the name directly keeps the walk off the regexp engine.
+func isDockerfile(p string) bool {
+	if strings.HasSuffix(p, "/") || !strings.Contains(p, "Dockerfile") && !strings.Contains(p, "Containerfile") {
 		return false
 	}
-	return (dockerfileRe.MatchString(path) || dockerfileExtRe.MatchString(path)) && !strings.HasSuffix(path, ".dockerignore")
+	b := path.Base(p)
+	for _, name := range [...]string{"Dockerfile", "Containerfile"} {
+		if rest, ok := strings.CutPrefix(b, name); ok && (rest == "" || rest[0] == '.') {
+			return !strings.HasSuffix(b, ".dockerignore")
+		}
+		if strings.HasSuffix(b, "."+name) {
+			return true
+		}
+	}
+	return false
 }
 
 // Extract returns every image reference in src with byte spans into src.

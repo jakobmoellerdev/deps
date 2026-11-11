@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"regexp"
 	"strings"
 
@@ -55,7 +56,7 @@ const (
 )
 
 var (
-	matchRe = regexp.MustCompile(`(^|/)deno\.jsonc?$`)
+
 	// taskSpecRe finds versioned `jsr:`/`npm:` specifiers and deno.land URLs in a task command;
 	// unversioned ones are not pins (`deno task npm:build` names a task).
 	taskSpecRe = regexp.MustCompile(`(?:^|[\s"'=(])((?:jsr|npm):/?(?:@[\w.-]+/)?[\w.-]+@[^\s/"'\\]+|https://deno\.land/(?:x/\w+|std)@[^\s/"'\\]+)`)
@@ -71,10 +72,10 @@ func New() manager.Manager { return denoManager{} }
 
 func (denoManager) Name() string { return Name }
 
-// Match reports whether the slash path is a deno.json or deno.jsonc. The suffix check skips the
-// regexp for the paths that cannot match.
+// Match reports whether the slash path is a deno.json or deno.jsonc.
 func (denoManager) Match(p string) bool {
-	return (strings.HasSuffix(p, ".json") || strings.HasSuffix(p, ".jsonc")) && matchRe.MatchString(p)
+	b := path.Base(p)
+	return b == "deno.json" || b == "deno.jsonc"
 }
 
 // Extract returns the deps of src in file order. Comments and trailing commas are blanked

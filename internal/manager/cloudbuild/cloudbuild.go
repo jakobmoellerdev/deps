@@ -4,7 +4,6 @@ package cloudbuild
 
 import (
 	"path"
-	"regexp"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
@@ -19,10 +18,6 @@ const Name = "cloudbuild"
 // TypeImage is the dep type of a step's builder image.
 const TypeImage = "image"
 
-// fileRe is Renovate's `(^|/)cloudbuild\.ya?ml` anchored at the end, so templates such as
-// `cloudbuild.yaml.hbs` are not read.
-var fileRe = regexp.MustCompile(`^cloudbuild\.ya?ml$`)
-
 type cloudbuildManager struct{}
 
 // New returns the cloudbuild manager.
@@ -30,8 +25,13 @@ func New() manager.Manager { return cloudbuildManager{} }
 
 func (cloudbuildManager) Name() string { return Name }
 
-// Match reports whether path is `cloudbuild.y(a)ml`, in any directory.
-func (cloudbuildManager) Match(p string) bool { return fileRe.MatchString(path.Base(p)) }
+// Match reports whether path is `cloudbuild.y(a)ml`, in any directory: Renovate's
+// `(^|/)cloudbuild\.ya?ml` anchored at the end, so templates such as `cloudbuild.yaml.hbs`
+// are not read.
+func (cloudbuildManager) Match(p string) bool {
+	b := path.Base(p)
+	return b == "cloudbuild.yaml" || b == "cloudbuild.yml"
+}
 
 // Extract returns the builder image (`name`) of every step of src.
 func (cloudbuildManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {

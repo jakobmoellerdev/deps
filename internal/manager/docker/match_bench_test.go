@@ -42,8 +42,12 @@ func BenchmarkMatch(b *testing.B) {
 	}
 }
 
-// yamlRe is the YAML file regexp Match replaced with suffix checks.
-var yamlRe = regexp.MustCompile(`\.ya?ml$`)
+// The regexps Match replaced with name checks; TestMatchParity and FuzzMatch pin Match to them.
+var (
+	dockerfileRe    = regexp.MustCompile(`(^|/)(Dockerfile|Containerfile)(\.[^/]*)?$`)
+	dockerfileExtRe = regexp.MustCompile(`(^|/)[^/]*\.(Dockerfile|Containerfile)$`)
+	yamlRe          = regexp.MustCompile(`\.ya?ml$`)
+)
 
 // regexpMatch is Match without the literal checks that skip the regexps.
 func regexpMatch(p string) bool {
