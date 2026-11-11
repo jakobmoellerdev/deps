@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
@@ -31,13 +32,31 @@ func parseRoot(pkg []byte) (rootManifest, error) {
 	if !bytes.Contains(pkg, []byte(`"workspaces"`)) && !bytes.Contains(pkg, []byte(`"packageManager"`)) {
 		return m, nil
 	}
-	err := json.Unmarshal(pkg, &m, lenient)
+	err := json.Unmarshal(blankBOM(pkg), &m, lenient)
 	return m, err
 }
 
 // lenient accepts package.json files with duplicate names (the last wins), as npm's
 // JSON.parse does.
 var lenient = jsontext.AllowDuplicateNames(true)
+
+// bom is the UTF-8 byte order mark, which editors on Windows write before a package.json's
+// first byte; npm's JSON.parse skips it.
+var bom = []byte("\ufeff")
+
+// blankBOM returns src with a leading byte order mark replaced by blanks, which the decoder
+// reads as the whitespace before the document. Blanking rather than trimming keeps every byte
+// offset, and so every edit span, that of src.
+func blankBOM(src []byte) []byte {
+	if !bytes.HasPrefix(src, bom) {
+		return src
+	}
+	out := slices.Clone(src)
+	for i := range bom {
+		out[i] = ' '
+	}
+	return out
+}
 
 // tool returns the tool and version of the packageManager field (`pnpm@9.1.0+sha512.…`).
 func (m rootManifest) tool() (name, version string) {
@@ -351,7 +370,7 @@ func (c *WorkspaceConfigs) Packages(dir string) (map[string]bool, error) {
 		var pkg struct {
 			Name string `json:"name"`
 		}
-		if err := json.Unmarshal(b, &pkg, lenient); err != nil {
+		if err := json.Unmarshal(blankBOM(b), &pkg, lenient); err != nil {
 			slog.Debug("workspace package unparsable", "file", p, "err", err)
 			continue
 		}

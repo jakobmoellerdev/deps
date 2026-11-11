@@ -212,7 +212,7 @@ func manifestRefs(pkg []byte) (localRefs, error) {
 		return r, nil
 	}
 	var m refsManifest
-	if err := json.Unmarshal(pkg, &m, lenient); err != nil {
+	if err := json.Unmarshal(blankBOM(pkg), &m, lenient); err != nil {
 		return r, err
 	}
 	spec := func(v jsontext.Value) {

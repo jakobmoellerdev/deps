@@ -20,6 +20,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
 
 // tarball builds the npm package tarball of tiny@version.
@@ -308,6 +310,29 @@ func TestWorkspaceConfigs(t *testing.T) {
 	}
 	if names, err := (&WorkspaceConfigs{}).Packages(filepath.Join(root, "none")); err != nil || len(names) != 0 {
 		t.Errorf("no workspace = %v, %v", names, err)
+	}
+}
+
+// TestManifestBOM covers package.json files written with a UTF-8 byte order mark: they are
+// read like the same file without one, and the edits pinning their ranges keep the mark.
+func TestManifestBOM(t *testing.T) {
+	m, err := parseRoot([]byte("\ufeff" + `{"packageManager": "pnpm@9.1.0", "workspaces": ["packages/*"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name, version := m.tool(); name != "pnpm" || version != "9.1.0" || string(m.Workspaces) != `["packages/*"]` {
+		t.Errorf("parseRoot = %q, %q, %q", name, version, m.Workspaces)
+	}
+	refs, err := manifestRefs([]byte("\ufeff" + `{"dependencies": {"a": "file:./a.tgz"}}`))
+	if err != nil || !slices.Equal(refs.targets, []string{"./a.tgz"}) {
+		t.Errorf("manifestRefs = %v, %v", refs, err)
+	}
+
+	in := "\ufeff" + `{"dependencies": {"a": "^1.0.0"}}`
+	got, err := pinManifests(map[string][]byte{"package.json": []byte(in)},
+		map[string][]dep.Update{"package.json": {lockUp("dependencies", "a", "^1.0.0", "1.3.0")}})
+	if want := "\ufeff" + `{"dependencies": {"a": "1.3.0"}}`; err != nil || string(got["package.json"]) != want {
+		t.Errorf("pinManifests = %q, %v, want %q", got["package.json"], err, want)
 	}
 }
 

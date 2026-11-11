@@ -490,7 +490,7 @@ func stringEdits(doc []byte, want map[string]string) ([]patch.Edit, map[string]b
 	}
 	var edits []patch.Edit
 	found := map[string]bool{}
-	dec := jsontext.NewDecoder(bytes.NewReader(doc), lenient)
+	dec := jsontext.NewDecoder(bytes.NewReader(blankBOM(doc)), lenient)
 	var walk func(at string, top bool) error
 	walk = func(at string, top bool) error {
 		if err := enterObject(dec); err != nil {
