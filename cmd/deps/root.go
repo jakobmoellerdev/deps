@@ -77,6 +77,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/logx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 )
 
@@ -413,7 +414,7 @@ func newSession(ctx context.Context, o *rootOpts, info platform.Info, token stri
 	}
 	logExtends(ctx, cfg)
 	printLint(stderr, cfg)
-	managers, err := engine.Managers(cfg)
+	managers, err := sessionManagers(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -595,10 +596,28 @@ func (s *session) forCheckout(ctx context.Context, dir, configPath string, info 
 	return s.withConfig(ctx, root, cfg, info)
 }
 
+// sessionManagers are the managers cfg enables, with the gomod manager memoizing the module
+// scans of the session's checkout: Build and Inputs ask it for the .go files of a module once
+// per update that rewrites import paths, and a session reads a checkout that does not change
+// under it.
+func sessionManagers(cfg *config.Config) ([]manager.Manager, error) {
+	ms, err := engine.Managers(cfg)
+	if err != nil {
+		return nil, err
+	}
+	scans := gomod.NewScanCache()
+	for i, m := range ms {
+		if m.Name() == gomod.Name {
+			ms[i] = gomod.NewCached(scans)
+		}
+	}
+	return ms, nil
+}
+
 // withConfig is a session for the checkout root of the repository of info with cfg: its
 // managers, environment and custom datasources, the other datasources shared with s.
 func (s *session) withConfig(ctx context.Context, root string, cfg *config.Config, info platform.Info) (*session, error) {
-	managers, err := engine.Managers(cfg)
+	managers, err := sessionManagers(cfg)
 	if err != nil {
 		return nil, err
 	}

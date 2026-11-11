@@ -351,3 +351,50 @@ func TestWorkspace(t *testing.T) {
 		t.Error("Vendors without vendor/modules.txt")
 	}
 }
+
+// TestScanCache checks that the manager of NewCached scans a module once, so that a .go file
+// written after the first update is not seen again, while the plain manager scans every time.
+func TestScanCache(t *testing.T) {
+	root := t.TempDir()
+	write := func(p, content string) {
+		t.Helper()
+		abs := filepath.Join(root, filepath.FromSlash(p))
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("mod/go.mod", "module example.com/x\n\nrequire github.com/google/go-github/v92 v92.0.0\n")
+	write("mod/a.go", "package a\n\nimport \"github.com/google/go-github/v92/github\"\n\nvar _ = github.Client{}\n")
+	u := dep.Update{
+		Dep:        dep.Dep{Manager: Name, File: "mod/go.mod", Name: "github.com/google/go-github/v92", Version: "v92.0.0"},
+		Type:       dep.Major,
+		NewVersion: "v93.0.0",
+		NewName:    "github.com/google/go-github/v93",
+	}
+	for _, tt := range []struct {
+		name  string
+		mgr   manager.Manager
+		later int // files edited after b.go is written
+	}{
+		{"cached", NewCached(NewScanCache()), 1},
+		{"plain", New(), 2},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fe := tt.mgr.(manager.FileEditor)
+			if got, err := fe.FileEdits(root, u); err != nil || len(got) != 1 {
+				t.Fatalf("FileEdits = %v, %v", got, err)
+			}
+			write("mod/b.go", "package a\n\nimport \"github.com/google/go-github/v92/github\"\n\nvar _ = github.Client{}\n")
+			got, err := fe.FileEdits(root, u)
+			if err != nil || len(got) != tt.later {
+				t.Errorf("FileEdits after a new file = %v, %v; want %d files", got, err, tt.later)
+			}
+			if err := os.Remove(filepath.Join(root, "mod", "b.go")); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}

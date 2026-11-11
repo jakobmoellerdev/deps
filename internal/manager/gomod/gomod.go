@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"golang.org/x/mod/modfile"
 	"golang.org/x/mod/module"
@@ -31,10 +32,15 @@ const Name = "gomod"
 
 var matchRe = regexp.MustCompile(`(^|/)go\.(mod|work)$`)
 
-type gomodManager struct{}
+type gomodManager struct{ scans *ScanCache }
 
-// New returns the gomod manager.
+// New returns the gomod manager; it scans a module again for every update that rewrites
+// import paths, so that a file written since the last one is seen.
 func New() manager.Manager { return gomodManager{} }
+
+// NewCached returns the gomod manager memoizing its module scans in scans, for a run that
+// does not change the .go files it reads.
+func NewCached(scans *ScanCache) manager.Manager { return gomodManager{scans: scans} }
 
 func (gomodManager) Name() string { return Name }
 
@@ -152,14 +158,86 @@ func (gomodManager) Rename(d dep.Dep, name string) (dep.Dep, error) {
 // except in directories the go command ignores (vendor, testdata, names starting with . or _)
 // and in nested modules. Only the import path literals change. The default ignorePaths do not
 // apply: tests belong to the module and must keep compiling.
-func (gomodManager) FileEdits(root string, u dep.Update) (map[string][]patch.Edit, error) {
+func (m gomodManager) FileEdits(root string, u dep.Update) (map[string][]patch.Edit, error) {
 	if u.NewName == "" {
 		return nil, nil
 	}
-	old := []byte(u.Dep.Name)
 	base := filepath.Join(root, filepath.FromSlash(path.Dir(u.Dep.File)))
+	files, err := m.scans.files(base)
+	if err != nil {
+		return nil, err
+	}
+	old := []byte(u.Dep.Name)
 	var out map[string][]patch.Edit
 	var buf []byte // reused: most .go files do not mention the module
+	for _, p := range files {
+		src, err := readFile(p, buf)
+		buf = src
+		if err != nil {
+			return nil, err
+		}
+		if !bytes.Contains(src, old) {
+			continue
+		}
+		rel, err := filepath.Rel(root, p)
+		if err != nil {
+			return nil, err
+		}
+		rel = filepath.ToSlash(rel)
+		edits, err := importEdits(rel, src, u.Dep.Name, u.NewName)
+		if err != nil {
+			return nil, err
+		}
+		if len(edits) > 0 {
+			if out == nil {
+				out = map[string][]patch.Edit{}
+			}
+			out[rel] = edits
+		}
+	}
+	return out, nil
+}
+
+// ScanCache memoizes the .go files of a module directory (goFiles) by absolute path: a group
+// can carry several major path updates or replacements of the same module, and each of them
+// would otherwise walk the module again. The files must not change while it is in use, so
+// only a run that reads one checkout once uses one (NewCached); the zero value is not
+// usable, use NewScanCache.
+type ScanCache struct {
+	mu sync.Mutex
+	m  map[string]*scanEntry
+}
+
+type scanEntry struct {
+	once  sync.Once
+	files []string
+	err   error
+}
+
+// NewScanCache returns an empty ScanCache.
+func NewScanCache() *ScanCache { return &ScanCache{m: map[string]*scanEntry{}} }
+
+// files is goFiles of dir, memoized when c is not nil.
+func (c *ScanCache) files(dir string) ([]string, error) {
+	if c == nil {
+		return goFiles(dir)
+	}
+	c.mu.Lock()
+	e := c.m[dir]
+	if e == nil {
+		e = &scanEntry{}
+		c.m[dir] = e
+	}
+	c.mu.Unlock()
+	e.once.Do(func() { e.files, e.err = goFiles(dir) })
+	return e.files, e.err
+}
+
+// goFiles returns the absolute paths of the .go files of the module in the absolute directory
+// base, in walk order: every one below it except in directories the go command ignores
+// (vendor, testdata, names starting with . or _) and in nested modules.
+func goFiles(base string) ([]string, error) {
+	var files []string
 	err := filepath.WalkDir(base, func(p string, e fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -176,35 +254,15 @@ func (gomodManager) FileEdits(root string, u dep.Update) (map[string][]patch.Edi
 			}
 			return nil
 		}
-		if !e.Type().IsRegular() || !strings.HasSuffix(e.Name(), ".go") {
-			return nil
-		}
-		src, err := readFile(p, buf)
-		buf = src
-		if err != nil {
-			return err
-		}
-		if !bytes.Contains(src, old) {
-			return nil
-		}
-		rel, err := filepath.Rel(root, p)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
-		edits, err := importEdits(rel, src, u.Dep.Name, u.NewName)
-		if err != nil {
-			return err
-		}
-		if len(edits) > 0 {
-			if out == nil {
-				out = map[string][]patch.Edit{}
-			}
-			out[rel] = edits
+		if e.Type().IsRegular() && strings.HasSuffix(e.Name(), ".go") {
+			files = append(files, p)
 		}
 		return nil
 	})
-	return out, err
+	if err != nil {
+		return nil, err
+	}
+	return files, nil
 }
 
 // readFile is os.ReadFile into buf (reused, grown as needed).
