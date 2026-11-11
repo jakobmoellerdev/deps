@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -216,4 +217,31 @@ func parseCredential(out []byte) (user, pass string, ok bool) {
 		}
 	}
 	return user, pass, pass != ""
+}
+
+// IsJWT reports whether token is a JSON Web Token: three dot-separated parts whose first is a
+// base64url-encoded JSON header ("eyJ"). Forgejo's Authorized Integrations hand such a token to
+// an Actions job instead of a static access token.
+func IsJWT(token string) bool {
+	if !strings.HasPrefix(token, "eyJ") || strings.Count(token, ".") != 2 {
+		return false
+	}
+	for _, part := range strings.Split(token, ".") {
+		if part == "" {
+			return false
+		}
+	}
+	return true
+}
+
+// SetAuth puts (user, token) on req: Basic, except for a JWT, which goes in as
+// "Authorization: Bearer <token>". Forgejo authenticates a JWT from an Authorized Integration
+// only as a bearer token; its Basic auth checks passwords and access tokens and answers 401 for
+// a JWT. The user is then unused, as the JWT names its own account.
+func SetAuth(req *http.Request, user, token string) {
+	if IsJWT(token) {
+		req.Header.Set("Authorization", "Bearer "+token)
+		return
+	}
+	req.SetBasicAuth(user, token)
 }

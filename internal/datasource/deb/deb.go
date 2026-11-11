@@ -277,7 +277,7 @@ func (s *Source) fetch(ctx context.Context, target, file string, wanted map[stri
 // authorize sends the forge's Basic credentials for req's host, unless its URL has userinfo.
 func (s *Source) authorize(req *http.Request) error {
 	if user, pass, ok := s.auth.Static(req.URL.Hostname()); ok && req.URL.User == nil {
-		req.SetBasicAuth(user, pass)
+		httpx.SetAuth(req, user, pass)
 	}
 	return nil
 }

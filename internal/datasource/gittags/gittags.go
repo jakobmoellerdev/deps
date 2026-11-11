@@ -915,7 +915,7 @@ func (s *session) do(ctx context.Context, method, target string, body []byte) (*
 			req.Header.Set("Accept", "application/x-git-upload-pack-result")
 		}
 		if s.hasCreds {
-			req.SetBasicAuth(s.user, s.pass)
+			httpx.SetAuth(req, s.user, s.pass)
 		}
 		resp, err := s.l.client.Do(req)
 		if err != nil {

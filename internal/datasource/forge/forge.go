@@ -441,7 +441,7 @@ func (s *Source) do(ctx context.Context, target, user, pass string, authed bool,
 		switch {
 		case !authed:
 		case !s.spec.gitlab:
-			req.SetBasicAuth(user, pass)
+			httpx.SetAuth(req, user, pass)
 		case user == "gitlab-ci-token":
 			req.Header.Set("JOB-TOKEN", pass)
 		default:

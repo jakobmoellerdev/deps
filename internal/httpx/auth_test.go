@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"context"
+	"net/http"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -236,5 +237,40 @@ func TestGHTokenFallback(t *testing.T) {
 	}
 	if _, _, ok := NewAuth(platform.Info{}, "", env(nil), gh("")).Static("github.com"); ok {
 		t.Error("a gh without login gave a token")
+	}
+}
+
+func TestSetAuth(t *testing.T) {
+	// A JWT of three base64url parts; only the shape matters.
+	jwt := "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJyZXBvOm8vciJ9.c2ln"
+	for _, tc := range []struct {
+		name, user, token string
+		wantHeader        string
+	}{
+		{"jwt is a bearer token", "x-access-token", jwt, "Bearer " + jwt},
+		{"access token stays basic", "x-access-token", "abc123", ""},
+		{"jwt-looking but two parts", "x-access-token", "eyJhbGciOiJSUzI1NiJ9.c2ln", ""},
+		{"jwt-looking but empty part", "x-access-token", "eyJhbGciOiJSUzI1NiJ9..c2ln", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodGet, "https://example.org/", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			SetAuth(req, tc.user, tc.token)
+			if tc.wantHeader != "" {
+				if got := req.Header.Get("Authorization"); got != tc.wantHeader {
+					t.Errorf("Authorization = %q, want %q", got, tc.wantHeader)
+				}
+				if _, _, ok := req.BasicAuth(); ok {
+					t.Error("a JWT must not be sent as Basic credentials")
+				}
+				return
+			}
+			user, pass, ok := req.BasicAuth()
+			if !ok || user != tc.user || pass != tc.token {
+				t.Errorf("BasicAuth = %q, %q, %v", user, pass, ok)
+			}
+		})
 	}
 }

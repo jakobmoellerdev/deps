@@ -355,7 +355,7 @@ Add a pipeline schedule (*Build → Pipeline schedules*) on the default branch, 
    - Gitea and Forgejo requests send `Authorization: token <t>`.
 2. **Git push.** deps uses the checkout's git credentials (`actions/checkout` stores its `token:`), not the API token. With [platform commits](#platform-commits-github), commits and branch updates use the API token, and git only lists and deletes branches.
 3. **Lookups:**
-   - The platform token is sent to the platform host as Basic `x-access-token:<t>` (`oauth2:<t>` on GitLab).
+   - The platform token is sent to the platform host as Basic `x-access-token:<t>` (`oauth2:<t>` on GitLab). A JWT is sent as `Authorization: Bearer <t>`: Forgejo's Authorized Integrations issue one to a workflow with `enable-openid-connect: true`, and its Basic auth refuses it.
    - `DEPS_GITHUB_COM_TOKEN` is used for github.com when the platform is elsewhere.
    - On a 401 without a static token, deps runs `git credential fill` once per host and retries. deps never prompts (`GIT_TERMINAL_PROMPT=0`).
 4. **npm, PyPI and Docker.** npm uses the `.npmrc` `_authToken` entries; PyPI indexes use the index URL's userinfo (`https://user:token@host/simple` in the manifest or `PIP_INDEX_URL`); docker uses the Docker credential chain (`~/.docker/config.json` or credential helpers, e.g. after `docker login`).

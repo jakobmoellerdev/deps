@@ -180,7 +180,7 @@ func (s *Source) get(ctx context.Context, u, user, pass string, auth bool) ([]by
 	g := s.getter
 	if auth {
 		g.Prepare = func(req *http.Request) error {
-			req.SetBasicAuth(user, pass)
+			httpx.SetAuth(req, user, pass)
 			return nil
 		}
 	}

@@ -410,7 +410,7 @@ func (s *Source) get(ctx context.Context, r *registry, u string) (io.ReadCloser,
 			req.SetBasicAuth(user, pass)
 		default:
 			if su, sp, ok := s.auth.Static(req.URL.Hostname()); ok {
-				req.SetBasicAuth(su, sp)
+				httpx.SetAuth(req, su, sp)
 			}
 		}
 		resp, err := s.client.Do(req)

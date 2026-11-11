@@ -239,7 +239,7 @@ func (s *Source) get(ctx context.Context, target string, read func(io.Reader) er
 		g.Prepare = func(req *http.Request) error {
 			if req.URL.User == nil {
 				if user, pass, ok := s.auth.Static(req.URL.Hostname()); ok {
-					req.SetBasicAuth(user, pass)
+					httpx.SetAuth(req, user, pass)
 				}
 			}
 			return nil

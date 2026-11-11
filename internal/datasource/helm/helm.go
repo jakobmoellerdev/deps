@@ -96,7 +96,7 @@ func New(client *http.Client, sem chan struct{}, auth *httpx.Auth, oci datasourc
 func (s *Source) authorize(req *http.Request) error {
 	if s.auth != nil {
 		if user, pass, ok := s.auth.Static(req.URL.Hostname()); ok {
-			req.SetBasicAuth(user, pass)
+			httpx.SetAuth(req, user, pass)
 		}
 	}
 	return nil

@@ -941,7 +941,7 @@ All clients share these rules:
 
 **Git (all platforms).**
 - Tags are fetched from `<source>/info/refs?service=git-upload-pack`, then `POST <source>/git-upload-pack` (`ls-refs`). Servers that only speak protocol v0 are handled by parsing the advertisement and using the `^{}` peeled lines.
-- Auth uses HTTP Basic with user `x-access-token` (`oauth2` for the platform token on GitLab).
+- Auth uses HTTP Basic with user `x-access-token` (`oauth2` for the platform token on GitLab). A token that is a JWT is sent as `Authorization: Bearer` instead (`httpx.SetAuth`): Forgejo issues one to an Actions job through an Authorized Integration and authenticates it only as a bearer token, answering 401 to Basic.
 
 **GitHub releases (datasources and notes).** With a token for the host: `POST {api}/graphql` (github.com `https://api.github.com/graphql`, GHES `https://<host>/api/graphql`) with `Authorization: Bearer <t>`. Without one: REST `GET {api}/repos/{repo}/releases?per_page=100&page=N` and `/releases/tags/{tag}`. GraphQL answers failed queries with 200 and an `errors` array: `NOT_FOUND` is treated as a 404, `RATE_LIMITED` fails with the rate-limit reset time.
 

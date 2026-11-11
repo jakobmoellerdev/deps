@@ -303,6 +303,32 @@ func TestAuth(t *testing.T) {
 	}
 }
 
+// A Forgejo Authorized Integration hands an Actions job a JWT instead of an access token, and
+// Forgejo's Basic auth answers 401 for it. It has to go out as a bearer token.
+func TestAuthJWT(t *testing.T) {
+	jwt := "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJyZXBvOm8vciJ9.c2ln"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, _, ok := r.BasicAuth(); ok || r.Header.Get("Authorization") != "Bearer "+jwt {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if r.URL.Path == "/api/v1/repos/o/r" {
+			fmt.Fprint(w, `{"archived":false}`)
+			return
+		}
+		fmt.Fprint(w, `[{"tag_name":"v1","name":"v1","commit":{"id":"a","sha":"a"}}]`)
+	}))
+	defer srv.Close()
+	s := New(ForgejoReleases, srv.Client(), nil, newAuth(httpx.WithToken("127.0.0.1", "x-access-token", jwt, "test")))
+	rels, err := s.Releases(t.Context(), dep.Dep{Name: "o/r", Source: srv.URL}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rels) != 1 {
+		t.Errorf("releases = %v", rels)
+	}
+}
+
 func TestNotFound(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
 	defer srv.Close()

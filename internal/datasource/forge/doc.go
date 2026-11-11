@@ -6,7 +6,7 @@ import (
 
 const (
 	gitlabName = "project path (`group/subgroup/project`) on `registryUrl` (default `" + DefaultGitLabURL + "`), or a repository URL `https://host/group/project`"
-	giteaAuth  = "Basic credentials registered for the host (the platform token, `x-access-token:<token>`); without, on 401/403/404 `git credential fill` once per host"
+	giteaAuth  = "Basic credentials registered for the host (the platform token, `x-access-token:<token>`), or `Authorization: Bearer` when the token is a JWT (a Forgejo Authorized Integration); without, on 401/403/404 `git credential fill` once per host"
 	gitlabAuth = "the token registered for the host (the platform token, `DEPS_GITLAB_TOKEN` or `CI_JOB_TOKEN` for the GitLab instance) as `Authorization: Bearer`, the CI job token as `JOB-TOKEN`; without, on 401/403/404 `git credential fill` once per host"
 	pages      = " Newest first; pages are followed while the response links a next one, at most 10."
 	// archived ends the description of the request that tells whether the repository is
