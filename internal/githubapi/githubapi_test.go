@@ -451,3 +451,61 @@ func TestNotes(t *testing.T) {
 		t.Errorf("canceled: %v", err)
 	}
 }
+
+// A lookup that failed because its caller's context ended must not be cached: the next
+// caller, with its own context, has to reach the API.
+func TestCanceledCallerIsNotCached(t *testing.T) {
+	t.Run("graphql", func(t *testing.T) {
+		c, _ := newServer(t, tokenAuth(), func(w http.ResponseWriter, q gql) {
+			if strings.Contains(q.Query, "releaseAssets") {
+				_, _ = io.WriteString(w, `{"data":{"repository":{"release":{"releaseAssets":{"nodes":[{"name":"a.tgz","digest":"sha256:ff"}]}}}}}`)
+				return
+			}
+			_, _ = io.WriteString(w, releasesPage(0, 3, false, ""))
+		})
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		if err := c.Releases(ctx, oR, nil, func(*List) {}); !errors.Is(err, context.Canceled) {
+			t.Errorf("canceled Releases = %v", err)
+		}
+		if _, err := c.AssetDigest(ctx, oR, "v0", "a.tgz"); !errors.Is(err, context.Canceled) {
+			t.Errorf("canceled AssetDigest = %v", err)
+		}
+		var found bool
+		if err := c.Releases(t.Context(), oR, nil, func(l *List) { _, found = l.Find("v0") }); err != nil || !found {
+			t.Errorf("Releases after the canceled caller = %v, found v0 %v", err, found)
+		}
+		if got, err := c.AssetDigest(t.Context(), oR, "v0", "a.tgz"); err != nil || got != "sha256:ff" {
+			t.Errorf("AssetDigest after the canceled caller = %q, %v", got, err)
+		}
+	})
+	t.Run("rest page cut in half", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		var first atomic.Bool
+		c, _ := newServer(t, nil, func(w http.ResponseWriter, q gql) {
+			if !strings.Contains(q.Query, "/repos/o/r/releases?") {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			if first.CompareAndSwap(false, true) {
+				// Half a page, decoded release by release, then the caller gives up.
+				_, _ = io.WriteString(w, `[{"tag_name":"v2"},`)
+				w.(http.Flusher).Flush()
+				cancel()
+				return
+			}
+			_, _ = io.WriteString(w, `[{"tag_name":"v2"},{"tag_name":"v1"}]`)
+		})
+		if err := c.Releases(ctx, oR, nil, func(*List) {}); err == nil {
+			t.Error("canceled Releases = nil error")
+		}
+		var stable []string
+		if err := c.Releases(t.Context(), oR, nil, func(l *List) {
+			for _, rel := range l.Stable() {
+				stable = append(stable, rel.Version)
+			}
+		}); err != nil || !slices.Equal(stable, []string{"v2", "v1"}) {
+			t.Errorf("Releases after the canceled caller = %q, %v", stable, err)
+		}
+	})
+}

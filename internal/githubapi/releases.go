@@ -85,7 +85,8 @@ func (l *List) add(rel Release) {
 
 // Releases runs fn on r's release list after fetching pages until enough reports true or no
 // pages are left; the first page is always fetched and enough may be nil (one page). fn runs
-// under the list's lock. A failed page fails the list for the run.
+// under the list's lock. A failed page fails the list for the run, unless it failed because
+// the caller's context ended (see next).
 func (c *Client) Releases(ctx context.Context, r Repo, enough func(*List) bool, fn func(*List)) error {
 	key := strings.ToLower(c.rest(r) + "/repos/" + r.Path()) // GitHub names are case-insensitive
 	c.mu.Lock()
@@ -99,7 +100,9 @@ func (c *Client) Releases(ctx context.Context, r Repo, enough func(*List) bool, 
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	for !l.done && (l.pages == 0 || enough != nil && !enough(l)) {
-		c.next(ctx, r, l)
+		if err := c.next(ctx, r, l); err != nil {
+			return err
+		}
 	}
 	if l.err != nil {
 		return l.err
@@ -108,10 +111,14 @@ func (c *Client) Releases(ctx context.Context, r Repo, enough func(*List) bool, 
 	return nil
 }
 
-// next fetches the list's next page.
-func (c *Client) next(ctx context.Context, r Repo, l *List) {
+// next fetches the list's next page. A page that failed because ctx ended leaves the list as
+// it was and its error is only returned, never stored: one caller's deadline must not fail
+// the list for every later caller, which asks again with its own context (as releaseAssets
+// and httpx.Auth.Helper do).
+func (c *Client) next(ctx context.Context, r Repo, l *List) error {
 	start := time.Now()
 	graphql := c.GraphQL(r)
+	rels, stable := len(l.rels), len(l.stable)
 	var more bool
 	var err error
 	if graphql {
@@ -119,9 +126,13 @@ func (c *Client) next(ctx context.Context, r Repo, l *List) {
 	} else {
 		more, err = c.restPage(ctx, r, l)
 	}
-	l.pages++
-	slog.DebugContext(ctx, "github releases page", "repo", r.Path(), "graphql", graphql, "page", l.pages,
+	slog.DebugContext(ctx, "github releases page", "repo", r.Path(), "graphql", graphql, "page", l.pages+1,
 		"releases", len(l.rels), "duration", time.Since(start), "err", err)
+	if err != nil && ctx.Err() != nil {
+		l.rollback(rels, stable)
+		return fmt.Errorf("releases %s: %w", r.Path(), err)
+	}
+	l.pages++
 	switch {
 	case err != nil:
 		l.err, l.done = fmt.Errorf("releases %s: %w", r.Path(), err), true
@@ -130,6 +141,18 @@ func (c *Client) next(ctx context.Context, r Repo, l *List) {
 	case l.pages >= MaxPages:
 		l.done = true
 	}
+	return nil
+}
+
+// rollback drops the releases a page added before it failed, so that fetching it again does
+// not list them twice. A REST page is decoded release by release (see decodePage).
+func (l *List) rollback(rels, stable int) {
+	for i := rels; i < len(l.rels); i++ {
+		if l.byTag[l.rels[i].Tag] == i {
+			delete(l.byTag, l.rels[i].Tag)
+		}
+	}
+	l.rels, l.stable = l.rels[:rels], l.stable[:stable]
 }
 
 const releasesQuery = `query($owner:String!,$name:String!,$first:Int!,$cursor:String){repository(owner:$owner,name:$name){isArchived ` +
@@ -304,7 +327,7 @@ const assetQuery = `query($owner:String!,$name:String!,$tag:String!,$asset:Strin
 // AssetDigest returns the API digest ("sha256:<hex>") of asset in the release of tag, or ""
 // when the release has no such asset or GitHub has no digest for it. Over REST it comes from
 // the cached list (which must already list tag); over GraphQL it is fetched once per
-// (repository, tag, asset).
+// (repository, tag, asset). A failure caused by ctx ending is not cached.
 func (c *Client) AssetDigest(ctx context.Context, r Repo, tag, asset string) (string, error) {
 	if !c.GraphQL(r) {
 		var digest string
@@ -343,6 +366,9 @@ func (c *Client) AssetDigest(ctx context.Context, r Repo, tag, asset string) (st
 		err := graphql(ctx, c, r, assetQuery, map[string]any{"owner": r.Owner, "name": r.Name, "tag": tag, "asset": asset}, &data)
 		if err != nil {
 			e.err = fmt.Errorf("release %s of %s: asset %s: %w", tag, r.Path(), asset, err)
+			if ctx.Err() != nil {
+				c.forget(key, e)
+			}
 			return
 		}
 		if data.Repository == nil || data.Repository.Release == nil {
@@ -416,11 +442,7 @@ func (c *Client) releaseAssets(ctx context.Context, r Repo, tag string) ([]Asset
 		if err := graphql(ctx, c, r, assetsQuery, map[string]any{"owner": r.Owner, "name": r.Name, "tag": tag}, &data); err != nil {
 			e.err = fmt.Errorf("release %s of %s: assets: %w", tag, r.Path(), err)
 			if ctx.Err() != nil {
-				c.mu.Lock()
-				if c.assets[key] == e {
-					delete(c.assets, key)
-				}
-				c.mu.Unlock()
+				c.forget(key, e)
 			}
 			return
 		}
@@ -434,6 +456,16 @@ func (c *Client) releaseAssets(ctx context.Context, r Repo, tag string) ([]Asset
 		}
 	})
 	return e.list, e.err
+}
+
+// forget drops the asset entry cached under key when it is still e, so a lookup that failed
+// with its caller's context is tried again by the next caller, with its own.
+func (c *Client) forget(key string, e *assetEntry) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.assets[key] == e {
+		delete(c.assets, key)
+	}
 }
 
 // Note is a release with its notes, for pull request bodies.
