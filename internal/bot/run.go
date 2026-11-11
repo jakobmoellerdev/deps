@@ -522,6 +522,17 @@ func (r *baseRun) handleGroups(ctx context.Context, o Options, dash *dashboard, 
 						errs = append(errs, fmt.Errorf("%s: %w", grp.Branch, err))
 					}
 				}
+			} else if pr := prOf(s.open, grp.Branch); pr != nil && !o.DryRun {
+				// A PR an earlier run opened may have none of its labels, because setting
+				// them failed once; automerge workflows key on them, so add back what is
+				// missing. Reviewers and assignees are not listed by the forge and are left
+				// alone: a review someone dismissed must not be requested again.
+				if missing := missingLabels(grp.Labels, *pr); len(missing) > 0 {
+					slog.InfoContext(ctx, "re-applying labels missing from the PR", "branch", grp.Branch, "number", pr.Number, "labels", missing)
+					if err := pc.SetPRMetadata(ctx, pr.Number, platform.PRMetadata{Labels: missing}); err != nil {
+						errs = append(errs, fmt.Errorf("%s: %w", grp.Branch, err))
+					}
+				}
 			}
 			if pr := prOf(s.open, grp.Branch); pr != nil && (a.Status == StatusRebased || a.Status == StatusUpdated) && pr.HasLabel(o.RebaseLabel) {
 				// The rebase the label requested is done.
@@ -1256,6 +1267,18 @@ func ownAuthor(o Options, author string) bool {
 		}
 	}
 	return false
+}
+
+// missingLabels returns the labels of want that pr does not have; forges compare label names
+// case-insensitively, as PR.HasLabel does.
+func missingLabels(want []string, pr platform.PR) []string {
+	var out []string
+	for _, l := range want {
+		if !pr.HasLabel(l) {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 // scheduled reports whether every non-security update is in schedule for trigger t.

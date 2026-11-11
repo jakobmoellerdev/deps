@@ -49,6 +49,37 @@ func TestPRMetadataFailureKeepsPR(t *testing.T) {
 	}
 }
 
+// Labels missing from an open PR (a SetPRMetadata that failed when it was created) are
+// re-applied on the next run; automerge workflows key on them.
+func TestPRLabelsReconciled(t *testing.T) {
+	root, res := fixture(t)
+	for i := range res.Updates {
+		res.Updates[i].Labels, res.Updates[i].Reviewers = []string{"dependencies", "actions"}, []string{"alice"}
+	}
+	bare, labelled := openPR(branchA), openPR(branchB)
+	bare.Number, labelled.Number = 1, 2
+	labelled.Labels = []string{"Dependencies", "actions", "extra"} // complete, as forges compare
+	pc := &fakePC{open: []platform.PR{bare, labelled}}
+	g := &fakeGit{
+		branches: map[string]string{"refs/heads/" + branchA: "x", "refs/heads/" + branchB: "y"},
+		authors:  map[string]string{branchA: email, branchB: email},
+	}
+	acts, errs := Run(t.Context(), Options{AuthorEmail: email, Managers: managers}, []Base{{Root: root, Res: res, Git: g}}, nil, pc)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	if statusOf(acts, branchA) != StatusUpdated || statusOf(acts, branchB) != StatusUpdated {
+		t.Fatalf("actions = %+v", acts)
+	}
+	m, ok := pc.metadata[1]
+	if len(pc.metadata) != 1 || !ok {
+		t.Fatalf("metadata = %+v, want one call for #1", pc.metadata)
+	}
+	if !slices.Equal(m.Labels, []string{"dependencies", "actions"}) || m.Reviewers != nil || m.Assignees != nil {
+		t.Errorf("metadata = %+v, want only the missing labels", m)
+	}
+}
+
 // openPR is an open PR of branch whose content differs (an old fingerprint), so it is updated.
 func openPR(branch string) platform.PR {
 	yes := true
