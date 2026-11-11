@@ -249,6 +249,9 @@ func TestLooseBest(t *testing.T) {
 		{"1878.0-rc0", "1878.0-rc1", gl, nil},
 		{"v1.2.3.4.5.6", "v1.2.3.4.5.7", []string{"v1.2.3.4.5.7", "1.2.3.4.5.8", "v1.2.3.4.5.6.7"}, nil},
 		{"2.0_beta.2", "2.0_beta.10", []string{"2.0_beta.10", "2.0_beta.9"}, nil},
+		// 1.2.0 is 1.2 written with a part more, no update; 1.2.0.1 is one.
+		{"1.2", "", []string{"1.2.0", "1.2.0.0"}, nil},
+		{"1.2", "1.2.0.1", []string{"1.2.0", "1.2.0.1"}, nil},
 		{"x", "", gl, nil},
 	})
 }
@@ -280,8 +283,9 @@ func TestNewSchemesRejectReasons(t *testing.T) {
 		cands       []string
 		want        map[string][]string
 	}{
-		{"loose", "1.2", []string{"main", "v1.3", "1.3-rc1", "1.1", "1.4", "1.3"}, map[string][]string{
-			"invalid": {"main"}, "prefix": {"v1.3"}, "prerelease": {"1.3-rc1"}, "not newer": {"1.1"}, "policy: nope": {"1.4"},
+		{"loose", "1.2", []string{"main", "v1.3", "1.3-rc1", "1.2.0", "1.1", "1.4", "1.3"}, map[string][]string{
+			"invalid": {"main"}, "prefix": {"v1.3"}, "prerelease": {"1.3-rc1"}, "precision": {"1.2.0"},
+			"not newer": {"1.1"}, "policy: nope": {"1.4"},
 		}},
 		{`regex:^(?<major>\d+)\.(?<minor>\d+)(?:-(?<prerelease>rc\d+))?-(?<compatibility>[a-z]+)$`, "1.2-alpine",
 			[]string{"1.3", "1.3-bookworm", "1.3-rc1-alpine", "1.1-alpine", "1.4-alpine", "1.3-alpine"}, map[string][]string{

@@ -66,13 +66,18 @@ func validSuffix(s string) bool {
 	})
 }
 
-// looseCompat requires the current "v" prefix style and rejects prereleases unless cur is one.
+// looseCompat requires the current "v" prefix style, rejects prereleases unless cur is one,
+// and rejects a candidate that only writes the current version with more parts (1.2 → 1.2.0,
+// which compareLoose orders above it so the order stays total): that is no update, and the
+// schemes with a precision of their own (tag, docker, cargo, pep440, conda) reject it too.
 func looseCompat(cur, next looseVersion) string {
 	switch {
 	case next.v != cur.v:
 		return "prefix"
 	case next.suffix != "" && cur.suffix == "":
 		return "prerelease"
+	case next.n != cur.n && next.parts == cur.parts && next.suffix == cur.suffix:
+		return "precision"
 	}
 	return ""
 }
