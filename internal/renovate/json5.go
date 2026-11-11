@@ -332,6 +332,10 @@ func (p *json5Parser) number() (any, error) {
 		}
 		return sign * f, p.checkNumberEnd()
 	}
+	// JSON5 numbers follow JSON here, which forbids leading zeros such as 01 or -007.
+	if len(rest) > 1 && rest[0] == '0' && rest[1] >= '0' && rest[1] <= '9' {
+		return nil, p.errAt(start, "invalid number with a leading zero")
+	}
 	digits := func() int {
 		s := p.pos
 		for p.pos < len(p.src) && p.src[p.pos] >= '0' && p.src[p.pos] <= '9' {

@@ -72,6 +72,8 @@ func TestParseJSON5Errors(t *testing.T) {
 		{`{"é": é}`, "1:7: unexpected character 'é'"},
 		{`'\x4'`, `1:2: invalid \x escape`},
 		{`1x`, "1:2: unexpected character 'x'"},
+		{`{a: 01}`, "1:5: invalid number with a leading zero"},
+		{`{a: -007}`, "1:5: invalid number with a leading zero"},
 	}
 	for _, tt := range tests {
 		_, err := parseJSON5([]byte(tt.src))
