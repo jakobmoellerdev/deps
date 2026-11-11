@@ -68,7 +68,7 @@ func mirrorInto(dir, tmp string, o MirrorOptions) (string, error) {
 				continue
 			}
 			target := filepath.Join(base, filepath.FromSlash(p))
-			if e.IsDir() && (parents[p] || o.Recreate != nil && o.Recreate(p, e)) {
+			if recreate := parents[p] || o.Recreate != nil && o.Recreate(p, e); recreate && isDir(dir, p, e) {
 				if err := os.Mkdir(target, 0o755); err != nil {
 					return err
 				}
@@ -87,6 +87,20 @@ func mirrorInto(dir, tmp string, o MirrorOptions) (string, error) {
 		return "", err
 	}
 	return base, WriteFiles(base, o.Files)
+}
+
+// isDir reports whether the entry e of dir (at the slash path rel) is a directory, following a
+// symlink: a symlinked directory holding a Files key must be recreated, or WriteFiles would
+// write through it into the checkout.
+func isDir(dir, rel string, e fs.DirEntry) bool {
+	if e.IsDir() {
+		return true
+	}
+	if e.Type()&fs.ModeSymlink == 0 {
+		return false
+	}
+	st, err := os.Stat(filepath.Join(dir, filepath.FromSlash(rel)))
+	return err == nil && st.IsDir()
 }
 
 // MirrorAncestors recreates the directories from the repository top (the nearest ancestor of

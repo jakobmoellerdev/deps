@@ -138,3 +138,25 @@ func TestMirrorAncestors(t *testing.T) {
 		}
 	}
 }
+
+func TestMirrorSymlinkedParentOfFile(t *testing.T) {
+	dir := t.TempDir()
+	tree(t, dir, map[string]string{".git/HEAD": "", "real/pkg.json": "orig"})
+	if err := os.Symlink(filepath.Join(dir, "real"), filepath.Join(dir, "link")); err != nil {
+		t.Fatal(err)
+	}
+	tmp, base, err := Mirror(dir, MirrorOptions{Pattern: "x-*", Files: map[string][]byte{"link/pkg.json": []byte("new")}, Skip: SkipGit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmp)
+	if got := kind(t, filepath.Join(base, "link")); got != "dir" {
+		t.Errorf("mirror link is %s, want dir", got)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "real", "pkg.json")); string(b) != "orig" {
+		t.Errorf("checkout real/pkg.json = %q, want orig: Mirror wrote through the symlink", b)
+	}
+	if b, _ := os.ReadFile(filepath.Join(base, "link", "pkg.json")); string(b) != "new" {
+		t.Errorf("mirror link/pkg.json = %q, want new", b)
+	}
+}
