@@ -29,6 +29,11 @@ func (travisManager) Name() string { return Name }
 // where Travis CI reads it).
 func (travisManager) Match(path string) bool { return path == ".travis.yml" || path == ".travis.yaml" }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (travisManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{".travis.yml", ".travis.yaml"}}
+}
+
 // Extract returns the Node.js versions of the top-level `node_js` and of the `node_js` of every
 // `jobs.include` and `matrix.include` entry, a version or a list of them each.
 func (travisManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {

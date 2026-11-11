@@ -61,6 +61,11 @@ func (ocbManager) Match(path string) bool {
 	return strings.HasSuffix(path, ".yaml") || strings.HasSuffix(path, ".yml")
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (ocbManager) MatchHints() manager.Hints {
+	return manager.Hints{Exts: []string{".yaml", ".yml"}}
+}
+
 // Extract returns the collector version and every component module of a builder
 // configuration. Other YAML files yield nothing; they are not parsed unless their bytes
 // contain both `dist:` and `gomod:`.

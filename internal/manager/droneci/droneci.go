@@ -38,6 +38,11 @@ func (droneManager) Match(path string) bool {
 	return path == ".drone.yml" || strings.HasSuffix(path, "/.drone.yml")
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (droneManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{".drone.yml"}}
+}
+
 // Extract returns the step and service images of every document of src (pipelines, secrets
 // and signatures are separate documents). Documents without "image" are not parsed.
 func (droneManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {

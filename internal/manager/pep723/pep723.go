@@ -34,6 +34,11 @@ func (pep723Manager) Name() string { return Name }
 // Match reports whether the slash path is a Python file.
 func (pep723Manager) Match(p string) bool { return strings.HasSuffix(p, ".py") }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (pep723Manager) MatchHints() manager.Hints {
+	return manager.Hints{Exts: []string{".py"}}
+}
+
 // Extract returns one dep per PEP 508 string of the `dependencies` array of the script
 // block, with `requires-python` as Python constraint. A file without block has no deps.
 func (pep723Manager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {

@@ -38,6 +38,11 @@ func (haManager) Match(p string) bool {
 	return p == "manifest.json" || strings.HasSuffix(p, "/manifest.json")
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (haManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{"manifest.json"}}
+}
+
 // Extract returns one dep per `requirements` string of a top-level object that has string
 // `domain` and `name` members (Renovate's schema); other manifest.json files have no deps.
 // Non-string requirements are ignored. A byte order mark, comments and trailing commas

@@ -88,6 +88,11 @@ func (*vcpkgManager) Match(p string) bool {
 	return b == "vcpkg.json" || b == "vcpkg-configuration.json"
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (*vcpkgManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{"vcpkg.json", "vcpkg-configuration.json"}}
+}
+
 // Extract returns the baselines of the file and, for a manifest, its port version deps, whose
 // registry Link resolves.
 func (m *vcpkgManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {

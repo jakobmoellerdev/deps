@@ -43,6 +43,11 @@ func (smithyManager) Match(p string) bool {
 	return p == "smithy-build.json" || strings.HasSuffix(p, "/smithy-build.json")
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (smithyManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{"smithy-build.json"}}
+}
+
 // Edits replaces the version.
 func (smithyManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep

@@ -40,6 +40,11 @@ func (pipenvManager) Match(p string) bool {
 	return strings.HasSuffix(p, "Pipfile") && matchRe.MatchString(p)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (pipenvManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{"Pipfile"}}
+}
+
 // ReadLocks records the versions Pipfile.lock locks the deps to, by category
 // (pytool.ReadLocks).
 func (pipenvManager) ReadLocks(root string, files [][]dep.Dep) []error {

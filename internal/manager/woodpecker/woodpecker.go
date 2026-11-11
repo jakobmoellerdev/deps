@@ -51,6 +51,14 @@ func (m woodpeckerManager) Match(path string) bool {
 	return strings.HasPrefix(path, m.prefix) && m.fileRe.MatchString(path)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (m woodpeckerManager) MatchHints() manager.Hints {
+	return manager.Hints{
+		Names: []string{m.prefix + ".yaml", m.prefix + ".yml", ".yaml", ".yml"},
+		Exts:  []string{".yaml", ".yml"},
+	}
+}
+
 // Extract returns the images of the steps (a list, or a mapping of names), services and
 // clone steps of src.
 func (m woodpeckerManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {

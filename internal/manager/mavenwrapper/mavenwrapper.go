@@ -71,6 +71,11 @@ func (mavenWrapper) Match(path string) bool {
 	return strings.HasSuffix(path, ".mvn/wrapper/maven-wrapper.properties") && matchRe.MatchString(path)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (mavenWrapper) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{"maven-wrapper.properties"}}
+}
+
 // Extract returns the Maven version of distributionUrl and the wrapper version of
 // wrapperVersion and wrapperUrl (one dep when both agree).
 func (mavenWrapper) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {

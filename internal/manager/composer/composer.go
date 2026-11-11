@@ -69,6 +69,11 @@ func (composerManager) Match(p string) bool {
 	return p == manifest || strings.HasSuffix(p, "/"+manifest)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (composerManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{manifest}}
+}
+
 // Extract returns one Dep per entry of `require` and `require-dev`, in file order. Range is
 // the constraint as written (RefSpan its bytes), Version the version of its last
 // alternative's first lower bound (`^1.0|^2.3` → 2.3), "" without one (`*`, `<2.0`; ReadLocks

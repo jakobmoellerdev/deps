@@ -32,6 +32,7 @@ func discover(root string, ignore []string, gitIgnore bool, managers []manager.M
 	if gitIgnore {
 		gi = gitignore.New(root)
 	}
+	disp := newDispatch(managers)
 	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -57,8 +58,8 @@ func discover(root string, ignore []string, gitIgnore bool, managers []manager.M
 		}
 		// ignorePaths is checked only once a manager claims the file: most files match none.
 		var checked, skip bool
-		for i, m := range managers {
-			if !m.Match(rel) {
+		for _, i := range disp.candidates(rel) {
+			if !managers[i].Match(rel) {
 				continue
 			}
 			if !checked {

@@ -77,6 +77,11 @@ func (swiftManager) Match(p string) bool {
 	return strings.HasSuffix(p, manifestFile) && matchRe.MatchString(p)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (swiftManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{manifestFile}}
+}
+
 // Extract returns one Dep per `.package(…)` call of src, in source order. A range requirement
 // (`from:`, `.upToNextMajor`, `.upToNextMinor`, `"a"..<"b"`, `"a"..."b"`) is the dep's Range,
 // RefSpan covering all of it and Version its lower bound; an exact version is the dep's

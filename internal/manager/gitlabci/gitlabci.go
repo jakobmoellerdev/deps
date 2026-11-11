@@ -73,6 +73,11 @@ func (gitlabManager) Match(path string) bool {
 		strings.Contains(path, ".gitlab/ci/") && ciDirRe.MatchString(path)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (gitlabManager) MatchHints() manager.Hints {
+	return manager.Hints{Exts: []string{".yaml", ".yml"}}
+}
+
 // Extract returns the deps of every YAML document in src (component templates carry a
 // `spec:` header document). Project includes and components on the instance resolve against
 // env.GitLabURL.

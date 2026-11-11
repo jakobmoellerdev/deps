@@ -89,6 +89,11 @@ func (*nugetManager) Match(p string) bool {
 	return false
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (*nugetManager) MatchHints() manager.Hints {
+	return manager.Hints{Exts: []string{".csproj", ".fsproj", ".vbproj", ".props", ".targets", ".json", ".config"}}
+}
+
 // Extract returns one dep per versioned package item (PackageReference, PackageVersion,
 // GlobalPackageReference, PackageDownload, DotNetCliToolReference; `Include` or `Update`,
 // `VersionOverride` over `Version`, attribute or child element), MSBuild SDK (`<Project

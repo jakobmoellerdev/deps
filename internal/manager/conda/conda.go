@@ -57,6 +57,11 @@ func (condaManager) Match(p string) bool {
 	return strings.Contains(p, "environment.") && matchRe.MatchString(p)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (condaManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{"environment.yaml", "environment.yml"}}
+}
+
 // Extract returns one dep per `dependencies` entry and per requirement of a `pip:` list.
 func (condaManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {
 	doc, err := env.YAML.Document(src)

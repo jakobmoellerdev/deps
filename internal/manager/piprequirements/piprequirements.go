@@ -52,6 +52,11 @@ func (*pipManager) Name() string { return Name }
 // the regexp for the paths that cannot match.
 func (*pipManager) Match(p string) bool { return match(p) }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (*pipManager) MatchHints() manager.Hints {
+	return manager.Hints{Exts: []string{".txt", ".pip", ".in"}}
+}
+
 func match(p string) bool {
 	return isInput(p) || strings.Contains(p, "requirements") && matchRe.MatchString(p)
 }

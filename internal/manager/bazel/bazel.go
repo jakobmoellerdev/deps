@@ -92,6 +92,11 @@ func (moduleManager) Match(p string) bool {
 	return base == moduleFile || strings.HasSuffix(base, "."+moduleFile)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (moduleManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{moduleFile}, Exts: []string{".module.bazel"}}
+}
+
 // extractor walks the calls of one module file.
 type extractor struct {
 	file  string

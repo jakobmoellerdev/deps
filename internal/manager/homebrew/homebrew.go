@@ -80,6 +80,11 @@ func (homebrew) Match(path string) bool {
 	return strings.HasPrefix(path, "Formula/") && strings.HasSuffix(path, ".rb") && matchRe.MatchString(path)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (homebrew) MatchHints() manager.Hints {
+	return manager.Hints{Exts: []string{".rb"}}
+}
+
 // stmt is a `url`, `mirror`, `sha256` or `version` statement: its keyword, string value, the
 // offset of the value in the file and its 1-based line.
 type stmt struct {

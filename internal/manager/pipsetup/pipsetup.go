@@ -51,6 +51,11 @@ func (pipSetupManager) Match(p string) bool {
 	return strings.HasSuffix(p, "setup.py") && matchRe.MatchString(p)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (pipSetupManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{"setup.py"}}
+}
+
 // Extract lexes src as Python and returns one dep per plain string literal that is a PEP 508
 // requirement with a version specifier (`"requests>=2.31"`, `'django[argon2]~=5.0'`), as
 // Renovate's pip_setup does: the code is not evaluated, so requirements built at runtime

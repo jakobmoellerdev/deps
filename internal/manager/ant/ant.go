@@ -57,6 +57,9 @@ func (antManager) Name() string { return Name }
 // Match reports whether the slash path is a build.xml.
 func (antManager) Match(p string) bool { return p == "build.xml" || strings.HasSuffix(p, "/build.xml") }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (antManager) MatchHints() manager.Hints { return manager.Hints{Names: []string{"build.xml"}} }
+
 // Extract returns one dep per versioned `<dependency>` of the build file and the files it
 // imports (walk), with `${name}` versions resolved through the properties they define.
 func (antManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {

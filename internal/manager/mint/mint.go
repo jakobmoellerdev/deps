@@ -38,6 +38,11 @@ func (mintManager) Name() string { return Name }
 // Match reports whether the slash path is a Mintfile.
 func (mintManager) Match(p string) bool { return path.Base(p) == "Mintfile" }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (mintManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{"Mintfile"}}
+}
+
 // Extract returns one Dep per package line of src, in line order. Lines are read as Mint's
 // Mintfile does: whitespace-trimmed, `#` starts a comment, blank lines are ignored.
 func (mintManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {

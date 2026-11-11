@@ -48,6 +48,11 @@ func (depsEdn) Match(p string) bool {
 	return b == "deps.edn" || b == "bb.edn"
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (depsEdn) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{"deps.edn", "bb.edn"}}
+}
+
 // Extract returns the Maven and git libs of the top-level map's `:deps` and of its aliases.
 func (depsEdn) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
 	forms, err := readForms(src)

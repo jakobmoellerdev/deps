@@ -46,6 +46,11 @@ func (*poetryManager) Match(p string) bool {
 	return strings.HasSuffix(p, "pyproject.toml") && matchRe.MatchString(p)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (*poetryManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{"pyproject.toml"}}
+}
+
 // ReadLocks records the versions poetry.lock locks the deps to (pytool.ReadLocks).
 func (*poetryManager) ReadLocks(root string, files [][]dep.Dep) []error {
 	return pytool.ReadLocks(root, files)

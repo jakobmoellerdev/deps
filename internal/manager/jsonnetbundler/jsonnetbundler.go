@@ -65,6 +65,11 @@ func (jbManager) Match(p string) bool {
 	return path.Base(p) == manifestName && !strings.HasPrefix(p, "vendor/") && !strings.Contains(p, "/vendor/")
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (jbManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{manifestName}}
+}
+
 // Extract returns one dep per `dependencies[]` entry. The file is JSON, read as YAML (a
 // superset), so values are located with yamlspan.
 func (jbManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {

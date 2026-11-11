@@ -65,6 +65,11 @@ func (precommitManager) Match(path string) bool {
 	return strings.Contains(path, ".pre-commit-config.") && fileRe.MatchString(path)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (precommitManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{".pre-commit-config.yaml", ".pre-commit-config.yml"}}
+}
+
 // Extract returns one dep per `repos[]` entry, followed by its hooks' additional_dependencies,
 // with byte spans into src.
 func (precommitManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {

@@ -64,6 +64,11 @@ func (submodulesManager) Match(p string) bool {
 	return p == ".gitmodules" || strings.HasSuffix(p, "/.gitmodules")
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (submodulesManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{".gitmodules"}}
+}
+
 // Extract returns one dep per `[submodule]` section, its digest the gitlink commit at the
 // submodule's path (relative to the file's directory) in the git index.
 func (submodulesManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {

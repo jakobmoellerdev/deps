@@ -54,6 +54,11 @@ func (depsConfigManager) Match(path string) bool {
 	return path == ".deps.yaml" || path == ".deps.yml"
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (depsConfigManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{".deps.yaml", ".deps.yml"}}
+}
+
 // Extract returns one dep per string entry of the top-level `extends` list.
 func (depsConfigManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {
 	doc, err := env.YAML.Document(src)

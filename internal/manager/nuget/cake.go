@@ -47,6 +47,11 @@ func (*cakeManager) Match(p string) bool {
 	return strings.HasSuffix(p, ".cake") || isConfig(p)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (*cakeManager) MatchHints() manager.Hints {
+	return manager.Hints{Exts: []string{".cake", ".config"}}
+}
+
 // Extract returns one dep per package URI (`nuget:` or `dotnet:`) of a `#addin`, `#tool`,
 // `#module`, `#load` or `#l` directive (quoted or not) and per such string argument of an
 // InstallTool or InstallTools call, outside comments and strings. A nuget.config yields no

@@ -60,6 +60,11 @@ func (xcodegenManager) Name() string { return Name }
 // Match reports whether the slash path is a project.yml.
 func (xcodegenManager) Match(p string) bool { return path.Base(p) == "project.yml" }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (xcodegenManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{"project.yml"}}
+}
+
 // Extract returns one Dep per entry of the top-level `packages:` mapping whose value is a
 // mapping, in source order. `from:`, `majorVersion:` (up to the next major version) and
 // `minorVersion:` (up to the next minor version) are ranges whose version is the dep's Range

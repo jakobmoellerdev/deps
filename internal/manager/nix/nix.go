@@ -84,6 +84,11 @@ func (nixManager) Match(p string) bool {
 	return p == "flake.nix" || strings.HasSuffix(p, "/flake.nix")
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (nixManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{"flake.nix"}}
+}
+
 // input is what the flake.nix says about one input.
 type input struct {
 	name          string

@@ -143,6 +143,15 @@ func (m *toolManager) Match(path string) bool {
 	return strings.HasSuffix(path, m.suffix) && m.match.MatchString(path)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match: every suffix but
+// mise's is a whole base name.
+func (m *toolManager) MatchHints() manager.Hints {
+	if m.name == NameMise {
+		return manager.Hints{Names: []string{"mise.toml", ".mise.toml", "config.toml"}}
+	}
+	return manager.Hints{Names: []string{m.suffix}}
+}
+
 // Extract returns the tool versions of src with byte spans into src.
 func (m *toolManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
 	return m.extract(file, src)

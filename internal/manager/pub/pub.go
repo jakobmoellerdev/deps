@@ -79,6 +79,11 @@ func (pubManager) Match(p string) bool {
 	return b == "pubspec.yaml" || b == "pubspec.yml"
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (pubManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{"pubspec.yaml", "pubspec.yml"}}
+}
+
 // Extract returns the deps of `dependencies` and `dev_dependencies` in file order, then the
 // `environment` constraints `sdk` (dep dart) and `flutter`. Range is the constraint as
 // written (RefSpan its bytes), Version its lower bound ("" without one: ReadLocks takes the

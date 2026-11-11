@@ -48,6 +48,11 @@ func (bitbucketManager) Match(p string) bool {
 	return strings.HasSuffix(path.Base(p), "-pipelines.yml") && !azurepipelines.IsPipelineFile(p)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (bitbucketManager) MatchHints() manager.Hints {
+	return manager.Hints{Exts: []string{".yml"}}
+}
+
 // Extract returns the images and pipes of src.
 func (bitbucketManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {
 	doc, err := env.YAML.Document(src)

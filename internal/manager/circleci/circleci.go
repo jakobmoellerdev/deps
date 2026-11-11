@@ -43,6 +43,11 @@ func (circleManager) Match(path string) bool {
 	return strings.Contains(path, ".circleci/") && fileRe.MatchString(path)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (circleManager) MatchHints() manager.Hints {
+	return manager.Hints{Exts: []string{".yml", ".yaml"}}
+}
+
 // Extract returns the orbs and images of src; inline orb definitions (`orbs: {name: {…}}`)
 // are scanned like the file.
 func (circleManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {

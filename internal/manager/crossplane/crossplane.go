@@ -47,6 +47,11 @@ func (crossplaneManager) Match(path string) bool {
 	return strings.HasSuffix(path, ".yaml") || strings.HasSuffix(path, ".yml")
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (crossplaneManager) MatchHints() manager.Hints {
+	return manager.Hints{Exts: []string{".yaml", ".yml"}}
+}
+
 // Extract returns the spec.package images of the package resources of every document of src.
 // Files and documents without "pkg.crossplane.io/" are not parsed; a file that does not parse
 // (a template) yields no deps.

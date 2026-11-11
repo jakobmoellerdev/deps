@@ -105,6 +105,23 @@ type Manager interface {
 	Edits(u dep.Update) ([]patch.Edit, error)
 }
 
+// Hints narrow the paths discovery runs a manager's Match on: a manager with hints is asked
+// only about paths whose base name is one of Names, or whose lower-cased base name ends in
+// one of Exts (extensions with the dot, ".yaml"; a base name that is only the extension
+// counts too). A manager without hints, or with an empty Hints, is asked about every path.
+// Hints are a filter, not a decision: Match still decides, so a hint that is too narrow hides files
+// (the engine's discovery parity test catches that), while one that is too wide only costs
+// Match calls.
+type Hints struct {
+	Names []string
+	Exts  []string
+}
+
+// Hinter is implemented by managers that can only match certain file names or extensions.
+type Hinter interface {
+	MatchHints() Hints
+}
+
 // Linker is implemented by managers whose deps refer to definitions in other files (a Helm
 // chart repository alias declared in a k0s ClusterConfig, a Flux HelmRepository). Extract
 // records the definitions it sees; once every file of a run was extracted, the engine calls

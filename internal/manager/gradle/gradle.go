@@ -147,6 +147,11 @@ func (*gradleManager) Match(p string) bool {
 	return catalogRe.MatchString(p) || scriptRe.MatchString(p) || propertiesRe.MatchString(p)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (*gradleManager) MatchHints() manager.Hints {
+	return manager.Hints{Exts: []string{".kt", ".groovy", ".toml", ".gradle", ".kts", ".properties"}}
+}
+
 // Extract returns the deps of a version catalog, build script or buildSrc source and records
 // the file's variable definitions and repositories for Link; gradle.properties only defines
 // variables. A catalog that is not valid TOML is an error. A settings file also returns the

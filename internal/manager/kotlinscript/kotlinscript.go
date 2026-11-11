@@ -46,6 +46,11 @@ func (kotlinScript) Match(p string) bool {
 	return len(p) > len(suffix) && strings.HasSuffix(p, suffix)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (kotlinScript) MatchHints() manager.Hints {
+	return manager.Hints{Exts: []string{suffix}}
+}
+
 // Edits replaces the version of the coordinate string.
 func (kotlinScript) Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep

@@ -57,6 +57,12 @@ func (m versionManager) Match(p string) bool {
 	return strings.HasSuffix(p, "-version") && m.match.MatchString(p)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match. The set covers every
+// version file manager; m.match still selects this manager's own.
+func (versionManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{".terraform-version", ".opentofu-version", ".terragrunt-version"}}
+}
+
 // Extract returns the version on the first non-empty line: a Terraform release, an OpenTofu
 // release for .opentofu-version or a Terragrunt release for .terragrunt-version.
 // tfenv/tofuenv/tgenv keywords (`latest`, `latest:<regex>`, `min-required`, `latest-allowed`)
@@ -108,6 +114,11 @@ func (tflintManager) Name() string { return TFLintName }
 // for the paths that cannot match.
 func (tflintManager) Match(p string) bool {
 	return strings.HasSuffix(p, ".tflint.hcl") && tflintRe.MatchString(p)
+}
+
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (tflintManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{".tflint.hcl"}}
 }
 
 // Extract returns the plugin blocks with a `source` (plugins without one are bundled with

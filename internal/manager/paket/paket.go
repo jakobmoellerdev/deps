@@ -57,6 +57,11 @@ func (*paketManager) Name() string { return Name }
 // Match reports whether the slash path is a paket.dependencies.
 func (*paketManager) Match(p string) bool { return path.Base(p) == manifestFile }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (*paketManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{manifestFile}}
+}
+
 // entry is a `nuget <id> [<constraint>] [<options>]` line of paket.dependencies.
 type entry struct {
 	group, name string

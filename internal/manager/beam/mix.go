@@ -63,6 +63,11 @@ func (mixManager) Match(p string) bool {
 	return p == mixManifest || strings.HasSuffix(p, "/"+mixManifest)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (mixManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{mixManifest}}
+}
+
 // Extract returns one Dep per dependency tuple of the deps functions (mixEntries), in file
 // order. A Hex dependency's Range is its requirement as written (RefSpan its bytes), Version
 // the requirement's anchor ("" without a lower bound; ReadLocks takes the locked version

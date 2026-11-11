@@ -56,6 +56,11 @@ func (osgiManager) Match(p string) bool {
 	return len(rest) > len(".json") && strings.HasSuffix(rest, ".json")
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (osgiManager) MatchHints() manager.Hints {
+	return manager.Hints{Exts: []string{".json"}}
+}
+
 // Edits replaces the version.
 func (osgiManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep

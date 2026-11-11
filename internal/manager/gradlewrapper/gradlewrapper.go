@@ -35,6 +35,11 @@ func (gradleWrapper) Match(path string) bool {
 	return strings.HasSuffix(path, "gradle/wrapper/gradle-wrapper.properties") && matchRe.MatchString(path)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (gradleWrapper) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{"gradle-wrapper.properties"}}
+}
+
 // Extract returns the Gradle version of `distributionUrl`, with `distributionSha256Sum` as its
 // checksum when present.
 func (gradleWrapper) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {

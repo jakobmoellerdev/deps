@@ -49,6 +49,11 @@ func (azureManager) Name() string { return Name }
 // Match reports whether path is an Azure Pipelines file (IsPipelineFile).
 func (azureManager) Match(path string) bool { return IsPipelineFile(path) }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (azureManager) MatchHints() manager.Hints {
+	return manager.Hints{Exts: []string{".yml", ".yaml"}}
+}
+
 // IsPipelineFile reports whether the slash path is a YAML file below `.azuredevops/` or one
 // whose path matches `azure.*pipelines?.*\.ya?ml$`.
 func IsPipelineFile(path string) bool {

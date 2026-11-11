@@ -61,6 +61,11 @@ func (cargoManager) Match(p string) bool {
 	return strings.HasSuffix(p, "Cargo.toml") && matchRe.MatchString(p)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (cargoManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{"Cargo.toml"}}
+}
+
 // Extract returns one Dep per entry of the [dependencies], [dev-dependencies] and
 // [build-dependencies] tables (also below [target.<spec>]), of [workspace.dependencies], of
 // every [patch.<source>] table and of [replace], ordered by line. Entries may be strings,

@@ -64,6 +64,11 @@ func (jenkinsManager) Match(p string) bool {
 	return false
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (jenkinsManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{"plugins.txt", "plugins.yml", "plugins.yaml"}}
+}
+
 // Extract returns the plugins of a plugins.txt or plugins.y(a)ml file.
 func (jenkinsManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {
 	if strings.HasSuffix(file, ".txt") {

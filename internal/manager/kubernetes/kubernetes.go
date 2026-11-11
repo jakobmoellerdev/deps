@@ -31,6 +31,11 @@ func (k8sManager) Match(path string) bool {
 	return strings.HasSuffix(path, ".yaml") || strings.HasSuffix(path, ".yml")
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (k8sManager) MatchHints() manager.Hints {
+	return manager.Hints{Exts: []string{".yaml", ".yml"}}
+}
+
 // Edits rewrites the apiVersion value.
 func (k8sManager) Edits(u dep.Update) ([]patch.Edit, error) {
 	d := u.Dep

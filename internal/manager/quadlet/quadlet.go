@@ -61,6 +61,11 @@ func (quadletManager) Match(path string) bool {
 	return false
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (quadletManager) MatchHints() manager.Hints {
+	return manager.Hints{Exts: suffixes}
+}
+
 // image is the last Image= value of a section: as in Quadlet, a later assignment wins.
 type image struct {
 	line, off int    // 1-based line, byte offset of value in src (-1: continued line)

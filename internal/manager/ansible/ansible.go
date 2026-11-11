@@ -42,6 +42,11 @@ func (tasksManager) Match(path string) bool {
 	return strings.HasSuffix(file, ".yml") || strings.HasSuffix(file, ".yaml")
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (tasksManager) MatchHints() manager.Hints {
+	return manager.Hints{Exts: []string{".yml", ".yaml"}}
+}
+
 // Extract returns the scalar `image` values of every mapping in the task file (the `image`
 // option of docker_container, podman_container, kubernetes and other modules, at any depth).
 // Files without "image:" are not parsed.

@@ -50,6 +50,11 @@ func (*glasskubeManager) Match(p string) bool {
 	return strings.HasSuffix(p, ".yaml") || strings.HasSuffix(p, ".yml")
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (*glasskubeManager) MatchHints() manager.Hints {
+	return manager.Hints{Exts: []string{".yaml", ".yml"}}
+}
+
 // Extract returns the packages of the Package and ClusterPackage documents of src with
 // RefSpan on the version, and records the PackageRepository documents and the repository each
 // package names for Link. A file without the Glasskube API group is not parsed; an unparsable

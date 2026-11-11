@@ -37,6 +37,9 @@ func (leiningen) Name() string { return LeiningenName }
 // Match reports whether p is a project.clj.
 func (leiningen) Match(p string) bool { return path.Base(p) == "project.clj" }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (leiningen) MatchHints() manager.Hints { return manager.Hints{Names: []string{"project.clj"}} }
+
 // leinFile is what extraction needs of a project.clj.
 type leinFile struct {
 	file    string

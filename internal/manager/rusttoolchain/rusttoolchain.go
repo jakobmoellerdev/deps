@@ -62,6 +62,11 @@ func (rustToolchain) Match(path string) bool {
 	return strings.Contains(path, "rust-toolchain") && matchRe.MatchString(path)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (rustToolchain) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{"rust-toolchain", "rust-toolchain.toml"}}
+}
+
 // Extract returns the toolchain dep of the file, or none when a TOML file has no
 // `[toolchain]` table. A rust-toolchain file is the legacy one-line form unless it is TOML, as
 // rustup reads it: a single line without `=` or `[`.

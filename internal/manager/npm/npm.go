@@ -81,6 +81,11 @@ func (npmManager) Match(p string) bool {
 	return strings.HasSuffix(p, "package.json") && matchRe.MatchString(p)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (npmManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{"package.json"}}
+}
+
 // Extract streams src with encoding/json/jsontext and returns one Dep per entry of the
 // dependency sections plus the packageManager field. A dependency-section range is the dep's
 // Range and RefSpan covers all of it; Version is its bare version (`^1.2.3` → 1.2.3) or, for

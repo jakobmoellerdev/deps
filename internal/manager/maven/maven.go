@@ -142,6 +142,11 @@ func (*mavenManager) Match(p string) bool {
 	return matchRe.MatchString(p)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (*mavenManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{"maven.config"}, Exts: []string{".xml"}}
+}
+
 // Extract parses src into an element tree with the byte span of each element's text and
 // returns one Dep per versioned dependency, plugin, extension, annotation processor path and
 // parent. A version `${name}` is resolved through the pom's properties (those of the dep's

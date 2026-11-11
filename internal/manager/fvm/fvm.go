@@ -52,6 +52,11 @@ func (fvmManager) Match(p string) bool {
 	return path.Base(p) == ".fvmrc" || p == ".fvm/fvm_config.json" || strings.HasSuffix(p, "/.fvm/fvm_config.json")
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (fvmManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{".fvmrc", "fvm_config.json"}}
+}
+
 // Extract returns the dep of the top-level `flutter` key, else `flutterSdkVersion` (as FVM
 // and Renovate read it); none when neither is a string.
 func (fvmManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {

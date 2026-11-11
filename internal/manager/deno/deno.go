@@ -78,6 +78,11 @@ func (denoManager) Match(p string) bool {
 	return b == "deno.json" || b == "deno.jsonc"
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (denoManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{"deno.json", "deno.jsonc"}}
+}
+
 // Extract returns the deps of src in file order. Comments and trailing commas are blanked
 // first (jsonc.Strip), so offsets are those of src. A `jsr:`/`npm:` specifier's range is the
 // dep's Range (RefSpan its bytes) with its npm anchor as Version; a deno.land URL's version

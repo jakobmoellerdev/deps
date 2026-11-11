@@ -36,6 +36,11 @@ func (velaManager) Match(p string) bool {
 	return b == ".vela.yaml" || b == ".vela.yml"
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (velaManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{".vela.yaml", ".vela.yml"}}
+}
+
 // Extract returns the images of the steps, services, stage steps and secret origins of src.
 func (velaManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {
 	doc, err := env.YAML.Document(src)

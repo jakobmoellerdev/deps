@@ -35,6 +35,11 @@ func (bazeliskManager) Name() string { return BazeliskName }
 // Match reports whether the slash path is a `.bazelversion` file.
 func (bazeliskManager) Match(p string) bool { return path.Base(p) == bazelVersionFile }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (bazeliskManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{bazelVersionFile}}
+}
+
 // Extract returns the Bazel version of the first line (Bazelisk reads only that one) as a
 // github-releases dep of bazelbuild/bazel. Bazelisk's other values are skipped: `latest`,
 // `last_green`, `last_rc`, `7.x`, `latest-1` (non-release version) and `<fork>/<version>`

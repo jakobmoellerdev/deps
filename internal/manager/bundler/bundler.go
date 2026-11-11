@@ -74,6 +74,11 @@ func (bundlerManager) Match(p string) bool {
 	return (strings.HasSuffix(p, "Gemfile") || strings.HasSuffix(p, "gems.rb") || strings.HasSuffix(p, ".gemspec")) && matchRe.MatchString(p)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (bundlerManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{"Gemfile", "gems.rb"}, Exts: []string{".gemspec"}}
+}
+
 // isGemspec reports whether the slash path is a gemspec.
 func isGemspec(p string) bool { return strings.HasSuffix(p, ".gemspec") }
 

@@ -68,6 +68,11 @@ func (juliaManager) Match(p string) bool {
 	return strings.HasSuffix(p, "Project.toml") && slices.Contains(ProjectNames, p[strings.LastIndexByte(p, '/')+1:])
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (juliaManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: ProjectNames}
+}
+
 // pkgRef is a package a project names: its UUID, DepType and line.
 type pkgRef struct {
 	uuid, depType string

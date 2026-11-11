@@ -66,6 +66,11 @@ func (copierManager) Match(p string) bool {
 	return strings.HasPrefix(path.Base(p), ".copier-answers") && fileRe.MatchString(p)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (copierManager) MatchHints() manager.Hints {
+	return manager.Hints{Exts: []string{".yaml", ".yml"}}
+}
+
 // Extract returns the template dep of an answers file with a string `_src_path` and
 // `_commit`, none for other files (Renovate ignores them too).
 func (copierManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {

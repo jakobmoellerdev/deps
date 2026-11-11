@@ -50,6 +50,11 @@ func (kustomizeManager) Match(path string) bool {
 	return fileRe.MatchString(path)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (kustomizeManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{"kustomization.yaml", "kustomization.yml", "Kustomization"}}
+}
+
 // Extract returns the images, Helm charts and remote git resources of src with byte spans
 // into src.
 func (kustomizeManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {

@@ -48,6 +48,11 @@ func (gleamManager) Match(p string) bool {
 	return p == gleamManifest || strings.HasSuffix(p, "/"+gleamManifest)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (gleamManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{gleamManifest}}
+}
+
 // Extract returns one Dep per entry of `[dependencies]` and `[dev-dependencies]`
 // (`[dev_dependencies]`): `name = "<requirement>"` or `name = { version = "<requirement>" }`,
 // with Range the requirement (RefSpan its bytes) and Version its anchor (as for mix). Path and

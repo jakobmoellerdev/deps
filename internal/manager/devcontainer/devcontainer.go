@@ -57,6 +57,11 @@ func (devcontainerManager) Match(path string) bool {
 	return strings.HasSuffix(path, "devcontainer.json") && fileRe.MatchString(path)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (devcontainerManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{".devcontainer.json", "devcontainer.json"}}
+}
+
 // Extract returns the image, feature and feature version deps of src. Comments and trailing
 // commas are blanked first (jsonc.Strip), so offsets are those of src.
 func (devcontainerManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {

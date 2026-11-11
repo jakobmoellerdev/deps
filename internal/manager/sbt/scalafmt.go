@@ -29,6 +29,11 @@ func (scalafmtManager) Name() string { return ScalafmtName }
 // Match reports whether the slash path is a `.scalafmt.conf`.
 func (scalafmtManager) Match(p string) bool { return path.Base(p) == ".scalafmt.conf" }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (scalafmtManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{".scalafmt.conf"}}
+}
+
 // Extract returns the scalafmt version of the `version` key as a github-releases dep of
 // scalameta/scalafmt (tags `v<version>`).
 func (scalafmtManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {

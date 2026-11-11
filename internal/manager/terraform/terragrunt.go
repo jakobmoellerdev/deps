@@ -41,6 +41,11 @@ func (terragruntManager) Match(p string) bool {
 		!strings.HasPrefix(p, ".terragrunt-cache/") && !strings.Contains(p, "/.terragrunt-cache/")
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (terragruntManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{"terragrunt.hcl"}}
+}
+
 // Extract parses src and returns the source of each top-level terraform block and the engine
 // block's plugin. include, dependency and generate blocks are not deps: they name local
 // configurations or generate code at run time; includes only resolve `include.<label>.locals`.

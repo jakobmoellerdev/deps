@@ -67,6 +67,14 @@ func (galaxyManager) Match(p string) bool {
 	return (strings.Contains(p, "requirements") || strings.Contains(p, "galaxy")) && galaxyFileRe.MatchString(p)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (galaxyManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{
+		"galaxy.yml", "galaxy.yaml", "galaxy.ansible.yml", "galaxy.ansible.yaml",
+		"requirements.yml", "requirements.yaml", "requirements.ansible.yml", "requirements.ansible.yaml",
+	}}
+}
+
 // Extract returns the roles and collections of a requirements file, or the `dependencies` of
 // a collection's galaxy.yml.
 func (galaxyManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {

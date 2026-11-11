@@ -133,6 +133,14 @@ func (*sbtManager) Match(p string) bool {
 	return p == "repositories"
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (*sbtManager) MatchHints() manager.Hints {
+	return manager.Hints{
+		Names: []string{".sbt", ".scala", "build.properties", "repositories"},
+		Exts:  []string{".sbt", ".scala"},
+	}
+}
+
 func kindOf(file string) fileKind {
 	dir := path.Dir(file)
 	inProject := path.Base(dir) == "project"

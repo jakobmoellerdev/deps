@@ -70,6 +70,11 @@ func (elmManager) Match(p string) bool {
 	return p == "elm.json" || strings.HasSuffix(p, "/elm.json")
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (elmManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{"elm.json"}}
+}
+
 // Extract returns the deps of an application or package elm.json in source order: the
 // `elm-version` and every entry of `dependencies` and `test-dependencies`. An application's
 // versions are exact (RefSpan on the version); a package's constraints

@@ -56,6 +56,11 @@ func (*helmManager) Match(p string) bool {
 	return strings.HasSuffix(p, ".yaml") || strings.HasSuffix(p, ".yml") || isHelmfile(p)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (*helmManager) MatchHints() manager.Hints {
+	return manager.Hints{Exts: []string{".yaml", ".yml", ".gotmpl"}}
+}
+
 func isChart(p string) bool { return path.Base(p) == chartFile }
 
 // isRequirements reports whether the slash path is a Helm v2 requirements.y(a)ml.

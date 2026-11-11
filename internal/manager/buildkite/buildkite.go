@@ -49,6 +49,11 @@ func (buildkiteManager) Match(path string) bool {
 	return strings.Contains(path, "buildkite") && fileRe.MatchString(path)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (buildkiteManager) MatchHints() manager.Hints {
+	return manager.Hints{Exts: []string{".yml", ".yaml"}}
+}
+
 // Extract returns the plugins and images of src.
 func (buildkiteManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {
 	doc, err := env.YAML.Document(src)

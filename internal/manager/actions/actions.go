@@ -37,6 +37,11 @@ func (actionsManager) Match(path string) bool {
 	return IsWorkflowFile(path)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (actionsManager) MatchHints() manager.Hints {
+	return manager.Hints{Exts: []string{".yml", ".yaml"}}
+}
+
 // IsWorkflowFile reports whether path is a GitHub, Gitea or Forgejo
 // workflow, workflow template or composite action file. Only YAML paths with a workflow
 // directory's literal part reach the regexp; action files are matched by their name.

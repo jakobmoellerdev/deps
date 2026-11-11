@@ -44,6 +44,11 @@ func (gomodManager) Match(p string) bool {
 	return (strings.HasSuffix(p, "go.mod") || strings.HasSuffix(p, "go.work")) && matchRe.MatchString(p)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (gomodManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{"go.mod", "go.work"}}
+}
+
 // Extract returns one Dep per require entry; RefSpan covers the version token, NameParts the
 // module path. Pseudo-versions are deps too: the engine proposes newer pseudo-versions (digest
 // updates) or releases for them. A go.work gives its go and toolchain directives.

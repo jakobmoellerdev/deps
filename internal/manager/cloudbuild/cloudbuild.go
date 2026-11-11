@@ -33,6 +33,11 @@ func (cloudbuildManager) Match(p string) bool {
 	return b == "cloudbuild.yaml" || b == "cloudbuild.yml"
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (cloudbuildManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{"cloudbuild.yaml", "cloudbuild.yml"}}
+}
+
 // Extract returns the builder image (`name`) of every step of src.
 func (cloudbuildManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {
 	doc, err := env.YAML.Document(src)

@@ -53,6 +53,11 @@ func (setupCfgManager) Match(p string) bool {
 	return strings.HasSuffix(p, "setup.cfg") && matchRe.MatchString(p)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (setupCfgManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{"setup.cfg"}}
+}
+
 // Extract returns one dep per requirement of the requirement keys, as setuptools reads them:
 // a value is the rest of the key line plus its indented continuation lines, one requirement
 // per line (`;`-separated on the key line). `#`/`;` comment lines, inline `#` comments and

@@ -55,6 +55,11 @@ func (tektonManager) Match(path string) bool {
 	return strings.HasSuffix(path, ".yaml") || strings.HasSuffix(path, ".yml")
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (tektonManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{".yaml", ".yml"}, Exts: []string{".yaml", ".yml"}}
+}
+
 // Extract returns the bundles, step images and annotation references of the Tekton resources
 // in every document of src. Documents without "tekton.dev" are not parsed; a file that does
 // not parse (a template) yields no deps.

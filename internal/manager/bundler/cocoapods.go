@@ -57,6 +57,11 @@ func (cocoapodsManager) Match(p string) bool {
 	return p == podfileName || strings.HasSuffix(p, "/"+podfileName)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (cocoapodsManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{podfileName}}
+}
+
 // Extract returns one Dep per `pod` statement, in file order. A pod with requirements is a dep
 // of the pod datasource, its requirements read and rewritten as a Gemfile gem's (Range,
 // Constraint, Version, RefSpan: setRequirements); Source is its `:source`, else the Podfile's

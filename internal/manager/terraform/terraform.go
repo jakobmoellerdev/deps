@@ -85,6 +85,14 @@ func (tfManager) Match(p string) bool {
 	return isConfigFile(p) && !strings.HasPrefix(p, ".terraform/") && !strings.Contains(p, "/.terraform/")
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (tfManager) MatchHints() manager.Hints {
+	return manager.Hints{
+		Names: []string{".tf", ".tofu", ".tf.json", ".tofu.json"},
+		Exts:  []string{".tf", ".tofu", ".tf.json", ".tofu.json"},
+	}
+}
+
 // Extract parses src (HCL or JSON) and returns the required_version and required_providers
 // entries of the terraform blocks, module sources, legacy provider block versions and the
 // deps of helm_release, tfe_workspace, docker and kubernetes resources.

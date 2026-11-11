@@ -41,6 +41,11 @@ func (bitriseManager) Name() string { return Name }
 // Match reports whether path is `bitrise.y(a)ml`, in any directory.
 func (bitriseManager) Match(p string) bool { return fileRe.MatchString(path.Base(p)) }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (bitriseManager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{"bitrise.yml", "bitrise.yaml"}}
+}
+
 // Extract returns the steps of every workflow and step bundle of src, including the steps of
 // `with` groups.
 func (bitriseManager) Extract(file string, src []byte, env manager.Env) ([]dep.Dep, error) {

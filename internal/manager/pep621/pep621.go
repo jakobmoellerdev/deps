@@ -54,6 +54,11 @@ func (*pep621Manager) Match(p string) bool {
 	return strings.HasSuffix(p, "pyproject.toml") && matchRe.MatchString(p)
 }
 
+// MatchHints lets discovery skip this manager for paths it cannot match.
+func (*pep621Manager) MatchHints() manager.Hints {
+	return manager.Hints{Names: []string{"pyproject.toml"}}
+}
+
 // ReadLocks records the versions uv.lock, poetry.lock or pdm.lock locks the deps to
 // (pytool.ReadLocks).
 func (*pep621Manager) ReadLocks(root string, files [][]dep.Dep) []error {
