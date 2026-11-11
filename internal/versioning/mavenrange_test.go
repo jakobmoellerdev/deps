@@ -75,3 +75,26 @@ func TestMavenRangeExtend(t *testing.T) {
 		}
 	}
 }
+
+// BenchmarkMavenInRange checks a registry-sized release list against the ranges of a
+// dependency, as the maven, ant, clojure and sbt managers do for every candidate release
+// (their InRange parses the range of the dep and asks it).
+func BenchmarkMavenInRange(b *testing.B) {
+	var cands []string
+	for _, c := range benchCorpora() {
+		if c.scheme == "maven" {
+			cands = c.cands
+		}
+	}
+	ranges := []string{"[1.0,2.0)", "(,1.0]", "[1.5,)", "[1.0]", "(,1.0],[1.2,)"}
+	b.ReportAllocs()
+	for b.Loop() {
+		for _, rng := range ranges {
+			for _, v := range cands {
+				if r, err := ParseMavenRange(rng); err == nil {
+					r.Admits(v)
+				}
+			}
+		}
+	}
+}

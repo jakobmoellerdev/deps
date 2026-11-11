@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
@@ -16,6 +17,7 @@ type MavenInterval struct {
 	Min, Max         string
 	MinIncl, MaxIncl bool
 	MinSpan, MaxSpan dep.Span
+	min, max         mavenVersion // the parsed bounds, which admits compares per candidate
 }
 
 // Exact reports whether the interval is a single version (`[1.0]`).
@@ -23,16 +25,14 @@ func (i MavenInterval) Exact() bool {
 	return i.MinIncl && i.MaxIncl && i.Min != "" && i.Min == i.Max && i.MinSpan == i.MaxSpan
 }
 
-func (i MavenInterval) admits(v mavenVersion) bool {
+func (i *MavenInterval) admits(v mavenVersion) bool {
 	if i.Min != "" {
-		lo, _ := parseMaven(i.Min)
-		if c := compareMaven(v, lo); c < 0 || c == 0 && !i.MinIncl {
+		if c := compareMaven(v, i.min); c < 0 || c == 0 && !i.MinIncl {
 			return false
 		}
 	}
 	if i.Max != "" {
-		hi, _ := parseMaven(i.Max)
-		if c := compareMaven(v, hi); c > 0 || c == 0 && !i.MaxIncl {
+		if c := compareMaven(v, i.max); c > 0 || c == 0 && !i.MaxIncl {
 			return false
 		}
 	}
@@ -48,10 +48,36 @@ func IsMavenRange(s string) bool {
 	return strings.HasPrefix(s, "[") || strings.HasPrefix(s, "(")
 }
 
+// mavenRanges caches the parsed form of each range string ParseMavenRange is asked for: the
+// engine checks and rewrites the range of a dep for every candidate release, and the maven,
+// ant, clojure and sbt managers parse it again each time. The cached range is shared, so
+// callers read it and do not write to it.
+var mavenRanges sync.Map // string -> mavenParsed
+
+// mavenParsed is what ParseMavenRange returned for one range string.
+type mavenParsed struct {
+	r   MavenRange
+	err error
+}
+
 // ParseMavenRange parses a Maven version range as Maven's VersionRange.createFromVersionSpec
 // does: every restriction is bracketed, a single version must be inclusive (`[1.0]`), at least
-// one bound is set and the lower bound does not exceed the upper one.
+// one bound is set and the lower bound does not exceed the upper one. The result is cached
+// (mavenRanges) and must not be modified.
 func ParseMavenRange(s string) (MavenRange, error) {
+	if p, ok := mavenRanges.Load(s); ok {
+		e := p.(mavenParsed)
+		return e.r, e.err
+	}
+	r, err := parseMavenRange(s)
+	p, _ := mavenRanges.LoadOrStore(s, mavenParsed{r, err})
+	e := p.(mavenParsed)
+	return e.r, e.err
+}
+
+// parseMavenRange is ParseMavenRange without the cache, for the ranges Extend builds: one per
+// candidate release, which the cache would keep for nothing.
+func parseMavenRange(s string) (MavenRange, error) {
 	var r MavenRange
 	i := 0
 	for {
@@ -105,6 +131,8 @@ func interval(s string, open, closer int) (MavenInterval, error) {
 			return in, errors.New("a single version must be [v]")
 		}
 		in.Max, in.MaxSpan = in.Min, in.MinSpan
+		in.min, _ = parseMaven(in.Min)
+		in.max = in.min
 		return in, nil
 	}
 	if in.Max, in.MaxSpan, err = bound(open+1+len(lo)+1, hi); err != nil {
@@ -113,10 +141,10 @@ func interval(s string, open, closer int) (MavenInterval, error) {
 	if in.Min == "" && in.Max == "" {
 		return in, errors.New("a restriction needs a bound")
 	}
+	in.min, _ = parseMaven(in.Min)
+	in.max, _ = parseMaven(in.Max)
 	if in.Min != "" && in.Max != "" {
-		a, _ := parseMaven(in.Min)
-		b, _ := parseMaven(in.Max)
-		if c := compareMaven(a, b); c > 0 || c == 0 && !(in.MinIncl && in.MaxIncl) {
+		if c := compareMaven(in.min, in.max); c > 0 || c == 0 && !(in.MinIncl && in.MaxIncl) {
 			return in, errors.New("empty range")
 		}
 	}
@@ -129,8 +157,8 @@ func (r MavenRange) Admits(v string) bool {
 	if !ok {
 		return false
 	}
-	for _, in := range r {
-		if in.admits(mv) {
+	for i := range r {
+		if r[i].admits(mv) {
 			return true
 		}
 	}
@@ -197,7 +225,7 @@ func (r MavenRange) Extend(s, v string) (string, bool) {
 	for _, rp := range slices.Backward(reps) { // the upper bound first: spans stay valid
 		out = out[:rp.span.Start] + rp.text + out[rp.span.End:]
 	}
-	nr, err := ParseMavenRange(out)
+	nr, err := parseMavenRange(out)
 	if out == s || err != nil || !nr.Admits(v) {
 		return "", false
 	}
