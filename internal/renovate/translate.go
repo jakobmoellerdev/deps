@@ -359,6 +359,31 @@ func isInfoKey(k string) bool {
 	return infoKeys[k] || strings.HasPrefix(k, "commitMessage") || strings.HasPrefix(k, "prBody")
 }
 
+// behaviorKeys are settings deps has no equivalent for that change which updates are
+// proposed, which hosts are reached or which PRs merge: they are reported as warnings with
+// what deps does instead, but only for the values that differ from how deps behaves (the
+// others, like `ignoreTests: false`, carry over as they are).
+var behaviorKeys = map[string]struct {
+	differs func(v any) bool
+	msg     string
+}{
+	"branchConcurrentLimit": {positive, "deps throttles new PRs only (prConcurrentLimit, prHourlyLimit, run --max-new-prs); a run may push more branches than Renovate"},
+	"commitHourlyLimit":     {positive, "deps throttles new PRs only (prConcurrentLimit, prHourlyLimit, run --max-new-prs); a run may push more commits per hour than Renovate"},
+	"ignoreTests":           {isTrue, "deps never merges without green checks, so branches with failing or missing checks are not merged"},
+	"respectLatest":         {isTrue, "deps offers versions above the npm latest dist-tag; keep them out with a rule's allow"},
+	"recreateWhen":          {func(v any) bool { return v == "always" }, "deps does not recreate a PR that was closed; tick its dashboard entry instead"},
+	"prTitleStrict":         {isTrue, "deps composes its PR titles itself and keeps the group and version context; set prTitle to control them"},
+}
+
+// positive reports whether v is a number above zero: Renovate's limits are unlimited at 0,
+// as deps is.
+func positive(v any) bool {
+	f, ok := v.(float64)
+	return ok && f > 0
+}
+
+func isTrue(v any) bool { return v == true }
+
 // silentKeys are consumed without a note.
 func silentKey(k string) bool { return k == "$schema" || k == "description" || k == originKey }
 
@@ -449,17 +474,45 @@ func (t *translator) builtinOnly(k string) bool {
 	return !own && !t.remote[k]
 }
 
-// untranslated reports key k (at path) that has no translation.
-func (t *translator) untranslated(path, k string) {
+// untranslated reports key k (at path) with value v that has no translation.
+func (t *translator) untranslated(path, k string, v any) {
+	b, behavior := behaviorKeys[k]
 	switch {
 	case silentKey(k):
 	case k == "hostRules":
-		t.n.info(path, "credentials come from the environment (deps help environment)")
+		t.hostRules(path, v)
+	case behavior && b.differs(v):
+		t.n.warn(path, "no deps equivalent: %s", b.msg)
 	case isInfoKey(k):
 		t.n.info(path, "no deps equivalent; ignored")
 	default:
 		t.n.warn(path, "not supported; ignored")
 	}
+}
+
+// hostRules notes a hostRules list: deps takes credentials from the environment, but an entry
+// with `enabled: false` (default:disableHost, default:disableDomain) blocks a host in
+// Renovate, which deps cannot express.
+func (t *translator) hostRules(path string, v any) {
+	var blocked []string
+	list, _ := v.([]any)
+	for _, e := range list {
+		m, _ := e.(map[string]any)
+		if m["enabled"] != false {
+			continue
+		}
+		host, _ := m["matchHost"].(string)
+		if host == "" {
+			host, _ = m["hostType"].(string)
+		}
+		blocked = append(blocked, cmp.Or(host, "a host"))
+	}
+	if len(blocked) == 0 {
+		t.n.info(path, "credentials come from the environment (deps help environment)")
+		return
+	}
+	t.n.warn(path, "no deps equivalent: deps still looks %s up, there is no host block; drop the deps of that host with a rule setting ignore: true (credentials come from the environment, deps help environment)",
+		strings.Join(blocked, ", "))
 }
 
 // strs returns v as a string list (a string is one entry).
@@ -828,7 +881,7 @@ func (t *translator) translate(cfg map[string]any) omap {
 	}) {
 		if !done[k] {
 			t.n.builtin = t.builtinOnly(k)
-			t.untranslated(k, k)
+			t.untranslated(k, k, cfg[k])
 			t.n.builtin = false
 		}
 	}
@@ -1081,7 +1134,7 @@ func (t *translator) customDatasources(v any) {
 					ok = false
 				}
 			default:
-				t.untranslated(path+"."+k, k)
+				t.untranslated(path+"."+k, k, v)
 			}
 		}
 		if !ok {
@@ -1193,12 +1246,12 @@ func (t *translator) customManager(m map[string]any, legacy bool, origin string)
 			t.n.info(origin+"."+k, "no deps equivalent; ignored")
 		case "fileFormat":
 			if !jsonata {
-				t.untranslated(origin+"."+k, k)
+				t.untranslated(origin+"."+k, k, v)
 				continue
 			}
 			fileFormat = s
 		default:
-			t.untranslated(origin+"."+k, k)
+			t.untranslated(origin+"."+k, k, v)
 		}
 	}
 	nonEmpty := func(fs omap) omap { return slices.DeleteFunc(fs, func(f field) bool { return f.v == "" }) }

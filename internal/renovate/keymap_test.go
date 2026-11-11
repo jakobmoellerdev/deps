@@ -13,8 +13,9 @@ import (
 )
 
 // converted are the top-level and rule keys the translator handles by hand that have no row
-// in config.RenovateOptions.
-var converted = []string{"pin", "registryUrls", "replacementNameTemplate", "replacementVersionTemplate", "rollback", "stabilityDays"}
+// in config.RenovateOptions. The keys of updateTypeBlocks (major, minor, pin, …) are not
+// listed: translatorKeys does not see that package-level table.
+var converted = []string{"registryUrls", "replacementNameTemplate", "replacementVersionTemplate", "rollback", "stabilityDays"}
 
 // TestKeyMapping keeps the translator on config.RenovateOptions: every top-level or rule key
 // it reads has a row there or is listed in converted, and the keys it copies through the

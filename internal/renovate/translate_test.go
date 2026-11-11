@@ -585,6 +585,17 @@ func TestLoadRules(t *testing.T) {
     group: all` + defaultExclusions,
 		},
 		{
+			name: "the pin block and matchUpdateTypes pin become pin rules",
+			src:  `{pin: {automerge: true}, packageRules: [{matchUpdateTypes: ['pin'], matchPackageNames: ['a'], groupName: 'pins'}]}`,
+			rules: `  - # pin
+    updateTypes: [pin]
+    automerge: true
+  - # packageRules[0]
+    names: [a]
+    updateTypes: [pin]
+    group: pins` + defaultExclusions,
+		},
+		{
 			name:  "package and dep names together drop the rule",
 			src:   `{packageRules: [{matchPackageNames: ['a'], matchDepNames: ['b'], enabled: false}]}`,
 			rules: strings.TrimPrefix(defaultExclusions, "\n"),
@@ -777,6 +788,48 @@ rules:` + defaultExclusions + "\n"
 		`warn schedule: schedule "on the 1st through 7th day of the month": want "on the <n> day of the month" or "of the week", got "on the 1st through 7th day of the month"; entry dropped`,
 		"info lockFileMaintenance.automerge: no deps equivalent; ignored",
 		"warn batect: not supported; ignored",
+	} {
+		if !slices.Contains(notes, n) {
+			t.Errorf("missing note %q in\n%s", n, strings.Join(notes, "\n"))
+		}
+	}
+}
+
+// TestLoadBehaviourNotes: settings deps cannot express that change throttling, host access or
+// automerge are warned about with what deps does instead; the values deps already behaves
+// like stay info notes.
+func TestLoadBehaviourNotes(t *testing.T) {
+	res, err := load(t, `{branchConcurrentLimit: 5, commitHourlyLimit: 3, ignoreTests: true, respectLatest: true,
+		recreateWhen: 'always', prTitleStrict: true,
+		hostRules: [{matchHost: 'registry.example.com', enabled: false}, {matchHost: 'github.com', token: 'x'}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	notes := noteLines(res)
+	for _, n := range []string{
+		"warn branchConcurrentLimit: no deps equivalent: deps throttles new PRs only (prConcurrentLimit, prHourlyLimit, run --max-new-prs); a run may push more branches than Renovate",
+		"warn commitHourlyLimit: no deps equivalent: deps throttles new PRs only (prConcurrentLimit, prHourlyLimit, run --max-new-prs); a run may push more commits per hour than Renovate",
+		"warn ignoreTests: no deps equivalent: deps never merges without green checks, so branches with failing or missing checks are not merged",
+		"warn respectLatest: no deps equivalent: deps offers versions above the npm latest dist-tag; keep them out with a rule's allow",
+		"warn recreateWhen: no deps equivalent: deps does not recreate a PR that was closed; tick its dashboard entry instead",
+		"warn prTitleStrict: no deps equivalent: deps composes its PR titles itself and keeps the group and version context; set prTitle to control them",
+		"warn hostRules: no deps equivalent: deps still looks registry.example.com up, there is no host block; drop the deps of that host with a rule setting ignore: true (credentials come from the environment, deps help environment)",
+	} {
+		if !slices.Contains(notes, n) {
+			t.Errorf("missing note %q in\n%s", n, strings.Join(notes, "\n"))
+		}
+	}
+	// Values deps matches anyway stay info notes.
+	res, err = load(t, `{commitHourlyLimit: 0, ignoreTests: false, recreateWhen: 'auto', hostRules: [{matchHost: 'github.com', token: 'x'}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	notes = noteLines(res)
+	for _, n := range []string{
+		"info commitHourlyLimit: no deps equivalent; ignored",
+		"info ignoreTests: no deps equivalent; ignored",
+		"info recreateWhen: no deps equivalent; ignored",
+		"info hostRules: credentials come from the environment (deps help environment)",
 	} {
 		if !slices.Contains(notes, n) {
 			t.Errorf("missing note %q in\n%s", n, strings.Join(notes, "\n"))

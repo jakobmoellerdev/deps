@@ -17,7 +17,7 @@ import (
 // updateTypeBlocks are the top-level update-type objects that become rules, with their deps
 // update type.
 var updateTypeBlocks = []struct{ key, typ string }{
-	{"major", "major"}, {"minor", "minor"}, {"patch", "patch"}, {"digest", "digest"}, {"pinDigest", "pin"},
+	{"major", "major"}, {"minor", "minor"}, {"patch", "patch"}, {"digest", "digest"}, {"pin", "pin"}, {"pinDigest", "pin"},
 	{"replacement", "replacement"},
 }
 
@@ -94,11 +94,9 @@ func (t *translator) rulesFrom(cfg map[string]any, done map[string]bool) {
 		maps.Copy(r, block)
 		t.rule(b.key, r)
 	}
-	for _, k := range []string{"pin", "rollback"} {
-		if _, ok := cfg[k]; ok {
-			done[k] = true
-			t.n.info(k, "no deps equivalent; ignored")
-		}
+	if _, ok := cfg["rollback"]; ok {
+		done["rollback"] = true
+		t.n.info("rollback", "deps never opens rollback PRs; ignored")
 	}
 	if v, ok := cfg["packageRules"]; ok {
 		done["packageRules"] = true
@@ -317,7 +315,9 @@ func (t *translator) rule(origin string, r map[string]any) {
 				switch u {
 				case "major", "minor", "patch", "digest":
 					updateTypes = appendNew(updateTypes, u)
-				case "pinDigest":
+				case "pin", "pinDigest":
+					// deps has one pin type: the pin of a range (rangeStrategy pin) and the
+					// digest pin of a version both carry it.
 					updateTypes = appendNew(updateTypes, "pin")
 				case "replacement":
 					updateTypes = appendNew(updateTypes, u)
@@ -651,7 +651,7 @@ func (t *translator) effects(origin string, r map[string]any) map[string]effect 
 				continue // composed below
 			}
 			if !strings.HasPrefix(k, "match") && !strings.HasPrefix(k, "exclude") && k != "matchManagers" {
-				t.untranslated(p, k)
+				t.untranslated(p, k, v)
 			}
 		}
 	}
@@ -1110,7 +1110,7 @@ func (t *translator) postUpgradeTasks(path string, v any) (omap, bool) {
 		case "dataFileTemplate", "installTools", "workingDirTemplate":
 			t.n.warn(path+"."+k, "no deps equivalent; ignored")
 		default:
-			t.untranslated(path+"."+k, k)
+			t.untranslated(path+"."+k, k, m[k])
 		}
 	}
 	t.n.info(path, "deps runs postUpgradeTasks only with --allow-tasks (or DEPS_ALLOW_TASKS) listing the commands, like Renovate's allowedCommands")
