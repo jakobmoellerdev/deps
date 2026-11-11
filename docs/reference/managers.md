@@ -2904,7 +2904,7 @@ Updates container images and pipes in Bitbucket Pipelines configuration.
 
 **Files:**
 
-- `*-pipelines.yml` (`bitbucket-pipelines.yml`, shared pipeline configurations), except the files of the azure-pipelines manager
+- `<word>-pipelines.y(a)ml` (`bitbucket-pipelines.yml`, shared pipeline configurations), except the files of the azure-pipelines manager
 
 | Dep type | Extracted | Datasource | Versioning | Default |
 |---|---|---|---|---|

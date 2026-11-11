@@ -41,11 +41,27 @@ func New() manager.Manager { return bitbucketManager{} }
 
 func (bitbucketManager) Name() string { return Name }
 
-// Match reports whether path is a `*-pipelines.yml` file (Renovate's pattern: also shared
-// pipeline configurations), except Azure Pipelines files (`azure-pipelines.yml`), which the
-// azure-pipelines manager reads.
+// Match reports whether path is a `<word>-pipelines.yml` or `.yaml` file (Renovate's pattern
+// `(^|/)\w*-pipelines\.ya?ml$`: also shared pipeline configurations), except Azure Pipelines
+// files (`azure-pipelines.yml`), which the azure-pipelines manager reads. The prefix is one
+// word, so `my-app-ci-pipelines.yml` is none.
 func (bitbucketManager) Match(p string) bool {
-	return strings.HasSuffix(path.Base(p), "-pipelines.yml") && !azurepipelines.IsPipelineFile(p)
+	base, ok := strings.CutSuffix(path.Base(p), ".yml")
+	if !ok {
+		if base, ok = strings.CutSuffix(path.Base(p), ".yaml"); !ok {
+			return false
+		}
+	}
+	word, ok := strings.CutSuffix(base, "-pipelines")
+	if !ok {
+		return false
+	}
+	for i := range len(word) {
+		if c := word[i]; c != '_' && (c < '0' || c > '9') && (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') {
+			return false
+		}
+	}
+	return !azurepipelines.IsPipelineFile(p)
 }
 
 // Extract returns the images and pipes of src.

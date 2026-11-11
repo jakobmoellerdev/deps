@@ -64,10 +64,12 @@ func TestMatch(t *testing.T) {
 		"bitbucket-pipelines.yml":       true,
 		"sub/bitbucket-pipelines.yml":   true,
 		"shared-pipelines.yml":          true,
+		"bitbucket-pipelines.yaml":      true,
 		"azure-pipelines.yml":           false, // azure-pipelines
 		"ci/azure/deploy-pipelines.yml": false,
-		"bitbucket-pipelines.yaml":      false,
+		"my-app-ci-pipelines.yml":       false, // the prefix is one word
 		"pipelines.yml":                 false,
+		"bitbucket-pipelines.json":      false,
 	} {
 		if got := New().Match(path); got != ok {
 			t.Errorf("Match(%q) = %v, want %v", path, got, ok)

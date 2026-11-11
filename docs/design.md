@@ -71,7 +71,7 @@ Every discovered file goes to every manager whose `Match` is true. Each dep carr
 | `pre-commit` | `.pre-commit-config.y(a)ml` | `repository`, `pre-commit-node`, `pre-commit-python`, `pre-commit-golang` | revs `git-tags` / `tag`; hook `additional_dependencies` `npm` / `semver`, `pypi` / `pep440`, `go` / `go` |
 | `rust-toolchain` | `rust-toolchain.toml`, `rust-toolchain` | `toolchain` | `rust-version` / `semver` (`X.Y`: `tag`; dated nightlies: a `regex:` scheme) |
 | `devcontainer` | `.devcontainer.json`, `.devcontainer/devcontainer.json`, `.devcontainer/<folder>/devcontainer.json` | `image`, `feature`, `feature-version` | `docker` / `docker`; feature versions `node-version`, `go-toolchain`, `python-version`, `ruby-version`, `java-version` as asdf |
-| `bitbucket-pipelines` | `*-pipelines.yml` (not Azure Pipelines files) | `image`, `service`, `pipe` | images `docker` / `docker`; pipes `git-tags` / `tag` |
+| `bitbucket-pipelines` | `<word>-pipelines.y(a)ml` (not Azure Pipelines files) | `image`, `service`, `pipe` | images `docker` / `docker`; pipes `git-tags` / `tag` |
 | `woodpecker` | `.woodpecker.y(a)ml`, `.woodpecker/<name>.y(a)ml` | `image`, `service` | `docker` / `docker` |
 | `crow` | `.crow.y(a)ml`, `.crow/<name>.y(a)ml` | `image`, `service` | `docker` / `docker` |
 | `droneci` | `.drone.yml` | `image`, `service` | `docker` / `docker` |

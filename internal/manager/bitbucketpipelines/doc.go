@@ -10,7 +10,7 @@ var Doc = refdoc.Manager{
 	Name:    Name,
 	Summary: "Updates container images and pipes in Bitbucket Pipelines configuration.",
 	Files: []string{
-		"`*-pipelines.yml` (`bitbucket-pipelines.yml`, shared pipeline configurations), except the files of the azure-pipelines manager",
+		"`<word>-pipelines.y(a)ml` (`bitbucket-pipelines.yml`, shared pipeline configurations), except the files of the azure-pipelines manager",
 	},
 	DepTypes: []refdoc.DepType{
 		{Name: "image", What: "`image` (string or `name:`) at top level and in steps, wherever they nest (`pipelines.<kind>`, `parallel`, `stage`, `definitions.steps`)", Versioning: "`docker`", Datasources: []string{"docker"}},
