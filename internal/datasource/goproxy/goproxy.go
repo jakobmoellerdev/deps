@@ -453,6 +453,8 @@ func (s *Source) resolve(ctx context.Context, modPath, dir string) (vs []string,
 // walk runs step for modPath along GOPROXY until one succeeds. step gets a proxy base URL and
 // the escaped module path, or base "" when the go command must be used (a `direct` entry, or a
 // GONOPROXY/GOPRIVATE module); a notFound (404/410) result falls through to the next entry.
+// When no entry succeeded, the first failure of one that was not a notFound is returned, so
+// that a `|` list whose proxies were all unreachable fails instead of reporting no versions.
 func (s *Source) walk(ctx context.Context, modPath string, step func(base, escaped string) (notFound bool, err error)) error {
 	env, err := s.loadEnv(ctx)
 	if err != nil {
@@ -467,6 +469,7 @@ func (s *Source) walk(ctx context.Context, modPath string, step func(base, escap
 		return err
 	}
 	rest := env.Proxy
+	var failed error // the first entry that failed with something else than a notFound
 	for rest != "" {
 		// Each entry is followed by "," (fall through only on 404/410) or "|" (fall through on any error).
 		i := strings.IndexAny(rest, ",|")
@@ -494,6 +497,12 @@ func (s *Source) walk(ctx context.Context, modPath string, step func(base, escap
 		if !notFound && !anyErr {
 			return err
 		}
+		if !notFound && failed == nil {
+			failed = err
+		}
+	}
+	if failed != nil {
+		return failed
 	}
 	return fmt.Errorf("%w %s", errNoProxy, modPath)
 }

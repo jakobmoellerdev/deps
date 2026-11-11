@@ -856,3 +856,22 @@ func TestFileProxy(t *testing.T) {
 		t.Errorf("ReleaseTime = %v, %v; want %v", got, err, want)
 	}
 }
+
+// TestMajorPathsProxiesFail: when a `|` entry failed outright and the next only reported the
+// path missing, the probe reports that failure instead of concluding that no newer major exists.
+func TestMajorPathsProxiesFail(t *testing.T) {
+	hits := map[string]*atomic.Int32{"ok": {}, "nf": {}, "gone": {}, "err": {}}
+	srv := proxyServer(t, hits)
+	s := New(srv.Client(), make(chan struct{}, 1))
+	s.env = func(context.Context) (gotool.GoEnv, error) {
+		return gotool.GoEnv{Proxy: srv.URL + "/err|" + srv.URL + "/nf"}, nil
+	}
+	var mp datasource.MajorPathSource = s
+	got, err := mp.MajorPaths(t.Context(), dep.Dep{Name: "example.com/m", Version: "v1.0.0"}, "/mod")
+	if err == nil || !strings.Contains(err.Error(), "HTTP 500") {
+		t.Fatalf("MajorPaths = %v, %v; want an HTTP 500 error", got, err)
+	}
+	if hits["err"].Load() != 1 || hits["nf"].Load() != 1 {
+		t.Errorf("hits: err %d, nf %d; want 1, 1 (both entries tried)", hits["err"].Load(), hits["nf"].Load())
+	}
+}
