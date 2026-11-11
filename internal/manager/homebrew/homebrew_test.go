@@ -197,9 +197,21 @@ func TestEdits(t *testing.T) {
 
 // TestExtractScopes covers per-platform downloads, mirrors, the version statement, resources
 // and the blocks whose statements are no downloads (head, livecheck, bottle, patch, method
-// bodies with heredocs, test).
+// bodies with heredocs, test), in a formula with LF and with CRLF line endings.
 func TestExtractScopes(t *testing.T) {
-	src := fixture(t, "multi.rb")
+	lf := fixture(t, "multi.rb")
+	for _, tc := range []struct{ name, src string }{
+		{"lf", lf},
+		{"crlf", strings.ReplaceAll(lf, "\n", "\r\n")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			extractScopes(t, tc.src)
+		})
+	}
+}
+
+func extractScopes(t *testing.T, src string) {
+	t.Helper()
 	ds, err := New().Extract("Formula/tool.rb", []byte(src), manager.Env{ForgeURL: "https://git.example.org"})
 	if err != nil {
 		t.Fatal(err)

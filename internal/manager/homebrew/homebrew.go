@@ -120,7 +120,9 @@ func scan(src []byte) []scope {
 		if end < 0 {
 			end = len(src) - off
 		}
-		l := string(src[off : off+end])
+		// The "\r" of a CRLF formula is dropped: the regexps anchored at the end of the line
+		// (doRe, oneLineRe, endlessRe) would not match otherwise. Offsets stay valid.
+		l := strings.TrimSuffix(string(src[off:off+end]), "\r")
 		start := off
 		off += end + 1
 		if heredoc != "" {
