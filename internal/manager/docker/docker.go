@@ -95,7 +95,10 @@ func (dockerManager) Extract(file string, src []byte, env manager.Env) ([]dep.De
 			return nil, nil
 		}
 		x := extractor{file: file, src: src, lines: yamlspan.LineStarts(src), aliases: env.RegistryAliases}
-		return x.deps, x.yaml(env.YAML, x.workflow)
+		// x.deps is read after the walk filled it: in one return statement the order of the
+		// operand and the call is unspecified.
+		err := x.yaml(env.YAML, x.workflow)
+		return x.deps, err
 	}
 	if !bytes.Contains(src, []byte("image:")) && !bytes.Contains(src, []byte("repository:")) {
 		return nil, nil
