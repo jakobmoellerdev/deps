@@ -23,6 +23,10 @@ func TestParse(t *testing.T) {
 		{"zope.interface", true, "zope.interface", "", "", "", ""},
 		{"pip @ https://example.com/pip.whl ; os_name == 'nt'", true, "pip", "", "", "https://example.com/pip.whl", "os_name == 'nt'"},
 		{"x @ ", false, "", "", "", "", ""},
+		// PEP 508 ends a URL at whitespace (`urlspec wsp+ quoted_marker?`), so a `;` of the
+		// URL itself does not start the marker.
+		{"pkg @ https://host/a;b/pkg.whl", true, "pkg", "", "", "https://host/a;b/pkg.whl", ""},
+		{"pkg @ https://host/a;b/pkg.whl ; os_name == 'nt'", true, "pkg", "", "", "https://host/a;b/pkg.whl", "os_name == 'nt'"},
 		{"-r other.txt", false, "", "", "", "", ""},
 		{"", false, "", "", "", "", ""},
 		{"bad_[x", false, "", "", "", "", ""},
@@ -44,6 +48,9 @@ func TestParse(t *testing.T) {
 		}
 		if ok && c.in[r.NameStart:r.NameStart+len(r.Name)] != r.Name {
 			t.Errorf("Parse(%q): name offset %d", c.in, r.NameStart)
+		}
+		if ok && c.url != "" && c.in[r.URLStart:r.URLStart+len(r.URL)] != r.URL {
+			t.Errorf("Parse(%q): url offset %d", c.in, r.URLStart)
 		}
 	}
 }

@@ -61,15 +61,26 @@ func Parse(s string) (r Requirement, ok bool) {
 		i = skipWS(s, i+end+1)
 	}
 	rest := s[i:]
-	body, marker, _ := strings.Cut(rest, ";")
-	r.Marker = strings.TrimSpace(marker)
-	if u, isURL := strings.CutPrefix(body, "@"); isURL {
-		if r.URL = strings.TrimSpace(u); r.URL == "" {
+	if u, isURL := strings.CutPrefix(rest, "@"); isURL {
+		// A URL ends at whitespace and only then may a marker follow (PEP 508: `url_req =
+		// name wsp* extras? wsp* urlspec wsp+ quoted_marker?`), so a `;` within it, as in
+		// `pkg @ https://host/a;b/pkg.whl`, belongs to the URL.
+		start := skipWS(u, 0)
+		end := start
+		for end < len(u) && !isWS(u[end]) {
+			end++
+		}
+		if r.URL = u[start:end]; r.URL == "" {
 			return Requirement{}, false
 		}
-		r.URLStart = i + 1 + strings.Index(u, r.URL)
+		r.URLStart = i + 1 + start
+		if j := skipWS(u, end); j < len(u) && u[j] == ';' {
+			r.Marker = strings.TrimSpace(u[j+1:])
+		}
 		return r, true
 	}
+	body, marker, _ := strings.Cut(rest, ";")
+	r.Marker = strings.TrimSpace(marker)
 	if t := strings.TrimSpace(body); t != "" && !strings.ContainsRune("(<>=!~", rune(t[0])) {
 		// Not a specifier: a URL (`git+https://…`, `https://…`) or junk after the name.
 		return Requirement{}, false
