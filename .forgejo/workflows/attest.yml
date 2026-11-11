@@ -11,8 +11,6 @@ on:
 jobs:
   attest:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Attach the GitHub attestations
