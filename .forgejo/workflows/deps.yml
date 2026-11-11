@@ -9,10 +9,6 @@ on:
   # Preview with the PR's code: the dry-run job below; docs/ci.md#preview-on-pull-requests
   pull_request:
     branches: [main]
-# There is no bot token any more: the deps job fetches a short-lived OIDC JWT and deps-bot's Authorized
-# Integration "deps dependency PRs" exchanges it for write:repository + write:issue on this repository and
-# monstera, only for a JWT whose claims say a jakobmoellerdev/* repository and workflow deps.yml.
-enable-openid-connect: true
 env:
   # deps-bot's verified email; its OpenPGP key (DEPS_SIGNING_KEY) is verified on that account.
   # The dry run needs it too: branches with another author are reported as modified by someone else.
@@ -25,22 +21,13 @@ jobs:
       group: deps
       cancel-in-progress: false
     steps:
-      # Audience of deps-bot's Authorized Integration; it only names the integration and is not confidential.
-      - id: jwt
-        env:
-          AUD: u:2:cf825b7f-7aea-4218-9260-68311fc42be1
-        run: |
-          jwt=$(curl -fsS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$AUD" | jq -r .value)
-          echo "::add-mask::$jwt"
-          echo "jwt=$jwt" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v7.0.1
         with:
-          token: ${{ steps.jwt.outputs.jwt }}
+          token: ${{ secrets.DEPS_BOT_TOKEN }}
       # The published release, as users run it; deps bumps this pin itself after each release.
       - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.11.0
         with:
-          token: ${{ steps.jwt.outputs.jwt }}
+          token: ${{ secrets.DEPS_BOT_TOKEN }}
           signing-key: ${{ secrets.DEPS_SIGNING_KEY }}
           args: run --log-level info
   # Builds deps from the PR and shows what it would do: `plan` on the PR (its .deps.yaml and
