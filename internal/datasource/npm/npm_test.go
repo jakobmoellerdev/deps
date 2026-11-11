@@ -2,6 +2,7 @@ package npmds
 
 import (
 	"context"
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -270,7 +271,7 @@ func TestReleasesTransportErrors(t *testing.T) {
 	})
 	t.Run("default registry", func(t *testing.T) {
 		rc := &npmrc{}
-		if rc.registryFor("@s/x") != "" || rc.tokenFor("no-scheme") != "" {
+		if rc.registryFor("@s/x") != "" || rc.authFor("no-scheme") != "" {
 			t.Error("empty npmrc resolved something")
 		}
 	})
@@ -401,5 +402,69 @@ func TestCredentialsNotShared(t *testing.T) {
 	}
 	if want := []string{"Bearer bad /pkg", "Bearer good /pkg"}; !slices.Equal(reg.reqs, want) {
 		t.Errorf("requests = %q, want %q", reg.reqs, want)
+	}
+}
+
+// TestNpmrcChainAndCredentials checks that the .npmrc files from the package.json directory
+// up to the root and then the user's are merged, the nearer file winning per key, and that
+// the credential styles besides _authToken authenticate the request.
+func TestNpmrcChainAndCredentials(t *testing.T) {
+	reg := newRegistry(t, nil)
+	u := reg.srv.URL
+	host := strings.TrimPrefix(u, "http://")
+	basic := base64.StdEncoding.EncodeToString([]byte("bot:s3cret"))
+	for _, tt := range []struct {
+		name, root, project, home, want string
+	}{
+		{
+			name: "token from a farther file", root: "//" + host + "/:_authToken=root-token\n",
+			project: "registry=" + u + "/proj/\n", want: "Bearer root-token /proj/pkg",
+		},
+		{
+			name: "nearer file wins", root: "registry=" + u + "/root/\n//" + host + "/:_authToken=root-token\n",
+			project: "//" + host + "/:_authToken=project-token\n", want: "Bearer project-token /root/pkg",
+		},
+		{
+			name: "token from the user config", home: "//" + host + "/:_authToken=home-token\n",
+			project: "registry=" + u + "/proj/\n", want: "Bearer home-token /proj/pkg",
+		},
+		{
+			name:    "_auth",
+			project: "registry=" + u + "/proj/\n//" + host + "/:_auth=" + basic + "\n", want: "Basic " + basic + " /proj/pkg",
+		},
+		{
+			name: "username and _password",
+			project: "registry=" + u + "/proj/\n//" + host + "/:username=bot\n" +
+				"//" + host + "/:_password=" + base64.StdEncoding.EncodeToString([]byte("s3cret")) + "\n",
+			want: "Basic " + basic + " /proj/pkg",
+		},
+		{
+			name:    "top-level _auth",
+			project: "registry=" + u + "/proj/\n_auth=" + basic + "\nalways-auth=true\nemail=bot@example.com\n",
+			want:    "Basic " + basic + " /proj/pkg",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			files := map[string]string{"app/package.json": "{}"}
+			if tt.root != "" {
+				files[".npmrc"] = tt.root
+			}
+			if tt.project != "" {
+				files["app/.npmrc"] = tt.project
+			}
+			root := write(t, t.TempDir(), files)
+			home := t.TempDir()
+			if tt.home != "" {
+				write(t, home, map[string]string{".npmrc": tt.home})
+			}
+			s := New(reg.srv.Client(), nil, env(map[string]string{"HOME": home}))
+			before := len(reg.reqs)
+			if _, err := s.Releases(t.Context(), dep.Dep{Name: "pkg", File: "app/package.json"}, filepath.Join(root, "app")); err != nil {
+				t.Fatal(err)
+			}
+			if got := reg.reqs[before:]; !slices.Equal(got, []string{tt.want}) {
+				t.Errorf("requests = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

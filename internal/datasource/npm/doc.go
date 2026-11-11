@@ -9,13 +9,13 @@ var Doc = refdoc.Datasource{
 	Name:         Name,
 	NameForm:     "package name (`@scope/name` sent as `@scope%2fname`); yarn 2 and later as the npm manager's `packageManager`, `engines` or `volta` tool is `@yarnpkg/cli-dist` (the `yarn` package stops at 1.x)",
 	Endpoints:    "`GET <registry>/<name>` with `Accept: application/vnd.npm.install-v1+json` (abbreviated metadata) once per registry and package, stream-decoded; deprecated versions dropped, their messages kept for the dashboard's deprecated dependencies (a deprecated `dist-tags.latest` deprecates the package, else the installed version's own message counts); 404 → `package <name> not found`. The full packument (`Accept: application/json`) is fetched at most once per registry and package, only for release times and the source repository",
-	Auth:         "`.npmrc` `//host/path/:_authToken=` (longest prefix), `${VAR}` expansion",
+	Auth:         "the `.npmrc` chain: `//host/path/:_authToken=` (longest prefix) as a bearer token, `//host/path/:_auth=` or `//host/path/:username=` with `:_password=` (base64) as basic auth, the top-level `_auth`, `username` and `_password` as a fallback; `${VAR}` expansion",
 	ReleaseTimes: "packument `time`; not fetched for `minimumReleaseAge` when the abbreviated `modified` is already older",
 	Notes: []refdoc.Section{{
 		Title: "npm registry selection",
-		Body:  "deps reads the nearest `.npmrc` per `package.json` directory, walking up to `--dir`.",
+		Body:  "deps merges the `.npmrc` files of the `package.json` directory up to `--dir` and then the user's (`NPM_CONFIG_USERCONFIG`, else `$HOME/.npmrc`), the nearer file winning per key, as npm merges its configuration.",
 		Items: []string{
-			"A scoped name uses `@scope:registry=` from that file; any other name uses `registry=`.",
+			"A scoped name uses `@scope:registry=` from the merged configuration; any other name uses `registry=`.",
 			"Without one, deps uses `NPM_CONFIG_REGISTRY` (or `npm_config_registry`), else `https://registry.npmjs.org/`.",
 		},
 	}, {

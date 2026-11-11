@@ -1,16 +1,19 @@
 // Package npmds lists the versions of npm packages from an npm registry.
 //
-// The registry of a package is taken from the nearest .npmrc, walking up from the
-// package.json directory to the scanned root (`@scope:registry=` for scoped packages, then
-// `registry=`), then NPM_CONFIG_REGISTRY, then https://registry.npmjs.org. A
-// `//host/path/:_authToken=` entry whose path prefixes the registry URL authenticates the
-// request; `${VAR}` in .npmrc keys and values is expanded from the environment.
+// The registry of a package is taken from the .npmrc files of the package.json directory up
+// to the scanned root and then the user's, merged as npm merges them (nearer files win per
+// key; `@scope:registry=` for scoped packages, then `registry=`), then NPM_CONFIG_REGISTRY,
+// then https://registry.npmjs.org. The credentials of the longest `//host/path/` prefix of
+// the registry URL authenticate the request: `_authToken` as a bearer token, `_auth` or
+// `username` with `_password` as basic auth; `${VAR}` in .npmrc keys and values is expanded
+// from the environment.
 package npmds
 
 import (
 	"bufio"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -62,15 +65,16 @@ type Source struct {
 	wsConfs nodetool.WorkspaceConfigs
 }
 
-// location is the registry (with trailing slash) and token a dependency resolved against.
-type location struct{ reg, token string }
+// location is the registry (with trailing slash) and the Authorization header a dependency
+// resolved against.
+type location struct{ reg, auth string }
 
 // key is the memo key of a lookup of package name at l. It covers the credential: the memos
 // cache failures, so without it the 401 of a directory without a token would be handed to
 // every later directory that has one, and which of the two runs first is up to the scheduler.
-// The token is hashed so that no secret ends up in a map key.
+// The credential is hashed so that no secret ends up in a map key.
 func (l location) key(name string) string {
-	return l.reg + "\x00" + credID(l.token) + "\x00" + name
+	return l.reg + "\x00" + credID(l.auth) + "\x00" + name
 }
 
 // credID identifies a credential without keeping it; "" stands for no credential.
@@ -193,7 +197,7 @@ func (s *Source) locate(rc *npmrc, name string) location {
 		reg = DefaultRegistry
 	}
 	reg = strings.TrimSuffix(reg, "/") + "/"
-	return location{reg: reg, token: rc.tokenFor(reg)}
+	return location{reg: reg, auth: rc.authFor(reg)}
 }
 
 // ReleaseTime implements datasource.Timer from the full packument's `time` object. The
@@ -337,8 +341,10 @@ func (s *Source) wsEntry(m map[string]*wsEntry, key string) *wsEntry {
 	return e
 }
 
-// config returns the nearest .npmrc of dir, looking no higher than root; an empty config when
-// there is none.
+// config returns the effective .npmrc of dir: the .npmrc files from dir up to root, then the
+// user's (userConfig), merged as npm merges its configuration — the nearer file wins per key,
+// so a project .npmrc naming a registry still picks up the credentials of the user's. An
+// empty config when there is none.
 func (s *Source) config(dir, root string) (*npmrc, error) {
 	s.mu.Lock()
 	e := s.rcs[dir]
@@ -348,47 +354,142 @@ func (s *Source) config(dir, root string) (*npmrc, error) {
 	}
 	s.mu.Unlock()
 	e.once.Do(func() {
-		e.rc = &npmrc{}
-		for cur := dir; ; {
-			p := filepath.Join(cur, ".npmrc")
-			f, err := os.Open(p)
-			if err == nil {
-				e.rc, e.err = parseNpmrc(f, s.getenv)
-				_ = f.Close()
-				if e.err != nil {
-					e.err = fmt.Errorf("%s: %w", p, e.err)
-				}
-				slog.Debug("npmrc loaded", "path", p, "registry", e.rc.registry, "scopes", len(e.rc.scopes), "tokens", len(e.rc.tokens))
-				httpx.NoteSource("read config", "file", p, "datasource", Name)
-				return
+		e.rc = newNpmrc()
+		files := 0
+		add := func(p string) bool {
+			rc, err := s.readNpmrc(p)
+			if err != nil {
+				e.rc, e.err = newNpmrc(), err
+				return false
 			}
-			if !errors.Is(err, fs.ErrNotExist) {
-				e.err = err
+			if rc != nil {
+				e.rc.merge(rc)
+				files++
+			}
+			return true
+		}
+		for cur := dir; ; {
+			if !add(filepath.Join(cur, ".npmrc")) {
 				return
 			}
 			parent := filepath.Dir(cur)
 			if cur == root || parent == cur {
-				return
+				break
 			}
 			cur = parent
 		}
+		if p := s.userConfigPath(); p != "" && !add(p) {
+			return
+		}
+		slog.Debug("npmrc loaded", "dir", dir, "files", files, "registry", e.rc.registry, "scopes", len(e.rc.scopes), "credentials", len(e.rc.auth))
 	})
 	return e.rc, e.err
+}
+
+// readNpmrc parses the .npmrc at p, nil when there is none.
+func (s *Source) readNpmrc(p string) (*npmrc, error) {
+	f, err := os.Open(p)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	rc, err := parseNpmrc(f, s.getenv)
+	_ = f.Close()
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", p, err)
+	}
+	httpx.NoteSource("read config", "file", p, "datasource", Name)
+	return rc, nil
+}
+
+// userConfigPath is NPM_CONFIG_USERCONFIG, else $HOME/.npmrc ("" without HOME): npm reads the
+// user's configuration after the directory's.
+func (s *Source) userConfigPath() string {
+	if p := s.getenv("NPM_CONFIG_USERCONFIG"); p != "" {
+		return p
+	}
+	if p := s.getenv("npm_config_userconfig"); p != "" {
+		return p
+	}
+	if home := s.getenv("HOME"); home != "" {
+		return filepath.Join(home, ".npmrc")
+	}
+	return ""
 }
 
 // npmrc is the subset of .npmrc deps understands.
 type npmrc struct {
 	registry string
-	scopes   map[string]string // "@scope" -> registry
-	tokens   map[string]string // "//host/path/" -> token
+	scopes   map[string]string     // "@scope" -> registry
+	auth     map[string]credential // "//host/path/" -> its credentials
+	global   credential            // the top-level _auth, username and _password
+}
+
+func newNpmrc() *npmrc {
+	return &npmrc{scopes: map[string]string{}, auth: map[string]credential{}}
+}
+
+// credential authenticates requests to a registry: a bearer token (`_authToken`), a ready
+// `user:password` in base64 (`_auth`) or a user name and password (`username`, `_password`).
+type credential struct{ token, basic, user, pass string }
+
+// header returns the Authorization header value of c, "" when c holds no credential.
+func (c credential) header() string {
+	switch {
+	case c.token != "":
+		return "Bearer " + c.token
+	case c.basic != "":
+		return "Basic " + c.basic
+	case c.user != "" || c.pass != "":
+		return "Basic " + base64.StdEncoding.EncodeToString([]byte(c.user+":"+c.pass))
+	}
+	return ""
+}
+
+// fill takes from o the fields c does not have; c is the nearer configuration, whose keys win.
+func (c *credential) fill(o credential) {
+	if c.token == "" {
+		c.token = o.token
+	}
+	if c.basic == "" {
+		c.basic = o.basic
+	}
+	if c.user == "" {
+		c.user = o.user
+	}
+	if c.pass == "" {
+		c.pass = o.pass
+	}
+}
+
+// merge adds the keys of the farther configuration o that rc does not have itself.
+func (rc *npmrc) merge(o *npmrc) {
+	if rc.registry == "" {
+		rc.registry = o.registry
+	}
+	for scope, reg := range o.scopes {
+		if _, ok := rc.scopes[scope]; !ok {
+			rc.scopes[scope] = reg
+		}
+	}
+	for prefix, c := range o.auth {
+		own := rc.auth[prefix]
+		own.fill(c)
+		rc.auth[prefix] = own
+	}
+	rc.global.fill(o.global)
 }
 
 var envRe = regexp.MustCompile(`\$\{([^}?]+)\??\}`)
 
 // parseNpmrc reads the ini lines `key=value`, skipping blanks and ; or # comments. Values may
-// be quoted; ${VAR} and ${VAR?} expand to the environment value (empty when unset).
+// be quoted; ${VAR} and ${VAR?} expand to the environment value (empty when unset). Besides
+// the registries it keeps the credentials, per `//host/path/` prefix and the top-level ones
+// Artifactory and Nexus write.
 func parseNpmrc(r io.Reader, getenv func(string) string) (*npmrc, error) {
-	rc := &npmrc{scopes: map[string]string{}, tokens: map[string]string{}}
+	rc := newNpmrc()
 	expand := func(s string) string {
 		return envRe.ReplaceAllStringFunc(s, func(m string) string { return getenv(envRe.FindStringSubmatch(m)[1]) })
 	}
@@ -412,11 +513,45 @@ func parseNpmrc(r io.Reader, getenv func(string) string) (*npmrc, error) {
 			rc.registry = v
 		case strings.HasPrefix(k, "@") && strings.HasSuffix(k, ":registry"):
 			rc.scopes[strings.TrimSuffix(k, ":registry")] = v
-		case strings.HasPrefix(k, "//") && strings.HasSuffix(k, ":_authToken"):
-			rc.tokens[strings.TrimSuffix(strings.TrimSuffix(k, ":_authToken"), "/")+"/"] = v
+		case strings.HasPrefix(k, "//"):
+			// The prefix of a credential ends at its last colon: the host may carry a port.
+			i := strings.LastIndex(k, ":")
+			if i < 0 {
+				continue
+			}
+			prefix := strings.TrimSuffix(k[:i], "/") + "/"
+			c := rc.auth[prefix]
+			if !c.set(k[i+1:], v) {
+				continue
+			}
+			rc.auth[prefix] = c
+		default:
+			rc.global.set(k, v)
 		}
 	}
 	return rc, sc.Err()
+}
+
+// set keeps the value of the credential field, reporting whether it is one deps understands.
+// `_password` is base64 as npm writes it; a value that is not base64 is taken as written, so
+// a hand-edited plain password still works.
+func (c *credential) set(field, v string) bool {
+	switch field {
+	case "_authToken":
+		c.token = v
+	case "_auth":
+		c.basic = v
+	case "username":
+		c.user = v
+	case "_password":
+		if b, err := base64.StdEncoding.DecodeString(v); err == nil {
+			v = string(b)
+		}
+		c.pass = v
+	default:
+		return false
+	}
+	return true
 }
 
 // registryFor returns the configured registry of package name, or "".
@@ -429,19 +564,24 @@ func (rc *npmrc) registryFor(name string) string {
 	return rc.registry
 }
 
-// tokenFor returns the token of the longest `//host/path/` key prefixing registry reg.
-func (rc *npmrc) tokenFor(reg string) string {
+// authFor returns the Authorization header of registry reg: the credentials of the longest
+// `//host/path/` key prefixing it, else the top-level ones; "" when there are none.
+func (rc *npmrc) authFor(reg string) string {
 	_, nerf, ok := strings.Cut(reg, ":")
 	if !ok {
 		return ""
 	}
-	var best, token string
-	for k, t := range rc.tokens {
+	var best string
+	var cred credential
+	for k, c := range rc.auth {
 		if strings.HasPrefix(nerf, k) && len(k) > len(best) {
-			best, token = k, t
+			best, cred = k, c
 		}
 	}
-	return token
+	if h := cred.header(); h != "" {
+		return h
+	}
+	return rc.global.header()
 }
 
 // escapeName escapes a package name for the registry path: `@scope/name` → `@scope%2fname`.
@@ -456,7 +596,7 @@ func escapeName(name string) string {
 func (s *Source) fetchMetadata(ctx context.Context, loc location, name string) (m metadata, err error) {
 	start, deprecated := time.Now(), 0
 	defer func() {
-		slog.DebugContext(ctx, "npm metadata fetched", "name", name, "registry", loc.reg, "authenticated", loc.token != "",
+		slog.DebugContext(ctx, "npm metadata fetched", "name", name, "registry", loc.reg, "authenticated", loc.auth != "",
 			"versions", len(m.rels), "deprecated", deprecated, "latest", m.latest, "modified", m.modified, "duration", time.Since(start), "err", err)
 	}()
 	err = s.stream(ctx, loc, name, abbreviated, func(body io.Reader) (err error) {
@@ -470,7 +610,7 @@ func (s *Source) fetchMetadata(ctx context.Context, loc location, name string) (
 func (s *Source) fetch(ctx context.Context, loc location, name string) (p packument, err error) {
 	start, deprecated := time.Now(), 0
 	defer func() {
-		slog.DebugContext(ctx, "npm packument fetched", "name", name, "registry", loc.reg, "authenticated", loc.token != "",
+		slog.DebugContext(ctx, "npm packument fetched", "name", name, "registry", loc.reg, "authenticated", loc.auth != "",
 			"versions", len(p.rels), "deprecated", deprecated, "times", len(p.times), "repository", p.repo, "duration", time.Since(start), "err", err)
 	}()
 	err = s.stream(ctx, loc, name, "application/json", func(body io.Reader) (err error) {
@@ -486,8 +626,8 @@ func (s *Source) stream(ctx context.Context, loc location, name, accept string, 
 	g := s.getter
 	g.Prepare = func(req *http.Request) error {
 		req.Header.Set("Accept", accept)
-		if loc.token != "" {
-			req.Header.Set("Authorization", "Bearer "+loc.token)
+		if loc.auth != "" {
+			req.Header.Set("Authorization", loc.auth)
 		}
 		return nil
 	}
