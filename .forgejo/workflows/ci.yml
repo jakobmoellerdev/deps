@@ -9,6 +9,10 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
+# Lets the release job ask Forgejo for a short-lived OIDC JWT, so the package upload needs no static
+# token; see the Publish packages step.
+enable-openid-connect: true
+
 jobs:
   # check and test run as parallel jobs.
   check:
@@ -65,13 +69,21 @@ jobs:
       - run: task release:packages VERSION="${GITHUB_REF_NAME}"
       - name: Publish packages
         # Debian, RPM, Arch Linux and Alpine registries of the owner. The job token can only read
-        # packages, so a write:package token of the owner uploads. Re-runs skip files that are
-        # already published with the same content.
+        # packages, so the upload authenticates with a short-lived OIDC JWT instead: the Authorized
+        # Integration "deps release packages" of the owner exchanges it for write:package, but only
+        # for a JWT whose claims say this repository, this workflow file and a refs/tags/v* ref.
+        # Re-runs skip files that are already published with the same content.
         env:
           PACKAGES_URL: ${{ github.server_url }}/api/packages/${{ github.repository_owner }}
           PACKAGES_USER: ${{ github.repository_owner }}
-          PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
-        run: packaging/publish.sh dist/*.deb dist/*.rpm dist/*.pkg.tar.zst dist/*.apk
+          # Audience of the Authorized Integration; not confidential.
+          AUD: u:1:4589c074-43a8-4f8b-8f56-91ed3b250089
+        run: |
+          PACKAGES_TOKEN=$(curl -fsS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$AUD" | jq -r .value)
+          echo "::add-mask::$PACKAGES_TOKEN"
+          export PACKAGES_TOKEN
+          packaging/publish.sh dist/*.deb dist/*.rpm dist/*.pkg.tar.zst dist/*.apk
       - name: Publish release
         # packaging/forge-release.sh talks to the forge API with the job token; no forge CLI on the runner.
         env:
