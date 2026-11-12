@@ -16,35 +16,101 @@ deps finds the dependencies in a repository, looks up newer versions, and opens 
 
 ## Install
 
+<details open>
+<summary><img src="https://cdn.simpleicons.org/linux/_/white" height="16" alt=""> <img src="https://cdn.simpleicons.org/apple/_/white" height="16" alt=""> <b>Linux / macOS</b> (binary, amd64 and arm64)</summary>
+
 ```sh
-# Linux and macOS, static binary, amd64 and arm64
-os=$(uname -s | tr A-Z a-z); arch=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
-mkdir -p ~/.local/bin && curl -fsSL \
-  "https://github.com/jakobmoellerdev/deps/releases/latest/download/deps_${os}_${arch}.tar.xz" \
-  | tar -xJf - -C ~/.local/bin deps
-
-# Homebrew
-brew tap jakobmoellerdev/deps https://git.jakob-moeller.cloud/jakobmoellerdev/deps
-brew install jakobmoellerdev/deps/deps
-
-# Nix
-nix profile install github:jakobmoellerdev/deps
-
-# Go
-go install git.jakob-moeller.cloud/jakobmoellerdev/deps/cmd/deps@latest
-
-# Debian, Ubuntu, Fedora, RHEL, Arch Linux, Alpine: add the repository (docs/install.md#packages), then
-sudo apt-get install deps     # dnf install deps, pacman -Syu deps, apk add deps
+mkdir -p ~/.local/bin && curl -fsSL "https://github.com/jakobmoellerdev/deps/releases/latest/download/deps_$(uname -s | tr A-Z a-z)_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.xz" | tar -xJf - -C ~/.local/bin deps
 ```
 
+</details>
+
+<details>
+<summary><img src="https://cdn.simpleicons.org/homebrew" height="16" alt=""> <b>macOS / Linux</b> (Homebrew)</summary>
+
+```sh
+brew tap jakobmoellerdev/deps https://git.jakob-moeller.cloud/jakobmoellerdev/deps
+brew install jakobmoellerdev/deps/deps
+```
+
+</details>
+
+<details>
+<summary><img src="https://cdn.simpleicons.org/nixos" height="16" alt=""> <b>Nix</b> (flake, macOS / Linux)</summary>
+
+```sh
+nix profile install github:jakobmoellerdev/deps
+```
+
+</details>
+
+<details>
+<summary><img src="https://cdn.simpleicons.org/debian" height="16" alt=""> <img src="https://cdn.simpleicons.org/ubuntu" height="16" alt=""> <b>Debian / Ubuntu</b> (apt)</summary>
+
+```sh
+sudo install -d -m 0755 /etc/apt/keyrings
+sudo curl -fsSL https://git.jakob-moeller.cloud/api/packages/jakobmoellerdev/debian/repository.key -o /etc/apt/keyrings/deps.asc
+echo "deb [signed-by=/etc/apt/keyrings/deps.asc] https://git.jakob-moeller.cloud/api/packages/jakobmoellerdev/debian stable main" | sudo tee /etc/apt/sources.list.d/deps.list
+sudo apt-get update && sudo apt-get install deps
+```
+
+</details>
+
+<details>
+<summary><img src="https://cdn.simpleicons.org/fedora" height="16" alt=""> <img src="https://cdn.simpleicons.org/redhat" height="16" alt=""> <b>Fedora / RHEL</b> (dnf)</summary>
+
+```sh
+printf '[deps]\nname=deps\nbaseurl=https://git.jakob-moeller.cloud/api/packages/jakobmoellerdev/rpm\nenabled=1\ngpgcheck=0\nrepo_gpgcheck=1\ngpgkey=https://git.jakob-moeller.cloud/api/packages/jakobmoellerdev/rpm/repository.key\n' | sudo tee /etc/yum.repos.d/deps.repo
+sudo dnf install deps
+```
+
+</details>
+
+<details>
+<summary><img src="https://cdn.simpleicons.org/archlinux" height="16" alt=""> <b>Arch Linux</b> (pacman)</summary>
+
+```sh
+curl -fsSL https://git.jakob-moeller.cloud/api/packages/jakobmoellerdev/arch/repository.key -o /tmp/deps.key
+sudo pacman-key --add /tmp/deps.key
+sudo pacman-key --lsign-key "$(gpg --show-keys --with-colons /tmp/deps.key | awk -F: '$1 == "fpr" { print $10; exit }')"
+printf '\n[jakobmoellerdev]\nSigLevel = Required\nServer = https://git.jakob-moeller.cloud/api/packages/jakobmoellerdev/arch/$repo/$arch\n' | sudo tee -a /etc/pacman.conf
+sudo pacman -Syu deps
+```
+
+</details>
+
+<details>
+<summary><img src="https://cdn.simpleicons.org/alpinelinux" height="16" alt=""> <b>Alpine</b> (apk, as root)</summary>
+
+```sh
+wget -qO /etc/apk/keys/jakobmoellerdev@406384923acbad2a78f7a8f09acbfa3ae0bd4acf33360d688568adaa4cd205a3.rsa.pub https://git.jakob-moeller.cloud/api/packages/jakobmoellerdev/alpine/key
+echo https://git.jakob-moeller.cloud/api/packages/jakobmoellerdev/alpine/stable/main >> /etc/apk/repositories
+apk add deps
+```
+
+</details>
+
+<details>
+<summary>🪟 <b>Windows</b> (PowerShell)</summary>
+
 ```powershell
-# Windows, amd64 and arm64
 $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'amd64' }
 iwr "https://github.com/jakobmoellerdev/deps/releases/latest/download/deps_windows_$arch.zip" -OutFile deps.zip
 Expand-Archive deps.zip -DestinationPath deps   # deps\deps.exe, LICENSE, completions\deps.ps1
 ```
 
-Packages install `/usr/bin/deps` with shell completions. Repository and key setup, checksums and Sigstore verification: [install](docs/install.md).
+</details>
+
+<details>
+<summary><img src="https://cdn.simpleicons.org/go" height="16" alt=""> <b>From source</b> (Go)</summary>
+
+```sh
+go install git.jakob-moeller.cloud/jakobmoellerdev/deps/cmd/deps@latest
+```
+
+</details>
+
+Packages install `/usr/bin/deps` with shell completions. Checksums and Sigstore verification: [install](docs/install.md).
 
 ## Quick start
 
