@@ -178,7 +178,7 @@ on:
   workflow_dispatch:
 concurrency:
   group: deps
-  cancel-in-progress: false
+  cancel-in-progress: false # queue runs, never cancel one: two runs race on the same branches
 permissions:
   contents: read
 jobs:
@@ -215,7 +215,7 @@ on:
   workflow_dispatch:
 concurrency:
   group: deps
-  cancel-in-progress: false
+  cancel-in-progress: false # queue runs, never cancel one: two runs race on the same branches
 permissions:
   contents: write
   pull-requests: write
