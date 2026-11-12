@@ -57,7 +57,6 @@ deps finds the dependencies in a repository, looks up newer versions, and opens 
   <a href="docs/reference/managers.md#custom" title="Debian and Ubuntu packages"><img src="https://cdn.simpleicons.org/debian" height="26" alt="Debian"></a>&nbsp;&nbsp;
   <a href="docs/reference/managers.md#custom" title="RPM packages: dnf, yum"><img src="https://cdn.simpleicons.org/redhat" height="26" alt="RPM"></a>&nbsp;&nbsp;
   <a href="docs/reference/managers.md#custom" title="Alpine packages: apk"><img src="https://cdn.simpleicons.org/alpinelinux" height="26" alt="Alpine"></a>&nbsp;&nbsp;
-  <a href="docs/reference/managers.md#jsonnet-bundler" title="Jsonnet: jsonnet-bundler">jsonnet</a>&nbsp;&nbsp;
   <a href="docs/reference/managers.md#custom" title="Anything else: # deps: markers, regex managers, JSONata queries">+ anything else</a>
 </p>
 
