@@ -59,6 +59,9 @@ deps finds the dependencies in a repository, looks up newer versions, and opens 
   <a href="docs/reference/managers.md#custom" title="Alpine packages: apk"><img src="https://cdn.simpleicons.org/alpinelinux" height="26" alt="Alpine"></a>&nbsp;&nbsp;
   <a href="docs/reference/managers.md#custom" title="Anything else: # deps: markers, regex managers, JSONata queries">+ anything else</a>
 </p>
+<p align="center">
+  <sub>Every ecosystem with its manifests, lockfiles, file patterns, dep types and skip reasons: <a href="docs/reference/managers.md#ecosystems">managers and datasources</a>.</sub>
+</p>
 
 ---
 
@@ -266,16 +269,6 @@ The first line turns on completion and checks in editors that use yaml-language-
 <p align="center">
   <img src="docs/assets/flow.svg" width="980" alt="Scan the repository in one directory walk, look up versions in deduplicated registry requests, apply the rules of .deps.yaml, patch only the version bytes and refresh lockfiles, open one pull request per dependency or group">
 </p>
-
-## What it updates
-
-- **Languages:** Go, Node.js (npm, pnpm, Yarn, Bun), Deno, Python (pip, pip-tools, uv, Poetry, pdm, Pipenv, conda), Ruby, Rust, Swift, CocoaPods, PHP, .NET, Dart/Flutter, Julia, Elixir/Gleam, Elm, C/C++ (vcpkg), JVM (Maven, Gradle, OSGi, Smithy, Ant), Scala, Clojure, Bazel, Nix, Jsonnet — manifests and their lockfiles, plus the language runtime versions.
-- **CI:** GitHub, Gitea and Forgejo Actions (tags, SHA pins, `setup-*`, hosted runner images), GitLab CI, Jenkins plugins, and Bitbucket, Woodpecker, Crow, Drone, CircleCI, Azure, Cloud Build, Vela, Travis, Buildkite, Bitrise and Tekton pipelines.
-- **Containers and Kubernetes:** Dockerfiles, Compose, Quadlet units, Dev Containers, Kubernetes manifests and `apiVersion`s, Kustomize, Crossplane, Helm charts and helmfiles, Glasskube packages, Terraform/OpenTofu and Terragrunt, Ansible.
-- **OS packages:** apt, apk and rpm version pins, looked up in the repository indexes you name; Homebrew formulas and their `sha256`.
-- **Tooling and anything else:** pre-commit hooks, git submodules, asdf and mise tool versions, Copier templates, `extends` refs of `.deps.yaml`, and `# deps:`/`# renovate:` markers, regex managers and JSONata queries for everything with no manager of its own.
-
-Every ecosystem with its manifests, lockfiles, file patterns, dep types and skip reasons: [managers and datasources](docs/reference/managers.md#ecosystems).
 
 ## Why deps
 
