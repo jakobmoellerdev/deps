@@ -273,14 +273,13 @@ The first line turns on completion and checks in editors that use yaml-language-
 ## Why deps
 
 > [!NOTE]
-> **We love Renovate.** deps exists because of it: it reads Renovate's markers, takes over its branches, and borrows many of its ideas. But with AI-assisted development, code and dependencies change many times a day, and the update bot has to keep up. deps is built for that: a binary that starts in milliseconds, a run that finishes in seconds, and a re-run on every push to the default branch, so dependency PRs react to your changes instead of waiting for the next scheduled run.
+> **We love Renovate.** deps exists because of it: it reads Renovate's markers, takes over its branches, and borrows many of its ideas. But with AI-assisted development, dependencies change many times a day, and the bot has to keep up: deps starts in milliseconds, finishes in seconds, and re-runs on every push to the default branch.
 
 - **Diffs you can trust.** Only version bytes change: no reformatting, no reordered keys, comments kept.
-- **A small, strict config.** Rules are read top to bottom, later rules override single fields. Unknown keys are errors with a line number, and a JSON Schema gives editor completion.
-- **Quiet pull requests.** One PR per dependency or group, split into major/minor/patch, with release notes and a compare link. Unchanged PRs are never pushed again; obsolete PRs are closed only after an error-free run. PR limits, automerge, draft PRs, schedules (cron or Renovate-style windows), dashboard approval and a dashboard issue are built in ([CI](docs/ci.md)).
-- **Security and staleness.** Security updates from OSV advisories, with CVSS score, EPSS probability and CISA known-exploited flag, bypassing schedules and the minimum release age; abandoned, deprecated, yanked and archived dependencies are flagged in the PR and the dashboard.
-- **Fast and light.** One directory walk, deduplicated lookups, commits without a checkout or worktree. See [performance](#performance).
-- **Scales to an organisation.** Several base branches per repository, shared config through `extends`, and one job for many repositories (`run --repositories my-org/*`, also GitLab groups); `plan` and `explain` take the same flag and clone the repositories themselves, so `deps plan --repositories my-org/*` reports a whole organisation read-only.
+- **A small, strict config.** Rules top to bottom, unknown keys are errors with a line number, JSON Schema completion in the editor.
+- **Quiet pull requests.** Unchanged PRs are never pushed again, obsolete ones close after an error-free run. Limits, automerge, drafts, schedules and a dashboard are built in ([CI](docs/ci.md)).
+- **Security and staleness.** OSV advisories with CVSS, EPSS and CISA flags, bypassing schedules; abandoned, deprecated, yanked and archived deps are flagged.
+- **Scales to an organisation.** Shared config through `extends`, several base branches, and one job for many repositories: `deps plan --repositories my-org/*`.
 
 ## Migrating from Renovate
 
