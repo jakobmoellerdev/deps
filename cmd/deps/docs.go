@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/urfave/cli/v3"
 
@@ -191,6 +193,12 @@ var actionUsages = []docgen.ActionUsage{
 	},
 }
 
+// ecosystemsTable is the ecosystem overview of managers.md: one row per ecosystem, with the
+// manifests it reads and the lockfiles it refreshes. The README links here instead of repeating it.
+//
+//go:embed ecosystems.md
+var ecosystemsTable string
+
 // managersIntro opens the managers and datasources reference.
 const managersIntro = "A **manager** finds dependencies in files and edits them. It records byte spans, and an update " +
 	"replaces only those bytes, so files are never reformatted. A **datasource** lists the available versions of a dep.\n\n" +
@@ -209,7 +217,7 @@ func datasourceDocs() []refdoc.Datasource {
 
 func managersInput() docgen.ManagersInput {
 	return docgen.ManagersInput{
-		Intro:          managersIntro,
+		Intro:          managersIntro + "\n\n" + strings.TrimSpace(ecosystemsTable),
 		Skips:          engine.SkipDocs,
 		Managers:       registry.Docs(),
 		Datasources:    datasourceDocs(),
