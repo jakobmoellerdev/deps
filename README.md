@@ -16,21 +16,35 @@ deps finds the dependencies in a repository, looks up newer versions, and opens 
 
 ## Install
 
-<b><img src="https://cdn.simpleicons.org/linux/_/white" height="14" alt=""> <img src="https://cdn.simpleicons.org/apple/_/white" height="14" alt=""> Linux and macOS</b>, static binary, amd64 and arm64:
-
 ```sh
-mkdir -p ~/.local/bin && curl -fsSL "https://github.com/jakobmoellerdev/deps/releases/latest/download/deps_$(uname -s | tr A-Z a-z)_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.xz" | tar -xJf - -C ~/.local/bin deps
+# Linux and macOS, static binary, amd64 and arm64
+os=$(uname -s | tr A-Z a-z); arch=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+mkdir -p ~/.local/bin && curl -fsSL \
+  "https://github.com/jakobmoellerdev/deps/releases/latest/download/deps_${os}_${arch}.tar.xz" \
+  | tar -xJf - -C ~/.local/bin deps
+
+# Homebrew
+brew tap jakobmoellerdev/deps https://git.jakob-moeller.cloud/jakobmoellerdev/deps
+brew install jakobmoellerdev/deps/deps
+
+# Nix
+nix profile install github:jakobmoellerdev/deps
+
+# Go
+go install git.jakob-moeller.cloud/jakobmoellerdev/deps/cmd/deps@latest
+
+# Debian, Ubuntu, Fedora, RHEL, Arch Linux, Alpine: add the repository (docs/install.md#packages), then
+sudo apt-get install deps     # dnf install deps, pacman -Syu deps, apk add deps
 ```
 
-| | Package manager | |
-|:-:|---|---|
-| <img src="https://cdn.simpleicons.org/homebrew" height="18" alt=""> | **Homebrew** | `brew tap jakobmoellerdev/deps https://git.jakob-moeller.cloud/jakobmoellerdev/deps && brew install jakobmoellerdev/deps/deps` |
-| <img src="https://cdn.simpleicons.org/nixos" height="18" alt=""> | **Nix** | `nix profile install github:jakobmoellerdev/deps` |
-| <img src="https://cdn.simpleicons.org/go" height="18" alt=""> | **Go** | `go install git.jakob-moeller.cloud/jakobmoellerdev/deps/cmd/deps@latest` |
-| 🪟 | **Windows** | `iwr https://github.com/jakobmoellerdev/deps/releases/latest/download/deps_windows_amd64.zip -OutFile deps.zip; Expand-Archive deps.zip` |
-| <img src="https://cdn.simpleicons.org/debian" height="18" alt=""> <img src="https://cdn.simpleicons.org/fedora" height="18" alt=""> <img src="https://cdn.simpleicons.org/archlinux" height="18" alt=""> <img src="https://cdn.simpleicons.org/alpinelinux" height="18" alt=""> | **apt, dnf, pacman, apk** | repository and key setup, then `install deps`: [packages](docs/install.md#packages) |
+```powershell
+# Windows, amd64 and arm64
+$arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'amd64' }
+iwr "https://github.com/jakobmoellerdev/deps/releases/latest/download/deps_windows_$arch.zip" -OutFile deps.zip
+Expand-Archive deps.zip -DestinationPath deps   # deps\deps.exe, LICENSE, completions\deps.ps1
+```
 
-Packages install `/usr/bin/deps` with shell completions. Checksums and Sigstore verification: [install](docs/install.md#verify-a-download).
+Packages install `/usr/bin/deps` with shell completions. Repository and key setup, checksums and Sigstore verification: [install](docs/install.md).
 
 ## Quick start
 
