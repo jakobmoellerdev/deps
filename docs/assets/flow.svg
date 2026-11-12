@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 190" width="980" height="190" role="img" aria-labelledby="title desc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title id="title">How deps works</title>
+  <desc id="desc">Five stages: scan the repository in one directory walk, look up versions in deduplicated registry requests, apply the rules of .deps.yaml, patch only the version bytes and refresh lockfiles, then open one pull request per dependency or group.</desc>
+  <defs>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#22c55e"/>
+      <stop offset="1" stop-color="#0d9488"/>
+    </linearGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 10 5 0 10z" fill="#0d9488"/>
+    </marker>
+    <style>
+      .card { fill: #f6f8fa; stroke: #d0d7de; }
+      .step { fill: #1f2328; font-size: 15px; font-weight: 600; }
+      .note { fill: #59636e; font-size: 11.5px; }
+      .num  { fill: #ffffff; font-size: 11px; font-weight: 700; }
+      @media (prefers-color-scheme: dark) {
+        .card { fill: #161b22; stroke: #30363d; }
+        .step { fill: #e6edf3; }
+        .note { fill: #9198a1; }
+      }
+    </style>
+  </defs>
+
+  <g>
+    <rect class="card" x="10" y="46" width="172" height="108" rx="12" stroke-width="1.5"/>
+    <circle cx="36" cy="46" r="13" fill="url(#accent)"/>
+    <text class="num" x="36" y="50" text-anchor="middle">1</text>
+    <text class="step" x="96" y="94" text-anchor="middle">Scan</text>
+    <text class="note" x="96" y="116" text-anchor="middle">one directory walk,</text>
+    <text class="note" x="96" y="132" text-anchor="middle">every manager</text>
+  </g>
+  <line x1="186" y1="100" x2="203" y2="100" stroke="#0d9488" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <g>
+    <rect class="card" x="207" y="46" width="172" height="108" rx="12" stroke-width="1.5"/>
+    <circle cx="233" cy="46" r="13" fill="url(#accent)"/>
+    <text class="num" x="233" y="50" text-anchor="middle">2</text>
+    <text class="step" x="293" y="94" text-anchor="middle">Look up</text>
+    <text class="note" x="293" y="116" text-anchor="middle">registries, deduplicated</text>
+    <text class="note" x="293" y="132" text-anchor="middle">and shared across deps</text>
+  </g>
+  <line x1="383" y1="100" x2="400" y2="100" stroke="#0d9488" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <g>
+    <rect class="card" x="404" y="46" width="172" height="108" rx="12" stroke-width="1.5"/>
+    <circle cx="430" cy="46" r="13" fill="url(#accent)"/>
+    <text class="num" x="430" y="50" text-anchor="middle">3</text>
+    <text class="step" x="490" y="94" text-anchor="middle">Apply rules</text>
+    <text class="note" x="490" y="116" text-anchor="middle">.deps.yaml,</text>
+    <text class="note" x="490" y="132" text-anchor="middle">top to bottom</text>
+  </g>
+  <line x1="580" y1="100" x2="597" y2="100" stroke="#0d9488" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <g>
+    <rect class="card" x="601" y="46" width="172" height="108" rx="12" stroke-width="1.5"/>
+    <circle cx="627" cy="46" r="13" fill="url(#accent)"/>
+    <text class="num" x="627" y="50" text-anchor="middle">4</text>
+    <text class="step" x="687" y="94" text-anchor="middle">Patch</text>
+    <text class="note" x="687" y="116" text-anchor="middle">only the version bytes,</text>
+    <text class="note" x="687" y="132" text-anchor="middle">lockfiles refreshed</text>
+  </g>
+  <line x1="777" y1="100" x2="794" y2="100" stroke="#0d9488" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <g>
+    <rect class="card" x="798" y="46" width="172" height="108" rx="12" stroke-width="1.5"/>
+    <circle cx="824" cy="46" r="13" fill="url(#accent)"/>
+    <text class="num" x="824" y="50" text-anchor="middle">5</text>
+    <text class="step" x="884" y="94" text-anchor="middle">Open PRs</text>
+    <text class="note" x="884" y="116" text-anchor="middle">one per dep or group,</text>
+    <text class="note" x="884" y="132" text-anchor="middle">closed when obsolete</text>
+  </g>
+</svg>

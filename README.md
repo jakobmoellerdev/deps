@@ -16,16 +16,21 @@ deps finds the dependencies in a repository, looks up newer versions, and opens 
 
 ## Install
 
+<b><img src="https://cdn.simpleicons.org/linux/_/white" height="14" alt=""> <img src="https://cdn.simpleicons.org/apple/_/white" height="14" alt=""> Linux and macOS</b>, static binary, amd64 and arm64:
+
 ```sh
-# Linux / macOS, amd64 and arm64
 mkdir -p ~/.local/bin && curl -fsSL "https://github.com/jakobmoellerdev/deps/releases/latest/download/deps_$(uname -s | tr A-Z a-z)_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.xz" | tar -xJf - -C ~/.local/bin deps
-
-brew tap jakobmoellerdev/deps https://git.jakob-moeller.cloud/jakobmoellerdev/deps && brew install jakobmoellerdev/deps/deps
-
-go install git.jakob-moeller.cloud/jakobmoellerdev/deps/cmd/deps@latest
 ```
 
-Debian, Ubuntu, Fedora, RHEL, Arch Linux, Alpine, Nix and Windows packages, shell completions, checksums and Sigstore verification: [install](docs/install.md).
+| | Package manager | |
+|:-:|---|---|
+| <img src="https://cdn.simpleicons.org/homebrew" height="18" alt=""> | **Homebrew** | `brew tap jakobmoellerdev/deps https://git.jakob-moeller.cloud/jakobmoellerdev/deps && brew install jakobmoellerdev/deps/deps` |
+| <img src="https://cdn.simpleicons.org/nixos" height="18" alt=""> | **Nix** | `nix profile install github:jakobmoellerdev/deps` |
+| <img src="https://cdn.simpleicons.org/go" height="18" alt=""> | **Go** | `go install git.jakob-moeller.cloud/jakobmoellerdev/deps/cmd/deps@latest` |
+| 🪟 | **Windows** | `iwr https://github.com/jakobmoellerdev/deps/releases/latest/download/deps_windows_amd64.zip -OutFile deps.zip; Expand-Archive deps.zip` |
+| <img src="https://cdn.simpleicons.org/debian" height="18" alt=""> <img src="https://cdn.simpleicons.org/fedora" height="18" alt=""> <img src="https://cdn.simpleicons.org/archlinux" height="18" alt=""> <img src="https://cdn.simpleicons.org/alpinelinux" height="18" alt=""> | **apt, dnf, pacman, apk** | repository and key setup, then `install deps`: [packages](docs/install.md#packages) |
+
+Packages install `/usr/bin/deps` with shell completions. Checksums and Sigstore verification: [install](docs/install.md#verify-a-download).
 
 ## Quick start
 
@@ -130,13 +135,9 @@ The first line turns on completion and checks in editors that use yaml-language-
 
 ## How it works
 
-```mermaid
-flowchart LR
-  A[Scan<br>one directory walk, every manager] --> B[Look up<br>registries, deduplicated and shared]
-  B --> C[Apply rules<br>.deps.yaml, top to bottom]
-  C --> D[Patch<br>only the version bytes, refresh lockfiles]
-  D --> E[Open PRs<br>one per dep or group, closed when obsolete]
-```
+<p align="center">
+  <img src="docs/assets/flow.svg" width="980" alt="Scan the repository in one directory walk, look up versions in deduplicated registry requests, apply the rules of .deps.yaml, patch only the version bytes and refresh lockfiles, open one pull request per dependency or group">
+</p>
 
 ## What it updates
 
