@@ -14,6 +14,55 @@
 
 deps finds the dependencies in a repository, looks up newer versions, and opens one branch and pull request per dependency or group, on GitHub, Gitea, Forgejo and GitLab. It rewrites only the version bytes, so formatting and comments stay as they are.
 
+---
+
+<p align="center">
+  <a href="docs/reference/managers.md#gomod" title="Go"><img src="https://cdn.simpleicons.org/go" height="26" alt="Go"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#npm" title="Node.js: npm, pnpm, Yarn, Bun"><img src="https://cdn.simpleicons.org/nodedotjs" height="26" alt="Node.js"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#deno" title="Deno"><img src="https://cdn.simpleicons.org/deno/_/white" height="26" alt="Deno"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#pep621" title="Python: pip, uv, Poetry, pdm, Pipenv, conda"><img src="https://cdn.simpleicons.org/python" height="26" alt="Python"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#bundler" title="Ruby: Bundler"><img src="https://cdn.simpleicons.org/ruby" height="26" alt="Ruby"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#cargo" title="Rust: Cargo"><img src="https://cdn.simpleicons.org/rust/_/white" height="26" alt="Rust"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#swift" title="Swift: SwiftPM, Mint, XcodeGen"><img src="https://cdn.simpleicons.org/swift" height="26" alt="Swift"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#cocoapods" title="CocoaPods"><img src="https://cdn.simpleicons.org/cocoapods" height="26" alt="CocoaPods"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#composer" title="PHP: Composer"><img src="https://cdn.simpleicons.org/php" height="26" alt="PHP"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#nuget" title=".NET: NuGet, Cake, Paket"><img src="https://cdn.simpleicons.org/dotnet" height="26" alt=".NET"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#maven" title="JVM: Maven"><img src="https://cdn.simpleicons.org/apachemaven" height="26" alt="Maven"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#gradle" title="JVM: Gradle"><img src="https://cdn.simpleicons.org/gradle/_/white" height="26" alt="Gradle"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#sbt" title="Scala: sbt, scalafmt"><img src="https://cdn.simpleicons.org/scala" height="26" alt="Scala"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#leiningen" title="Clojure: Leiningen, Clojure CLI, Babashka"><img src="https://cdn.simpleicons.org/clojure" height="26" alt="Clojure"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#pub" title="Dart and Flutter: pub, FVM"><img src="https://cdn.simpleicons.org/dart" height="26" alt="Dart"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#mix" title="Elixir: Mix"><img src="https://cdn.simpleicons.org/elixir" height="26" alt="Elixir"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#gleam" title="Gleam"><img src="https://cdn.simpleicons.org/gleam" height="26" alt="Gleam"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#elm" title="Elm"><img src="https://cdn.simpleicons.org/elm" height="26" alt="Elm"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#julia" title="Julia"><img src="https://cdn.simpleicons.org/julia" height="26" alt="Julia"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#vcpkg" title="C and C++: vcpkg"><img src="https://cdn.simpleicons.org/cplusplus" height="26" alt="C++"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#bazel-module" title="Bazel"><img src="https://cdn.simpleicons.org/bazel" height="26" alt="Bazel"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#nix" title="Nix flakes"><img src="https://cdn.simpleicons.org/nixos" height="26" alt="Nix"></a>
+</p>
+<p align="center">
+  <a href="docs/reference/managers.md#github-actions" title="GitHub, Gitea and Forgejo Actions"><img src="https://cdn.simpleicons.org/githubactions" height="26" alt="GitHub Actions"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#gitlabci" title="GitLab CI"><img src="https://cdn.simpleicons.org/gitlab" height="26" alt="GitLab CI"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#circleci" title="Other CI: CircleCI, Azure, Bitbucket, Drone, Woodpecker, Travis, Buildkite, Bitrise, Tekton"><img src="https://cdn.simpleicons.org/circleci/_/white" height="26" alt="CircleCI"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#jenkins" title="Jenkins plugins"><img src="https://cdn.simpleicons.org/jenkins" height="26" alt="Jenkins"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#docker" title="Containers: Dockerfiles, Compose, Quadlet, Dev Containers"><img src="https://cdn.simpleicons.org/docker" height="26" alt="Docker"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#kubernetes" title="Kubernetes, Kustomize, Crossplane, Glasskube"><img src="https://cdn.simpleicons.org/kubernetes" height="26" alt="Kubernetes"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#helm" title="Helm charts, helmfiles, Fleet, Helmsman"><img src="https://cdn.simpleicons.org/helm/_/white" height="26" alt="Helm"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#terraform" title="Terraform and Terragrunt"><img src="https://cdn.simpleicons.org/terraform" height="26" alt="Terraform"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#terraform" title="OpenTofu"><img src="https://cdn.simpleicons.org/opentofu" height="26" alt="OpenTofu"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#ansible" title="Ansible roles, collections and task images"><img src="https://cdn.simpleicons.org/ansible/_/white" height="26" alt="Ansible"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#pre-commit" title="pre-commit hooks"><img src="https://cdn.simpleicons.org/precommit" height="26" alt="pre-commit"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#git-submodules" title="Git submodules"><img src="https://cdn.simpleicons.org/git" height="26" alt="Git submodules"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#homebrew" title="Homebrew formulas"><img src="https://cdn.simpleicons.org/homebrew" height="26" alt="Homebrew"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#custom" title="Debian and Ubuntu packages"><img src="https://cdn.simpleicons.org/debian" height="26" alt="Debian"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#custom" title="RPM packages: dnf, yum"><img src="https://cdn.simpleicons.org/redhat" height="26" alt="RPM"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#custom" title="Alpine packages: apk"><img src="https://cdn.simpleicons.org/alpinelinux" height="26" alt="Alpine"></a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#jsonnet-bundler" title="Jsonnet: jsonnet-bundler">jsonnet</a>&nbsp;&nbsp;
+  <a href="docs/reference/managers.md#custom" title="Anything else: # deps: markers, regex managers, JSONata queries">+ anything else</a>
+</p>
+
+---
+
 ## Install
 
 <details open>
