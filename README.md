@@ -12,7 +12,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="Apache-2.0"></a>
 </p>
 
-deps finds the dependencies in a repository, looks up newer versions, and opens one branch and pull request per dependency or group, on GitHub, Gitea, Forgejo and GitLab. It rewrites only the version bytes, so formatting and comments stay as they are.
+deps finds the dependencies in a repository, looks up newer versions, and opens branches and pull requests for them on GitHub, Gitea, Forgejo and GitLab — one per dependency by default, or grouped, split and limited however your rules say. It rewrites only the version bytes, so formatting and comments stay as they are.
 
 ---
 
