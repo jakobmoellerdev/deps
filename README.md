@@ -292,32 +292,30 @@ Option mapping and what can't be translated: [migrating from Renovate](docs/migr
 
 | | deps | Renovate | Dependabot |
 |---|---|---|---|
-| Runtime | one static Go binary | Node.js app or container image | hosted by GitHub |
+| Runtime | one static Go binary, no runtime | Node.js app or container image | hosted by GitHub |
+| Operating modes | CLI on your laptop, CI job, one job for many repositories | CLI, self-hosted app, Mend-hosted | GitHub-hosted only |
+| Footprint | 41–133 MB peak RSS, 0.2–4.8 s CPU per repository ([measured](docs/benchmarks.md)) | Node.js process and its heap | runs on GitHub's infrastructure |
 | GitHub | ✅ | ✅ | ✅ |
 | Gitea / Forgejo | ✅ | ✅ | ❌ |
 | GitLab | ✅ | ✅ | ❌ |
-| Bitbucket | 🟡 partial¹ | ✅ | ❌ |
 | Config | one strict `.deps.yaml`, unknown keys are errors | JSON with presets | `dependabot.yml` |
 | `# renovate:` markers | ✅ | ✅ | ❌ |
 | Runs from a Renovate config | ✅ `--renovate`, `deps migrate` | ✅ | ❌ |
-| Single static binary, no runtime | ✅ | ❌ | ❌ |
-
-¹ deps opens PRs on GitHub, Gitea, Forgejo and GitLab only. In those repos it still updates what points at Bitbucket: Bitbucket Pipelines images and pipes, and Terraform/Terragrunt modules and Kustomize remotes hosted there.
 
 Renovate covers more platforms and managers; deps trades that breadth for a single binary, a smaller config and predictable diffs. Feature-by-feature status: [Renovate parity](docs/renovate-parity.md).
 
 ## Performance
 
-`deps plan` (scan, all registry lookups, patched diff), limited to 4 CPUs (`taskset -c 0-3`, `GOMAXPROCS=4`) like a standard CI runner, median of 3 runs:
+**Usual runtime: a few seconds and under 150 MB**, on 4 CPUs (`taskset -c 0-3`, `GOMAXPROCS=4`) like a standard CI runner — small enough for the cheapest runner you have. Across the twelve [benchmark repositories](docs/benchmarks.md), `deps plan` (scan, every registry lookup, patched diff) takes 0.2–4.8 s of CPU and 41–133 MB peak RSS; wall time is 1.1–12.5 s, and most of what exceeds the CPU time is registry latency, mostly container registries paging through tag lists.
 
 | Repository | Ecosystems | Tracked files | Updates found | Wall time | CPU time | Peak memory |
 |---|---|--:|--:|--:|--:|--:|
-| openclaw/openclaw 🦞 | pnpm, Swift, Ruby, Actions | 66,962 | 671 | 4.5 s | 1.9 s | 133 MB |
 | vercel/next.js | pnpm, Rust, Actions | 34,938 | 1,605 | 9.8 s | 4.5 s | 114 MB |
 | kubernetes/kubernetes | Go, containers | 31,757 | 150 | 1.7 s | 0.5 s | 73 MB |
 | backstage/backstage | Yarn workspaces | 12,657 | 1,245 | 6.5 s | 2.3 s | 104 MB |
+| spring-projects/spring-boot | Gradle, Maven | 11,983 | 35 | 1.1 s | 0.2 s | 41 MB |
 
-CPU time is deps itself; the rest of the wall time is registry latency, mostly container registries paging through tag lists. All twelve repositories and the measurement procedure: [benchmarks](docs/benchmarks.md).
+One directory walk, lookups deduplicated and shared across dependencies, commits without a checkout or worktree. All twelve repositories and the measurement procedure: [benchmarks](docs/benchmarks.md).
 
 ## Docs
 
