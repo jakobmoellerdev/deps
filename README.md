@@ -330,7 +330,7 @@ CPU time is deps itself; the rest of the wall time is registry latency, mostly c
 
 - [Running deps in CI](docs/ci.md): tokens and permissions, GitHub, Gitea, Forgejo and GitLab CI, schedules, automerge, dashboard, base branches, signed commits, self-hosted runners, troubleshooting.
 - [Install and verify](docs/install.md): packages, the static binary, `go install`, verifying a download, running deps locally.
-- [Migrating from Renovate](docs/migrating-from-renovate.md): `deps migrate`, `--renovate`, option mapping, differences.
+- [Migrating from Renovate](docs/migrating-from-renovate.md): the five migration steps, what cannot be translated, behavior differences; a complete translated config in the [open-component-model example](docs/examples-ocm.md).
 - Reference, generated from the code: [configuration](docs/reference/configuration.md), [CLI](docs/reference/cli.md), [managers and datasources](docs/reference/managers.md), [action](docs/reference/action.md), [Renovate options](docs/reference/renovate-options.md).
 - Background: [design](docs/design.md), [Renovate parity](docs/renovate-parity.md), [benchmarks](docs/benchmarks.md), [changelog](CHANGELOG.md) ([how releases are made](docs/ci.md#releases-maintainers)).
 

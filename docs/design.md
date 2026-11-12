@@ -1225,7 +1225,7 @@ Editor support: the repository root has the generated `deps.schema.json` (`task 
 Open items from [renovate-parity.md](renovate-parity.md) and the performance plan:
 
 - PR body badges: Mend adoption/passing/confidence (L5; external badge URLs or drop) and the OpenSSF scorecard (L6);
-- the gaps from the OCM comparison ([what is still missing for OCM](migrating-from-renovate.md#what-is-still-missing-for-ocm)):
+- the gaps from the OCM comparison ([what is still missing for OCM](examples-ocm.md#what-is-still-missing-for-ocm)):
 
   - updating the action's `version:` input along with a pinned ref (O6);
   - the OCM cutover (O7);
