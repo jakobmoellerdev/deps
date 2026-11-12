@@ -525,7 +525,7 @@ How the candidate updates of one dep are split into PRs: none (only the newest u
 
 Renovate's `separateMajorMinor: false` is `none`, `separateMultipleMajor` is `majors`, `separateMinorPatch` is `minor-patch`, and both together are `majors-minor-patch`.
 
-- The bucket of a candidate comes from the policy of its update type. A rule with `updateTypes` can therefore set `separate` for its types, unlike in Renovate (see [behavior differences](../migrating-from-renovate.md#behavior-differences)).
+- The bucket of a candidate comes from the policy of its update type. A rule with `updateTypes` can therefore set `separate` for its types, unlike in Renovate (see [behavior differences](../renovate-differences.md#behavior-differences)).
 - `plan`/`apply` write one update per dep: the newest non-major one, else the lowest major. The others are reported with `, separate PR`.
 - A policy group inherits its members' bucket suffix: `deps/group/actions-patch`.
 

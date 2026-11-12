@@ -329,7 +329,7 @@ func (l *loader) extend(s string, via int) string {
 	if err != nil {
 		msg := err.Error()
 		if renovatePresetRe.MatchString(s) {
-			msg += " (Renovate presets are not supported; the common ones are built in, see docs/migrating-from-renovate.md#presets)"
+			msg += " (Renovate presets are not supported; the common ones are built in, see docs/renovate-differences.md#presets)"
 		}
 		return msg
 	}

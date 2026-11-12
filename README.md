@@ -294,7 +294,7 @@ Option mapping and what can't be translated: [migrating from Renovate](docs/migr
 |---|---|---|---|
 | Runtime | one static Go binary, no runtime | Node.js app or container image | hosted by GitHub |
 | Operating modes | CLI on your laptop, CI job, one job for many repositories | CLI, self-hosted app, Mend-hosted | GitHub-hosted only |
-| Footprint | 41–133 MB peak RSS, 0.2–4.8 s CPU per repository ([measured](docs/benchmarks.md)) | Node.js process and its heap | runs on GitHub's infrastructure |
+| Footprint | 41–133 MB peak RSS, 0.2–4.8 s CPU per repository ([measured](docs/benchmarks.md)) | Node.js process and its heap; runs usually take minutes | runs on GitHub's infrastructure |
 | GitHub | ✅ | ✅ | ✅ |
 | Gitea / Forgejo | ✅ | ✅ | ❌ |
 | GitLab | ✅ | ✅ | ❌ |

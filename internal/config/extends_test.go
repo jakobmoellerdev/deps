@@ -260,7 +260,7 @@ func TestLoadExtendsErrors(t *testing.T) {
 			local: "extends: [config:recommended, org/a]\n",
 			files: map[string]string{"org/a//.deps.yaml": "rules: [{managers: [gomod], allow: '<<1'}]\n"},
 			want: []Problem{{Line: 1, Col: 11, Field: "extends[0]", Msg: `repository "config:recommended" must be owner/name or a git URL` +
-				" (Renovate presets are not supported; the common ones are built in, see docs/migrating-from-renovate.md#presets)"}},
+				" (Renovate presets are not supported; the common ones are built in, see docs/renovate-differences.md#presets)"}},
 		},
 		{
 			name:  "not a list",
