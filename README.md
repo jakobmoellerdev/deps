@@ -91,7 +91,7 @@ apk add deps
 </details>
 
 <details>
-<summary>🪟 <b>Windows</b> (PowerShell)</summary>
+<summary><img src="https://cdn.jsdelivr.net/gh/devicons/devicon/icons/windows8/windows8-original.svg" height="16" alt=""> <b>Windows</b> (PowerShell)</summary>
 
 ```powershell
 $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'amd64' }
