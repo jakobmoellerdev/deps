@@ -3,8 +3,8 @@
 </p>
 <h1 align="center">deps</h1>
 <p align="center">
-  <b>Renovate-style dependency PRs from one static Go binary.</b><br>
-  No Node runtime, no hosted app, no reformatted files. One strict config, one pull request per update.
+  <b>Your dependency bot, in one static binary.</b><br>
+  Renovate-style pull requests. No Node runtime, no hosted app, no reformatted files.
 </p>
 <p align="center">
   <a href="https://git.jakob-moeller.cloud/jakobmoellerdev/deps/actions?workflow=ci.yml"><img src="https://git.jakob-moeller.cloud/jakobmoellerdev/deps/actions/workflows/ci.yml/badge.svg?branch=main" alt="ci"></a>
