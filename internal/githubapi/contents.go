@@ -21,7 +21,7 @@ type Entry struct {
 // ErrNotFound. The contents API lists at most 1,000 entries.
 func (c *Client) Dir(ctx context.Context, r Repo, path, ref string) ([]Entry, error) {
 	var raw jsontext.Value
-	if err := c.restDo(ctx, r, contentsPath(r, path, ref), false, func(b io.Reader) error {
+	if err := c.restDo(ctx, r, contentsPath(r, path, ref), false, false, func(b io.Reader) error {
 		return json.UnmarshalRead(b, &raw)
 	}); err != nil {
 		return nil, err
@@ -56,7 +56,7 @@ func (c *Client) File(ctx context.Context, r Repo, path, ref string) ([]byte, er
 		return nil, err
 	}
 	defer c.release()
-	resp, err := c.restGet(ctx, r, contentsPath(r, path, ref))
+	resp, err := c.restGet(ctx, r, contentsPath(r, path, ref), false)
 	if err != nil {
 		return nil, err
 	}

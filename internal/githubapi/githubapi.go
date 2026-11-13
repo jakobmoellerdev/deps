@@ -3,8 +3,10 @@
 // With a token for the host it uses GraphQL, which returns only the requested fields: a page
 // of 100 releases is a few KiB, where the REST list always carries every release body and
 // asset (megabytes for large repositories). Without a token it uses REST, because GraphQL
-// requires authentication. Release lists are cached per repository and run and shared by all
-// callers (the github-releases datasource and git-tags release times).
+// requires authentication; so does a repository whose organization refuses the credentials
+// (an IP allow list), whose public data stays readable without them. Release lists are cached
+// per repository and run and shared by all callers (the github-releases datasource and
+// git-tags release times).
 package githubapi
 
 import (
@@ -148,9 +150,10 @@ func (c *Client) GraphQL(r Repo) bool {
 	return ok
 }
 
-// restGet sends an authenticated (when a token is known) REST GET of path below r's API.
-// The caller closes the response body; non-2xx responses are returned as they are.
-func (c *Client) restGet(ctx context.Context, r Repo, path string) (*http.Response, error) {
+// restGet sends a REST GET of path below r's API, authenticated when a token for its host is
+// known and anon is false. The caller closes the response body; non-2xx responses are
+// returned as they are.
+func (c *Client) restGet(ctx context.Context, r Repo, path string, anon bool) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.rest(r)+path, http.NoBody)
 	if err != nil {
 		return nil, err
@@ -158,7 +161,7 @@ func (c *Client) restGet(ctx context.Context, r Repo, path string) (*http.Respon
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	req.Header.Set("User-Agent", httpx.UserAgent())
-	if t, ok := c.token(r); ok {
+	if t, ok := c.token(r); ok && !anon {
 		req.Header.Set("Authorization", "Bearer "+t)
 	}
 	return c.client.Do(req)
@@ -166,13 +169,13 @@ func (c *Client) restGet(ctx context.Context, r Repo, path string) (*http.Respon
 
 // restDo holds a request slot for a REST GET of path below r's API, turns a non-2xx response
 // into a statusError and otherwise hands the body to decode. logRate logs the response's rate
-// limit headers before the status check.
-func (c *Client) restDo(ctx context.Context, r Repo, path string, logRate bool, decode func(io.Reader) error) error {
+// limit headers before the status check; anon drops the credentials (see restGet).
+func (c *Client) restDo(ctx context.Context, r Repo, path string, logRate, anon bool, decode func(io.Reader) error) error {
 	if err := c.acquire(ctx); err != nil {
 		return err
 	}
 	defer c.release()
-	resp, err := c.restGet(ctx, r, path)
+	resp, err := c.restGet(ctx, r, path, anon)
 	if err != nil {
 		return err
 	}

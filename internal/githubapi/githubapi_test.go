@@ -152,6 +152,12 @@ func TestReleasesGraphQLPaging(t *testing.T) {
 
 func TestGraphQLErrors(t *testing.T) {
 	c, _ := newServer(t, tokenAuth(), func(w http.ResponseWriter, q gql) {
+		// The refused lists retry anonymously; here that is refused as well (see
+		// TestForbiddenListedAnonymously for the fallback that works).
+		if strings.HasPrefix(q.Query, "REST ") {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
 		switch q.Variables["name"] {
 		case "missing":
 			_, _ = io.WriteString(w, `{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","path":["repository"],"message":"Could not resolve to a Repository with the name 'o/missing'."}]}`)
@@ -185,9 +191,9 @@ func TestGraphQLErrors(t *testing.T) {
 		"null":      "releases o/null: repository: not found",
 		"limited":   "releases o/limited: rate limited by github.com until 2026-11-03T12:00:00Z: API rate limit exceeded for user ID 1.",
 		"other":     "releases o/other: graphql: Field 'x' doesn't exist; boom",
-		"forbidden": "releases o/forbidden: Resource not accessible by integration: forbidden",
-		"allowlist": "releases o/allowlist: Although you appear to have the correct authorization credentials, the `o` organization has an IP allow list enabled, and your IP address is not permitted to access this resource.: forbidden",
-		"blocked":   "releases o/blocked: HTTP 403: forbidden",
+		"forbidden": "releases o/forbidden: anonymous retry after forbidden: HTTP 403: forbidden",
+		"allowlist": "releases o/allowlist: anonymous retry after forbidden: HTTP 403: forbidden",
+		"blocked":   "releases o/blocked: anonymous retry after forbidden: HTTP 403: forbidden",
 		"exhausted": "releases o/exhausted: HTTP 403: rate limited by 127.0.0.1 until 2026-11-03T12:00:00Z",
 		"html":      "releases o/html: malformed response: jsontext: invalid character '<' at start of value",
 	} {
@@ -208,6 +214,45 @@ func TestGraphQLErrors(t *testing.T) {
 	}
 	if err := graphql(t.Context(), c, oR, "{}", map[string]any{"x": func() {}}, &struct{}{}); err == nil {
 		t.Error("unencodable variables: no error")
+	}
+}
+
+// A repository whose organization refuses the credentials (an IP allow list) is listed
+// anonymously over REST instead: GraphQL has no anonymous mode, and public release data is
+// readable without credentials from any address.
+func TestForbiddenListedAnonymously(t *testing.T) {
+	var paths, auths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths, auths = append(paths, r.URL.RequestURI()), append(auths, r.Header.Get("Authorization"))
+		if r.URL.Path == "/graphql" {
+			_, _ = io.WriteString(w, `{"errors":[{"type":"FORBIDDEN","message":"the `+"`o`"+` organization has an IP allow list enabled"}]}`)
+			return
+		}
+		_, _ = io.WriteString(w, `[{"tag_name":"v2","published_at":"2026-10-30T12:00:00Z"},{"tag_name":"v1","published_at":"2026-10-01T12:00:00Z"}]`)
+	}))
+	defer srv.Close()
+	c := New(srv.Client(), tokenAuth(), nil, WithAPI(srv.URL, srv.URL+"/graphql"))
+	var tags []string
+	var complete bool
+	for range 2 { // fetched once, and the list stays on REST
+		if err := c.Releases(t.Context(), oR, nil, func(l *List) {
+			tags = nil
+			for _, rel := range l.Published() {
+				tags = append(tags, rel.Version)
+			}
+			complete = l.Complete()
+		}); err != nil {
+			t.Fatalf("err = %v", err)
+		}
+	}
+	if !slices.Equal(tags, []string{"v2", "v1"}) || !complete {
+		t.Errorf("tags = %q, complete = %v", tags, complete)
+	}
+	if !slices.Equal(paths, []string{"/graphql", "/repos/o/r/releases?per_page=100&page=1"}) {
+		t.Errorf("requests = %q", paths)
+	}
+	if !slices.Equal(auths, []string{"Bearer tok", ""}) {
+		t.Errorf("authorization headers = %q, want the retry to be anonymous", auths)
 	}
 }
 

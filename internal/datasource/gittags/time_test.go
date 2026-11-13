@@ -101,6 +101,9 @@ func TestReleaseTime(t *testing.T) {
 		mu.Unlock()
 		switch r.URL.EscapedPath() {
 		case "/graphql":
+		// The anonymous retry after the refused GraphQL query of blocked/repo.
+		case "/repos/blocked/repo/releases":
+			io.WriteString(w, `[{"tag_name":"v1.0.0","published_at":"2026-10-30T12:00:00Z"}]`)
 		case "/api/v1/repos/o/r/releases":
 			io.WriteString(w, `[{"tag_name":"sub/v1 1","published_at":"2026-10-30T12:00:00Z"},{"tag_name":"v1.0.0","published_at":"2026-10-20T00:00:00Z"}]`)
 		case "/api/v1/repos/o/r/tags/v9":
@@ -153,8 +156,8 @@ func TestReleaseTime(t *testing.T) {
 		{source: "https://github.com/big/repo", tag: "v4", want: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)}, // no release: v2.0.0's commit
 		{source: "https://github.com/gone/repo", tag: "v1"},                                                     // NOT_FOUND: unknown
 		{source: "https://github.com/lim/repo", tag: "v1", wantErr: "rate limited by github.com until 2026-11-03T12:00:00Z"},
-		// The releases are refused, the tag was listed over git: unknown, not an error.
-		{source: "https://github.com/blocked/repo", tag: "v1.0.0"},
+		// The credentials are refused; the anonymous REST list dates the tag.
+		{source: "https://github.com/blocked/repo", tag: "v1.0.0", want: when},
 		{source: srv.URL + "/o/r.git", tag: "sub/v1 1", want: when},
 		{source: srv.URL + "/o/r.git", tag: "latest", want: time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC)}, // v1.0.0's commit
 		{source: srv.URL + "/o/r.git", tag: "v9", want: time.Date(2026, 9, 15, 8, 0, 0, 0, time.UTC)},      // tag date
@@ -195,7 +198,8 @@ func TestReleaseTime(t *testing.T) {
 		"Bearer gh-tok /graphql big/repo v4",
 		"Bearer gh-tok /graphql gone/repo ",
 		"Bearer gh-tok /graphql lim/repo ",
-		"Bearer gh-tok /graphql blocked/repo ", // once: the refusal is cached, no tag lookup follows
+		"Bearer gh-tok /graphql blocked/repo ",
+		"/repos/blocked/repo/releases?per_page=100&page=1", // the anonymous retry, once
 		"token gitea-tok /api/v1/repos/o/r/releases?limit=50",
 		"token gitea-tok /api/v1/repos/o/r/tags/v9",
 		"token gitea-tok /api/v1/repos/o/full/releases?limit=50",

@@ -112,7 +112,7 @@ func (c *Client) commitTimeREST(ctx context.Context, r Repo, commit string) (tim
 			Date *time.Time `json:"date"`
 		} `json:"committer"`
 	}
-	err := c.restDo(ctx, r, "/repos/"+r.Path()+"/git/commits/"+url.PathEscape(commit), false, func(body io.Reader) error {
+	err := c.restDo(ctx, r, "/repos/"+r.Path()+"/git/commits/"+url.PathEscape(commit), false, false, func(body io.Reader) error {
 		if err := json.UnmarshalRead(io.LimitReader(body, 1<<20), &raw); err != nil {
 			return fmt.Errorf("malformed response: %w", err)
 		}

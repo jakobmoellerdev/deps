@@ -46,6 +46,7 @@ type List struct {
 	mu        sync.Mutex
 	pages     int
 	cursor    string // GraphQL endCursor of the last page
+	anon      bool   // the credentials were refused: pages are fetched anonymously over REST
 	done      bool   // no more pages are fetched: complete, MaxPages reached, or an error
 	complete  bool   // every release is listed
 	archived  bool   // the repository is archived (GraphQL only; REST lists do not say)
@@ -117,16 +118,30 @@ func (c *Client) Releases(ctx context.Context, r Repo, enough func(*List) bool, 
 // and httpx.Auth.Helper do).
 func (c *Client) next(ctx context.Context, r Repo, l *List) error {
 	start := time.Now()
-	graphql := c.GraphQL(r)
+	graphql := c.GraphQL(r) && !l.anon
 	rels := len(l.rels)
 	var more bool
 	var err error
 	if graphql {
 		more, err = c.graphqlPage(ctx, r, l)
+		if errors.Is(err, ErrForbidden) && r.public() && ctx.Err() == nil {
+			// The repository's organization refuses these credentials from this address (an IP
+			// allow list). Its public data is still readable without them, over REST: GraphQL
+			// needs a token. The anonymous quota is small (60 requests an hour per address)
+			// and a REST page carries every release body and asset, so this is only done
+			// after a refusal, and the list stays on REST once it has switched.
+			slog.WarnContext(ctx, "github refused the credentials for the releases of a repository, listing it anonymously",
+				"repo", r.Path(), "err", err)
+			l.rollback(rels)
+			l.anon, graphql = true, false
+			if more, err = c.restPage(ctx, r, l); err != nil {
+				err = fmt.Errorf("anonymous retry after %w: %w", ErrForbidden, err)
+			}
+		}
 	} else {
 		more, err = c.restPage(ctx, r, l)
 	}
-	slog.DebugContext(ctx, "github releases page", "repo", r.Path(), "graphql", graphql, "page", l.pages+1,
+	slog.DebugContext(ctx, "github releases page", "repo", r.Path(), "graphql", graphql, "anonymous", l.anon, "page", l.pages+1,
 		"releases", len(l.rels), "duration", time.Since(start), "err", err)
 	if err != nil && ctx.Err() != nil {
 		l.rollback(rels)
@@ -208,7 +223,7 @@ func (c *Client) graphqlPage(ctx context.Context, r Repo, l *List) (bool, error)
 // element by element so only one release (with its body) is buffered.
 func (c *Client) restPage(ctx context.Context, r Repo, l *List) (bool, error) {
 	var more bool
-	err := c.restDo(ctx, r, "/repos/"+r.Path()+"/releases?per_page="+strconv.Itoa(PageSize)+"&page="+strconv.Itoa(l.pages+1), true, func(body io.Reader) error {
+	err := c.restDo(ctx, r, "/repos/"+r.Path()+"/releases?per_page="+strconv.Itoa(PageSize)+"&page="+strconv.Itoa(l.pages+1), true, l.anon, func(body io.Reader) error {
 		var err error
 		more, err = decodePage(body, l)
 		return err
@@ -291,7 +306,7 @@ func (c *Client) releaseTime(ctx context.Context, r Repo, tag string) (time.Time
 		}
 		rel = *data.Repository.Release
 	} else {
-		err := c.restDo(ctx, r, "/repos/"+r.Path()+"/releases/tags/"+platform.EscapePath(tag), false, func(body io.Reader) error {
+		err := c.restDo(ctx, r, "/repos/"+r.Path()+"/releases/tags/"+platform.EscapePath(tag), false, false, func(body io.Reader) error {
 			var raw struct {
 				Draft       bool       `json:"draft"`
 				PublishedAt *time.Time `json:"published_at"`
@@ -520,7 +535,7 @@ func (c *Client) graphqlNotes(ctx context.Context, r Repo, first int, each func(
 }
 
 func (c *Client) restNotes(ctx context.Context, r Repo, first int, each func(Note)) error {
-	return c.restDo(ctx, r, "/repos/"+r.Path()+"/releases?per_page="+strconv.Itoa(first), false, func(body io.Reader) error {
+	return c.restDo(ctx, r, "/repos/"+r.Path()+"/releases?per_page="+strconv.Itoa(first), false, false, func(body io.Reader) error {
 		return decodeNotes(body, each)
 	})
 }
