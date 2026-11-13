@@ -102,3 +102,34 @@ func TestTerragruntVersionFileMatchAndEdit(t *testing.T) {
 		t.Errorf("patched = %q, %v; want %q", out, err, "v0.68\n")
 	}
 }
+
+// TestVersionFileBOM covers a version file an editor wrote with a UTF-8 byte order mark:
+// bytes.TrimSpace leaves U+FEFF on the value, so the scan has to start past it and the span
+// must still cover only the version (extract checks that through summarize).
+func TestVersionFileBOM(t *testing.T) {
+	for _, tt := range []struct {
+		m          manager.Manager
+		file, want string
+	}{
+		{NewVersion(), ".terraform-version", "1 terraform-version github-releases hashicorp/terraform https://github.com/hashicorp/terraform 1.5.7 hashicorp"},
+		{NewVersion(), "ops/.opentofu-version", "1 opentofu-version github-releases opentofu/opentofu https://github.com/opentofu/opentofu 1.5.7 hashicorp"},
+		{NewTerragruntVersion(), ".terragrunt-version", "1 terragrunt-version github-releases gruntwork-io/terragrunt https://github.com/gruntwork-io/terragrunt 1.5.7 hashicorp"},
+	} {
+		src := []byte("\ufeff1.5.7\n")
+		if got := extract(t, tt.m, tt.file, src); strings.Join(got, "\n") != tt.want {
+			t.Errorf("%s: got %v, want %s", tt.file, got, tt.want)
+		}
+		deps, err := tt.m.Extract(tt.file, src, manager.Env{})
+		if err != nil || len(deps) != 1 {
+			t.Fatalf("%s: Extract = %v, %v", tt.file, deps, err)
+		}
+		edits, err := tt.m.Edits(dep.Update{Dep: deps[0], NewVersion: "1.14.0"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := patch.Apply(src, edits)
+		if want := "\ufeff1.14.0\n"; err != nil || string(out) != want {
+			t.Errorf("%s: patched = %q, %v; want %q", tt.file, out, err, want)
+		}
+	}
+}

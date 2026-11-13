@@ -31,6 +31,10 @@ var (
 	versionFileRe           = regexp.MustCompile(`(^|/)\.(terraform|opentofu)-version$`)
 	terragruntVersionFileRe = regexp.MustCompile(`(^|/)\.terragrunt-version$`)
 	tflintRe                = regexp.MustCompile(`(^|/)\.tflint\.hcl$`)
+
+	// utf8BOM is the byte order mark editors write in front of a UTF-8 file; bytes.TrimSpace
+	// does not strip it.
+	utf8BOM = []byte("\ufeff")
 )
 
 // versionManager reads a single-version file of a tfenv-style version manager: the version on
@@ -57,10 +61,10 @@ func (m versionManager) Match(p string) bool {
 	return strings.HasSuffix(p, "-version") && m.match.MatchString(p)
 }
 
-// Extract returns the version on the first non-empty line: a Terraform release, an OpenTofu
-// release for .opentofu-version or a Terragrunt release for .terragrunt-version.
-// tfenv/tofuenv/tgenv keywords (`latest`, `latest:<regex>`, `min-required`, `latest-allowed`)
-// are skipped.
+// Extract returns the version on the first non-empty line, past a UTF-8 byte order mark: a
+// Terraform release, an OpenTofu release for .opentofu-version or a Terragrunt release for
+// .terragrunt-version. tfenv/tofuenv/tgenv keywords (`latest`, `latest:<regex>`,
+// `min-required`, `latest-allowed`) are skipped.
 func (m versionManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, error) {
 	depType, name, source := DepTypeVersionFile, terraformRepo, terraformSource
 	switch {
@@ -70,6 +74,9 @@ func (m versionManager) Extract(file string, src []byte, _ manager.Env) ([]dep.D
 		depType, name, source = DepTypeOpenTofuVersionFile, opentofuRepo, opentofuSource
 	}
 	off := 0
+	if bytes.HasPrefix(src, utf8BOM) {
+		off = len(utf8BOM) // not part of the version on the first line
+	}
 	for off < len(src) {
 		end := bytes.IndexByte(src[off:], '\n')
 		if end < 0 {
