@@ -308,13 +308,15 @@ func (c *sourceCache) get(root, p string) (source, bool) {
 }
 
 // OutputCache memoizes the compiled files of the requirements files of a run (CompiledOutputs)
-// by root and input, and the requirements files read on the way: an update of an input looks
-// them up for every update and every scope it is in. The files must not change while it is in
-// use; the zero value is not usable, use NewOutputCache.
+// by root and input, the requirements files read on the way, and the parsed requirements of
+// the compiled files FileEdits rewrites: an update of an input looks them up for every update
+// and every scope it is in. The files must not change while it is in use; the zero value is
+// not usable, use NewOutputCache.
 type OutputCache struct {
-	mu    sync.Mutex
-	srcs  map[string]*sourceCache
-	scans map[outputKey]*outputEntry
+	mu     sync.Mutex
+	srcs   map[string]*sourceCache
+	scans  map[outputKey]*outputEntry
+	parses map[outputKey]*parseEntry
 }
 
 type outputKey struct{ root, input string }
@@ -328,7 +330,44 @@ type outputEntry struct {
 
 // NewOutputCache returns an empty OutputCache.
 func NewOutputCache() *OutputCache {
-	return &OutputCache{srcs: map[string]*sourceCache{}, scans: map[outputKey]*outputEntry{}}
+	return &OutputCache{
+		srcs:   map[string]*sourceCache{},
+		scans:  map[outputKey]*outputEntry{},
+		parses: map[outputKey]*parseEntry{},
+	}
+}
+
+// parseEntry is one requirements file read and parsed once.
+type parseEntry struct {
+	once sync.Once
+	reqs []Hashed
+	err  error
+}
+
+// parsed is parse of the requirements file p (a slash path relative to the absolute root),
+// read and parsed once when c is not nil. The requirements are shared, callers must not
+// modify them.
+func (c *OutputCache) parsed(root, p string) ([]Hashed, error) {
+	read := func() ([]Hashed, error) {
+		src, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(p)))
+		if err != nil {
+			return nil, err
+		}
+		return parse(p, src), nil
+	}
+	if c == nil {
+		return read()
+	}
+	key := outputKey{root, p}
+	c.mu.Lock()
+	e := c.parses[key]
+	if e == nil {
+		e = &parseEntry{}
+		c.parses[key] = e
+	}
+	c.mu.Unlock()
+	e.once.Do(func() { e.reqs, e.err = read() })
+	return e.reqs, e.err
 }
 
 // Outputs is CompiledOutputs of input below the absolute root, memoized when c is not nil.

@@ -105,7 +105,8 @@ func (m *pipManager) Link(files [][]dep.Dep) {
 // FileEdits implements manager.FileEditor: an update of a requirement of an input file also
 // rewrites its pin in each compiled file regenerated from it (CompiledOutputs), so the
 // post-processor regenerates them with the new version: to the new version for an update of
-// the input's specifier, and for a lockfile-only update where the pin is older.
+// the input's specifier, and for a lockfile-only update where the pin is older. Each compiled
+// file is read and parsed once per run, however many updates rewrite it.
 func (m *pipManager) FileEdits(root string, u dep.Update) (map[string][]patch.Edit, error) {
 	outs, _, ok := m.outs.Outputs(root, u.Dep.File)
 	if !ok {
@@ -115,11 +116,11 @@ func (m *pipManager) FileEdits(root string, u dep.Update) (map[string][]patch.Ed
 	name := pyreq.Normalize(u.Dep.Name)
 	var edits map[string][]patch.Edit
 	for _, o := range outs {
-		src, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(o)))
+		reqs, err := m.outs.parsed(root, o)
 		if err != nil {
 			return nil, err
 		}
-		for _, r := range parse(o, src) {
+		for _, r := range reqs {
 			pin, ok := strings.CutPrefix(r.Dep.Range, "==")
 			if r.Dep.Skip != "" || !ok || pyreq.Normalize(r.Dep.Name) != name || pin == u.NewVersion ||
 				u.Lockfile && pep440.Valid(pin) && pep440.Compare(pin, u.NewVersion) > 0 {

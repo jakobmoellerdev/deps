@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -188,6 +189,18 @@ func TestFileEdits(t *testing.T) {
 			}
 			if got := apply(edits); got != tt.want {
 				t.Errorf("got  %s\nwant %s", got, tt.want)
+			}
+			// fe answers every update of the run from one read and parse of each compiled
+			// file; a manager that reads them anew must produce the same edits.
+			fresh, err := New().(manager.FileEditor).FileEdits(root, tt.u)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := apply(fresh); got != tt.want {
+				t.Errorf("uncached got  %s\nwant %s", got, tt.want)
+			}
+			if !reflect.DeepEqual(edits, fresh) {
+				t.Errorf("cached edits = %v, uncached = %v", edits, fresh)
 			}
 		})
 	}

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
 
 // compiledTree writes a tree of inputs and large hashed compiled files, in a directory below
@@ -65,6 +67,27 @@ func BenchmarkOutputCache(b *testing.B) {
 				if outs, _, ok := c.Outputs(root, in); !ok || len(outs) != 1 {
 					b.Fatalf("Outputs = %v, %v", outs, ok)
 				}
+			}
+		}
+	}
+}
+
+// BenchmarkFileEdits rewrites the pins of one compiled file for the updates of a run: 100
+// updates of requirements of its input, as a large compiled set produces.
+func BenchmarkFileEdits(b *testing.B) {
+	const pkgs = 800
+	root := compiledTree(b, 1, pkgs)
+	b.ReportAllocs()
+	for b.Loop() {
+		m := New().(*pipManager)
+		for i := range 100 {
+			u := dep.Update{
+				Dep:        dep.Dep{File: "requirements/requirements-s0.in", Name: fmt.Sprintf("pkg%d", i), Datasource: "pypi"},
+				NewVersion: "9.9.9",
+			}
+			edits, err := m.FileEdits(root, u)
+			if err != nil || len(edits) != 1 {
+				b.Fatalf("FileEdits = %v, %v", edits, err)
 			}
 		}
 	}
