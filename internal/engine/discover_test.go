@@ -226,3 +226,34 @@ func TestDiscoveryAttrs(t *testing.T) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
 }
+
+// TestDiscoverUnreadableDir: a directory the walk cannot read is skipped, not fatal: every
+// other file of the tree is still discovered.
+func TestDiscoverUnreadableDir(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads every directory")
+	}
+	root := t.TempDir()
+	for _, f := range []string{"go.mod", "a/go.mod", "secret/go.mod", "z/go.mod"} {
+		p := filepath.Join(root, filepath.FromSlash(f))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	secret := filepath.Join(root, "secret")
+	if err := os.Chmod(secret, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(secret, 0o755) })
+
+	got, err := discover(root, nil, true, []manager.Manager{suffixManager{}})
+	if err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	if want := []string{"a/go.mod", "go.mod", "z/go.mod"}; !slices.Equal(got[0], want) {
+		t.Errorf("discovered %v, want %v", got[0], want)
+	}
+}

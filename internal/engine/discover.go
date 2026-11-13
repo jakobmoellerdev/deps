@@ -20,7 +20,8 @@ var prunedDirs = map[string]bool{".git": true, "node_modules": true, "vendor": t
 // built-in one handles too); the result holds the sorted slash paths (relative to root) per
 // manager, indexed like managers. A root that is a symlink to a directory is followed. With
 // gitIgnore, the .gitignore files of the repository (and its .git/info/exclude) prune
-// directories and files as they do for git.
+// directories and files as they do for git. A path the walk cannot read (an unreadable
+// directory) is logged and left out, so one of them does not cost the run every other file.
 func discover(root string, ignore []string, gitIgnore bool, managers []manager.Manager) ([][]string, error) {
 	out := make([][]string, len(managers))
 	ign, err := pattern.CompileCaseSensitive(ignore)
@@ -44,7 +45,20 @@ func discover(root string, ignore []string, gitIgnore bool, managers []manager.M
 	}
 	err = filepath.WalkDir(walkRoot, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return err
+			if p == walkRoot {
+				return err // nothing to walk at all
+			}
+			// One unreadable directory (or a file that went away mid-walk) leaves the rest
+			// of the tree discoverable.
+			rel, relErr := relPath(base, walkRoot, p)
+			if relErr != nil {
+				rel = p
+			}
+			slog.Warn("path skipped, it cannot be read", "path", filepath.ToSlash(rel), "err", err)
+			if d != nil && d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
 		}
 		if p == walkRoot {
 			return nil
