@@ -61,27 +61,22 @@ const MaintenanceBranch = "lock-file-maintenance"
 // edit the same bytes. Branches are <branchPrefix><topicPrefix><branchSlug(name)> and
 // <branchPrefix><topicPrefix>group/<branchSlug(group)>, with "-<bucket>" appended for a
 // non-empty bucket, then "-security" for a security group; "" means
-// config.DefaultBranchPrefix. A branch a group already holds gets a short hash of the later
-// group's key appended, since two groups must never share one. Lock file maintenance updates
-// share one group (Kind and Name MaintenanceBranch) on <branchPrefix>lock-file-maintenance.
+// config.DefaultBranchPrefix. A branch another group has taken gets a short hash of the
+// group's key appended, since two groups must never share one; branches are handed out in key
+// order, so which group keeps the natural name does not depend on the order the updates
+// arrive in (see branches). Lock file maintenance updates share one group (Kind and Name
+// MaintenanceBranch) on <branchPrefix>lock-file-maintenance.
 // Sorted by Kind, Name, then Branch.
 func GroupUpdates(updates []dep.Update, branchPrefix string) []Group {
 	branchPrefix = cmp.Or(branchPrefix, config.DefaultBranchPrefix)
-	type key struct {
-		topicPrefix, kind, name, bucket string
-		security                        bool
-	}
-	idx := map[key]int{}
-	// Different groups can render into one branch: "@types/node" and "types/node" slug alike,
-	// and so do the dep "react" in bucket "major" and the dep "react-major". Their two PRs
-	// would push over each other, so a branch is handed out once.
-	taken := map[string]bool{}
+	idx := map[groupKey]int{}
+	var keys []groupKey // keys[i] is the key of groups[i]
 	var groups []Group
 	for _, u := range updates {
-		k := key{topicPrefix: u.BranchTopicPrefix, name: u.Dep.Name, bucket: u.Bucket}
+		k := groupKey{topicPrefix: u.BranchTopicPrefix, name: u.Dep.Name, bucket: u.Bucket}
 		switch {
 		case u.Maintenance():
-			k = key{kind: MaintenanceBranch, name: MaintenanceBranch}
+			k = groupKey{kind: MaintenanceBranch, name: MaintenanceBranch}
 		case u.Group != "" && (len(u.Advisories) == 0 || u.Dep.VersionRef != ""):
 			k.kind, k.name = GroupKind, u.Group
 		case u.SecurityGroup != "" && len(u.Advisories) > 0:
@@ -91,28 +86,13 @@ func GroupUpdates(updates []dep.Update, branchPrefix string) []Group {
 		if !ok {
 			i = len(groups)
 			idx[k] = i
-			var branch string
-			switch k.kind {
-			case MaintenanceBranch:
-				branch = branchPrefix + MaintenanceBranch
-			case GroupKind:
-				branch = branchPrefix + k.topicPrefix + GroupKind + "/" + branchSlug(k.name)
-			default:
-				branch = branchPrefix + k.topicPrefix + branchSlug(k.name)
-			}
-			if k.bucket != "" {
-				branch += "-" + k.bucket
-			}
-			if k.security {
-				branch += "-security"
-			}
-			for taken[branch] {
-				branch += "-" + nameHash(k.topicPrefix, k.kind, k.name, k.bucket, strconv.FormatBool(k.security))
-			}
-			taken[branch] = true
-			groups = append(groups, Group{Kind: k.kind, Name: k.name, Branch: branch})
+			keys = append(keys, k)
+			groups = append(groups, Group{Kind: k.kind, Name: k.name})
 		}
 		groups[i].Updates = append(groups[i].Updates, u)
+	}
+	for i, b := range handOut(keys, branchPrefix) {
+		groups[i].Branch = b
 	}
 	for i := range groups {
 		g := &groups[i]
@@ -138,6 +118,128 @@ func GroupUpdates(updates []dep.Update, branchPrefix string) []Group {
 		return cmp.Or(strings.Compare(a.Kind, b.Kind), strings.Compare(a.Name, b.Name), strings.Compare(a.Branch, b.Branch))
 	})
 	return groups
+}
+
+// groupKey identifies the group an update joins: its branch topic prefix (the expanded
+// additionalBranchPrefix), kind, name, PR bucket and whether it is a security group.
+type groupKey struct {
+	topicPrefix, kind, name, bucket string
+	security                        bool
+}
+
+// compare orders two keys, which are distinct, so it is a total order. The fixed lock file
+// maintenance branch comes first and a policy or security group before a dependency, so a
+// dependency named "lock-file-maintenance" or sharing a group's branch is the one that yields.
+func (k groupKey) compare(o groupKey) int {
+	sec := 0
+	switch {
+	case k.security && !o.security:
+		sec = 1
+	case !k.security && o.security:
+		sec = -1
+	}
+	return cmp.Or(cmp.Compare(kindRank(k.kind), kindRank(o.kind)), strings.Compare(k.topicPrefix, o.topicPrefix),
+		strings.Compare(k.name, o.name), strings.Compare(k.bucket, o.bucket), sec)
+}
+
+// kindRank ranks the Group kinds by how firmly they hold their branch.
+func kindRank(kind string) int {
+	switch kind {
+	case MaintenanceBranch:
+		return 0
+	case GroupKind:
+		return 1
+	}
+	return 2
+}
+
+// branch is the branch k asks for under branchPrefix, before collisions.
+func (k groupKey) branch(branchPrefix string) string {
+	var b string
+	switch k.kind {
+	case MaintenanceBranch:
+		b = branchPrefix + MaintenanceBranch
+	case GroupKind:
+		b = branchPrefix + k.topicPrefix + GroupKind + "/" + branchSlug(k.name)
+	default:
+		b = branchPrefix + k.topicPrefix + branchSlug(k.name)
+	}
+	if k.bucket != "" {
+		b += "-" + k.bucket
+	}
+	if k.security {
+		b += "-security"
+	}
+	return b
+}
+
+// handOut returns the branch of each key by index: the one it asks for (groupKey.branch) when
+// no other key has taken it, else that name with a short hash of the key appended, since two
+// groups must never share a branch.
+//
+// Branches are handed out in an order derived from the keys alone, never in the order the
+// updates arrive in, so which of two colliding groups keeps the natural name is the same in
+// every run: an open PR's branch is not force-pushed with another dependency's content once a
+// dep earlier in a manifest is added. The deeper branch goes first (descending name), so a
+// group under deps/group/… and the deps under a topic prefix keep their branches and the lone
+// dependency blocking them (one named "group" or "npm") is the one that yields; branches
+// asking for the same name are decided by groupKey.compare.
+func handOut(keys []groupKey, branchPrefix string) []string {
+	out := make([]string, len(keys))
+	for i, k := range keys {
+		out[i] = k.branch(branchPrefix)
+	}
+	order := make([]int, len(keys))
+	for i := range order {
+		order[i] = i
+	}
+	slices.SortFunc(order, func(a, b int) int {
+		return cmp.Or(strings.Compare(out[b], out[a]), keys[a].compare(keys[b]))
+	})
+	t := branches{full: make(map[string]bool, len(keys)), dirs: map[string]bool{}}
+	for _, i := range order {
+		k := keys[i]
+		for t.taken(out[i]) {
+			out[i] += "-" + nameHash(k.topicPrefix, k.kind, k.name, k.bucket, strconv.FormatBool(k.security))
+		}
+		t.take(out[i])
+	}
+	return out
+}
+
+// branches are the branches handed out, with their path prefixes: git keeps refs in a
+// directory tree, so refs/heads/deps/group and refs/heads/deps/group/x cannot both exist (a
+// dep named "group" next to any policy group, or a dep named "npm" under
+// additionalBranchPrefix "{{manager}}/") and the second push would fail.
+type branches struct {
+	full map[string]bool // branches handed out
+	dirs map[string]bool // their proper path prefixes
+}
+
+// taken reports whether b cannot be handed out: another group holds it, holds a branch below
+// it, or holds a path prefix of it. Different groups can also render into one name: "@types/
+// node" and "types/node" slug alike, and so do the dep "react" in bucket "major" and the dep
+// "react-major".
+func (t branches) taken(b string) bool {
+	if t.full[b] || t.dirs[b] {
+		return true
+	}
+	for i, c := range b {
+		if c == '/' && t.full[b[:i]] {
+			return true
+		}
+	}
+	return false
+}
+
+// take records b and its path prefixes as taken.
+func (t branches) take(b string) {
+	t.full[b] = true
+	for i, c := range b {
+		if c == '/' {
+			t.dirs[b[:i]] = true
+		}
+	}
 }
 
 // union appends the entries of add missing from dst.

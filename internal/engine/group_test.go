@@ -1,11 +1,99 @@
 package engine
 
 import (
+	"maps"
+	"os"
 	"os/exec"
+	"strings"
 	"testing"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 )
+
+// branchOf maps each group's name to its branch.
+func branchOf(groups []Group) map[string]string {
+	out := make(map[string]string, len(groups))
+	for _, g := range groups {
+		out[g.Name] = g.Branch
+	}
+	return out
+}
+
+// Which of two groups rendering into one branch keeps it must not depend on the order the
+// updates arrive in: the branch of an open PR would otherwise be force-pushed with the other
+// dependency's content as soon as a dep earlier in a manifest is added.
+func TestGroupUpdatesBranchNamesOrderIndependent(t *testing.T) {
+	gomod := func(name string) dep.Dep { return dep.Dep{Manager: "gomod", Name: name} }
+	updates := []dep.Update{
+		{Dep: gomod("react"), NewVersion: "v19.0.0", Bucket: "major"},
+		{Dep: gomod("react-major"), NewVersion: "v2.0.0"},
+		{Dep: gomod("@types/node"), NewVersion: "v22.0.0"},
+		{Dep: gomod("types/node"), NewVersion: "v22.0.0"},
+	}
+	want := branchOf(GroupUpdates(updates, ""))
+	if want["react"] != "deps/react-major" || want["@types/node"] != "deps/types-node" {
+		t.Fatalf("branches = %v", want)
+	}
+	for _, perm := range [][]int{{1, 0, 3, 2}, {3, 2, 1, 0}, {2, 1, 3, 0}} {
+		shuffled := make([]dep.Update, len(perm))
+		for i, j := range perm {
+			shuffled[i] = updates[j]
+		}
+		if got := branchOf(GroupUpdates(shuffled, "")); !maps.Equal(got, want) {
+			t.Errorf("updates in order %v are on %v, want %v", perm, got, want)
+		}
+	}
+}
+
+// A branch that is a path prefix of another one is taken too: git keeps refs in a directory
+// tree, so a dep named "group" (deps/group) next to any policy group (deps/group/<name>), or
+// one named "npm" under additionalBranchPrefix "{{manager}}/", would cost the second push its
+// PR.
+func TestGroupUpdatesBranchNamesPathPrefix(t *testing.T) {
+	gomod := func(name string) dep.Dep { return dep.Dep{Manager: "gomod", Name: name} }
+	updates := []dep.Update{
+		{Dep: gomod("group"), NewVersion: "v1.1.0"},
+		{Dep: gomod("example.com/a"), NewVersion: "v1.1.0", Group: "tools"},
+		{Dep: gomod("npm"), NewVersion: "v1.1.0"},
+		{Dep: dep.Dep{Manager: "npm", Name: "left-pad"}, NewVersion: "2.0.0", BranchTopicPrefix: "npm/"},
+	}
+	groups := GroupUpdates(updates, "")
+	if len(groups) != len(updates) {
+		t.Fatalf("groups = %+v", groups)
+	}
+	// The groups that would be blocked keep their natural branch; the lone deps yield.
+	got := branchOf(groups)
+	if got["tools"] != "deps/group/tools" || got["left-pad"] != "deps/npm/left-pad" {
+		t.Errorf("branches = %v, want deps/group/tools and deps/npm/left-pad", got)
+	}
+	if got["group"] == "deps/group" || got["npm"] == "deps/npm" {
+		t.Errorf("branches = %v, want the blocking deps moved off deps/group and deps/npm", got)
+	}
+	// git itself is the test: refs/heads/deps/group and refs/heads/deps/group/tools cannot
+	// both exist.
+	dir := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		cmd := exec.CommandContext(t.Context(), "git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=deps", "GIT_AUTHOR_EMAIL=deps@example.com",
+			"GIT_COMMITTER_NAME=deps", "GIT_COMMITTER_EMAIL=deps@example.com")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %s: %v %s", strings.Join(args, " "), err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("init", "--bare", "--quiet", ".")
+	commit := git("commit-tree", "-m", "root", git("hash-object", "-w", "-t", "tree", os.DevNull))
+	for _, g := range groups {
+		git("update-ref", "refs/heads/"+g.Branch, commit)
+	}
+	refs := strings.Fields(git("for-each-ref", "--format=%(refname)"))
+	if len(refs) != len(groups) {
+		t.Errorf("refs = %v, want one per group", refs)
+	}
+}
 
 func TestGroupUpdatesPolicyGroupsAndSecurity(t *testing.T) {
 	gha := func(name string) dep.Dep { return dep.Dep{Manager: "github-actions", Name: name} }
