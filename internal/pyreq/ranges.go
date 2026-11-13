@@ -311,12 +311,14 @@ const (
 	modeWiden          // v is outside the range: only the upper bounds follow it
 )
 
-// renderAlt rewrites the clauses of a for v (release nv) in mode.
+// renderAlt rewrites the clauses of a for v (release nv) in mode. A bound built from nv keeps
+// v's PEP 440 epoch, which the release parts do not carry.
 func renderAlt(s string, a alt, v string, nv []int, mode int) []patch.Edit {
 	trim := false // Renovate's hasZeroSpecifier
 	for _, c := range a.cls {
 		trim = trim || len(c.rel) < 3
 	}
+	ep := epoch(v)
 	var edits []patch.Edit
 	set := func(c clause, op, ver string) {
 		if c.wild {
@@ -343,7 +345,7 @@ func renderAlt(s string, a alt, v string, nv []int, mode int) []patch.Edit {
 			if trim {
 				f = trimZeros(f)
 			}
-			set(c, c.op, join(f))
+			set(c, c.op, ep+join(f))
 		case c.op == ">" || c.op == ">=":
 			if pep440.Compare(v, c.ver) <= 0 {
 				set(c, ">=", v)
@@ -353,10 +355,10 @@ func renderAlt(s string, a alt, v string, nv []int, mode int) []patch.Edit {
 			if trim {
 				f = trimZeros(f)
 			}
-			if c.op == ">" && join(f) == v && len(f) > 1 {
+			if c.op == ">" && ep+join(f) == v && len(f) > 1 {
 				f = f[:len(f)-1]
 			}
-			set(c, c.op, join(f))
+			set(c, c.op, ep+join(f))
 		default:
 			updateValue(c, v, nv, set)
 		}
@@ -367,24 +369,25 @@ func renderAlt(s string, a alt, v string, nv []int, mode int) []patch.Edit {
 // updateValue is Renovate's updateRangeValue: exclusions are kept, wildcards move to v at
 // their precision, `~=` (and Poetry's `^`, `~`) take v cut or zero-padded to their precision,
 // pins and `<=` move up to v, `<` moves past v at its own precision and `>`/`>=` only down.
+// A bound built from nv keeps v's epoch.
 func updateValue(c clause, v string, nv []int, set func(clause, string, string)) {
-	base := c.rel
+	base, ep := c.rel, epoch(v)
 	switch {
 	case c.op == "!=":
 	case c.wild:
-		set(c, c.op, join(future(-1, nv, base)))
+		set(c, c.op, ep+join(future(-1, nv, base)))
 	case c.op == "~=" || c.op == "^" || c.op == "~":
 		switch {
 		case len(base) < len(nv):
-			set(c, c.op, join(nv[:len(base)]))
+			set(c, c.op, ep+join(nv[:len(base)]))
 		case len(base) > len(nv):
-			set(c, c.op, join(slices.Concat(nv, make([]int, len(base)-len(nv)))))
+			set(c, c.op, ep+join(slices.Concat(nv, make([]int, len(base)-len(nv)))))
 		default:
 			set(c, c.op, v)
 		}
 	case c.op == "<":
 		if pep440.Compare(v, c.ver) >= 0 {
-			set(c, c.op, join(future(len(base)-1, nv, base)))
+			set(c, c.op, ep+join(future(len(base)-1, nv, base)))
 		}
 	case c.op == ">" || c.op == ">=":
 		if pep440.Compare(v, c.ver) <= 0 {
@@ -458,6 +461,16 @@ func trimZeros(r []int) []int {
 		n--
 	}
 	return r[:n]
+}
+
+// epoch returns the `N!` prefix of a PEP 440 version (`v1!2.3rc1` → "1!"), "" without one.
+// release drops it, so every bound built from the release parts has to put it back.
+func epoch(v string) string {
+	v = strings.TrimLeft(v, "vV")
+	if i := strings.Index(v, "!"); i >= 0 {
+		return v[:i+1]
+	}
+	return ""
 }
 
 // release returns the release parts of a PEP 440 version (`v1!2.3rc1` → [2 3]).

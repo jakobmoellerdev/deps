@@ -140,6 +140,17 @@ func TestNewRange(t *testing.T) {
 		{"1.0", "1.1", "1.1", "pin"},
 		{"==1.*", "1.5", "==1.5", "pin"},
 		{"==1.5.0", "1.5.0", "", "pin"},
+		// PEP 440 epochs: the release parts do not carry the `N!`, so every bound built
+		// from them has to put it back or the rewritten range no longer admits the
+		// candidate and the update is dropped.
+		{"~=1!2.0", "1!3.0.1", "~=1!3.0", ""},
+		{"==1!1.0.3", "1!1.2.3", "==1!1.2.3", ""},
+		{"==1!1.0.*", "1!1.2.3", "==1!1.2.*", ""},
+		{"<1!1.2", "1!1.2.3", "<1!1.3", ""},
+		{">=1!1.2,<1!2", "1!3.1.0", ">=1!3.1,<1!4", ""},
+		{">1!1.0,<1!2", "1!3.1.4", ">1!3.1,<1!4", ""},
+		{">=1!1.2", "1!1.5.0", ">=1!1.5.0", ""},
+		{"~=1!2.0", "1!3.0.1", "==1!3.0.1", "pin"},
 	} {
 		got, ok := NewRange(dep.Dep{Range: c.spec}, c.v, c.strategy)
 		if !ok {
