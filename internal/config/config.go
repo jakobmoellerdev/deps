@@ -664,6 +664,10 @@ type Rule struct {
 	currentVersion     *Allowed                // parsed CurrentVersion; nil = not set
 	currentAge         *ageRange               // parsed CurrentAge; nil = not set
 	names, paths       *pattern.List           // compiled Names and Paths
+	namePrefixes       []string                // literal prefixes of Names (namePrefixes)
+	// managerBits and depTypeBits are the match filters of Managers and DepTypes (matchBits),
+	// 0 when the field is unset; matchesDep rejects a dep without a common bit.
+	managerBits, depTypeBits uint64
 }
 
 // Source returns the file a loaded rule is written in (the config file's path relative to
@@ -1277,6 +1281,8 @@ func (c *Config) validateRule(i int, add addFunc) {
 		}
 	}
 	r.names, _ = pattern.Compile(r.Names)
+	r.namePrefixes = namePrefixes(r.Names)
+	r.managerBits = matchBits(managerBit, r.Managers)
 	for j, t := range r.DepTypes {
 		if !slices.Contains(DepTypes, t) {
 			add(fmt.Sprintf("%s.depTypes[%d]", f, j), "%s", oneOf("rules[].depTypes", DepTypes, t))
@@ -1288,6 +1294,7 @@ func (c *Config) validateRule(i int, add addFunc) {
 		}
 	}
 	r.paths, _ = pattern.Compile(r.Paths)
+	r.depTypeBits = matchBits(depTypeBit, r.DepTypes)
 	for j, ds := range r.Datasources {
 		if !c.KnownDatasource(ds) {
 			add(fmt.Sprintf("%s.datasources[%d]", f, j), "%s", c.unknownDatasource("rules[].datasources", ds))

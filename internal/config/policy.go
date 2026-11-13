@@ -6,11 +6,13 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/bmatcuk/doublestar/v4"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/pattern"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/schedule"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
@@ -198,14 +200,47 @@ func (c *Config) WantsCurrentAge(d dep.Dep) bool {
 	return false
 }
 
+// matchBits folds the values of an exact-match selector into a 64-bit filter: bit i%64 of
+// the value's position in the list of accepted values (Managers, DepTypes). A rule and a dep
+// without a common bit cannot match, which skips the comparison; a shared bit says nothing,
+// so the comparison decides (two values may share a bit, and an unknown value matches every
+// filter: a rule naming one is not validated, but must keep matching).
+func bitIndex(vals []string) map[string]uint64 {
+	m := make(map[string]uint64, len(vals))
+	for i, v := range vals {
+		m[v] |= 1 << (i % 64)
+	}
+	return m
+}
+
+var (
+	managerBit = bitIndex(Managers)
+	depTypeBit = bitIndex(DepTypes)
+)
+
+// matchBits is the filter of the values of a rule's selector; 0 for an unset selector (it
+// matches every dep), all bits for one naming a value outside index.
+func matchBits(index map[string]uint64, vals []string) uint64 {
+	var bits uint64
+	for _, v := range vals {
+		b, ok := index[v]
+		if !ok {
+			return ^uint64(0)
+		}
+		bits |= b
+	}
+	return bits
+}
+
 // vcache memoizes the per-dep values the rules matched against it share: the versioning scheme
-// (every currentVersion constraint converts with it, and resolving it walks every rule) and the
-// package name its names are matched against.
+// (every currentVersion constraint converts with it, and resolving it walks every rule), the
+// package name its names are matched against and its match filters.
 type vcache struct {
-	v     string
-	ok    bool
-	pkg   string
-	pkgOK bool
+	v   string
+	pkg string
+	// manager and depType are d's bits (matchBits).
+	manager, depType  uint64
+	ok, pkgOK, bitsOK bool // whether v, pkg and the bits are set
 }
 
 // pkgName is packageName(d), computed at most once per dep: it only differs from d.Name for an
@@ -215,6 +250,21 @@ func (vc *vcache) pkgName(d *dep.Dep) string {
 		vc.pkg, vc.pkgOK = packageName(d), true
 	}
 	return vc.pkg
+}
+
+// bits returns d's manager and dep type filters, looked up at most once per dep.
+func (vc *vcache) bits(d *dep.Dep) (manager, depType uint64) {
+	if !vc.bitsOK {
+		vc.manager, vc.depType, vc.bitsOK = managerBit[d.Manager], depTypeBit[d.DepType], true
+	}
+	return vc.manager, vc.depType
+}
+
+// misses reports whether the match filters of r rule out a dep with the bits manager and
+// depType (vcache.bits), so that no comparison is needed.
+func (r *Rule) misses(manager, depType uint64) bool {
+	return r.managerBits != 0 && r.managerBits&manager == 0 ||
+		r.depTypeBits != 0 && r.depTypeBits&depType == 0
 }
 
 // matches reports whether r applies to d; kind "" skips rules with updateTypes, a negative
@@ -232,6 +282,9 @@ func (c *Config) matches(r *Rule, d dep.Dep, kind dep.UpdateType, age time.Durat
 // match d on the base branch of c (ForBaseBranch; rules with baseBranches match nothing
 // without one).
 func (c *Config) matchesDep(r *Rule, d dep.Dep, vc *vcache) bool {
+	if r.misses(vc.bits(&d)) {
+		return false
+	}
 	switch {
 	case len(r.Managers) > 0 && !slices.Contains(r.Managers, d.Manager),
 		len(r.Names) > 0 && !matchesNames(r, &d, vc),
@@ -247,13 +300,92 @@ func (c *Config) matchesDep(r *Rule, d dep.Dep, vc *vcache) bool {
 // matchesNames reports whether r's names match d: its name, or the package name Renovate's
 // matchPackageNames sees (packageName), which differs for an OCI helm chart (redis is also
 // registry-1.docker.io/bitnamicharts/redis). The replacement half of a rule matches the
-// package name too, and a config translated from Renovate names deps that way.
+// package name too, and a config translated from Renovate names deps that way. A name that
+// starts with none of the rule's literal prefixes matches no glob of it (namePrefixes), which
+// most rules of a large configuration are rejected by without matching a glob.
 func matchesNames(r *Rule, d *dep.Dep, vc *vcache) bool {
-	if r.names.Match(d.Name) {
+	if hasNamePrefix(r.namePrefixes, d.Name) && r.names.Match(d.Name) {
 		return true
 	}
 	pkg := vc.pkgName(d)
-	return pkg != d.Name && r.names.Match(pkg)
+	return pkg != d.Name && hasNamePrefix(r.namePrefixes, pkg) && r.names.Match(pkg)
+}
+
+// hasNamePrefix reports whether name may match a glob with one of the prefixes: it starts
+// with one of them, folding ASCII case as the globs do, or the bytes a prefix covers are not
+// ASCII, where only the glob itself can decide. An empty list admits every name.
+func hasNamePrefix(prefixes []string, name string) bool {
+	if len(prefixes) == 0 {
+		return true
+	}
+	for _, p := range prefixes {
+		if hit, decided := prefixFold(name, p); hit || !decided {
+			return true
+		}
+	}
+	return false
+}
+
+// prefixFold reports whether name starts with the lower-cased ASCII prefix p under ASCII case
+// folding; decided is false when a byte it compares is not ASCII, whose lower case may be
+// shorter or longer (strings.ToLower, which the globs are matched under).
+func prefixFold(name, p string) (hit, decided bool) {
+	if len(name) < len(p) {
+		return false, true
+	}
+	for i := range len(p) {
+		c := name[i]
+		switch {
+		case c >= utf8.RuneSelf:
+			return false, false
+		case 'A' <= c && c <= 'Z':
+			c += 'a' - 'A'
+		}
+		if c != p[i] {
+			return false, true
+		}
+	}
+	return true, true
+}
+
+// namePrefixes returns the lower-cased literal prefixes of the positive glob entries of
+// names: a name starting with none of them matches none of them, so the rule cannot match
+// the dep. It is nil when an entry gives no prefix to compare against (a regex, a glob
+// starting with a meta character or with a non-ASCII prefix) or when the list has only
+// negations, which match every other name.
+func namePrefixes(names []string) []string {
+	var out []string
+	for _, n := range names {
+		if strings.HasPrefix(n, "!") {
+			continue // an exclusion only takes names away
+		}
+		if _, _, isRegex := pattern.Regex(n); isRegex {
+			return nil
+		}
+		lit := n
+		if i := strings.IndexAny(n, `*?[{\`); i >= 0 {
+			// `a/**` matches `a` too, so the separator before it is not part of the prefix.
+			lit = strings.TrimSuffix(n[:i], "/")
+			if !strings.HasPrefix(n[i:], "**") {
+				lit = n[:i]
+			}
+		}
+		if lit == "" || !isASCII(lit) {
+			return nil
+		}
+		out = append(out, strings.ToLower(lit))
+	}
+	return out
+}
+
+// isASCII reports whether s holds no byte above ASCII.
+func isASCII(s string) bool {
+	for i := range len(s) {
+		if s[i] >= utf8.RuneSelf {
+			return false
+		}
+	}
+	return true
 }
 
 // currentMatches reports whether d's current version (the locked one when known) satisfies a,
@@ -311,6 +443,9 @@ func (c *Config) RegistryURLs(d dep.Dep) string {
 func (c *Config) UnusedRules(deps []dep.Dep) []int {
 	var out []int
 	vcs := make([]vcache, len(deps)) // one cache per dep, shared by the rules matched against it
+	for j := range deps {
+		vcs[j].bits(&deps[j]) // the filters every rule tests the dep against
+	}
 	for i := range c.Rules {
 		r := &c.Rules[i]
 		if len(r.BaseBranches) > 0 && c.baseBranch == "" {
@@ -318,7 +453,7 @@ func (c *Config) UnusedRules(deps []dep.Dep) []int {
 		}
 		used := false
 		for j := range deps {
-			if c.matchesDep(r, deps[j], &vcs[j]) {
+			if !r.misses(vcs[j].manager, vcs[j].depType) && c.matchesDep(r, deps[j], &vcs[j]) {
 				used = true
 				break
 			}
@@ -431,9 +566,10 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Polic
 	case UnversionedPin(d):
 		p.Ignore, p.IgnoredByDefault, p.IgnoreReason = true, true, UnversionedReason
 	}
+	mgrBits, typeBits := vc.bits(&d)
 	for i := range c.Rules {
 		r := &c.Rules[i]
-		if !c.matches(r, d, kind, age, &vc) {
+		if r.misses(mgrBits, typeBits) || !c.matches(r, d, kind, age, &vc) {
 			continue
 		}
 		p.Rules = append(p.Rules, i)

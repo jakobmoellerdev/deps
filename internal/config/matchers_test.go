@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -236,5 +237,105 @@ func TestRuleMatcherErrors(t *testing.T) {
 	var ce *Error
 	if !errors.As(err, &ce) || len(ce.Problems()) != 1 || ce.Problems()[0].Line != 3 {
 		t.Errorf("problems = %+v, want one on line 3", ce)
+	}
+}
+
+// filterRules is c with the match filters of its rules cleared, so that every rule is
+// compared against every dep.
+func filterRules(c *Config) *Config {
+	plain := *c
+	plain.Rules = slices.Clone(c.Rules)
+	for i := range plain.Rules {
+		r := &plain.Rules[i]
+		r.managerBits, r.depTypeBits, r.namePrefixes = 0, 0, nil
+	}
+	return &plain
+}
+
+// TestMatchFiltersKeepMatches pins that the per-rule match filters (manager and dep type
+// bits, name prefixes) only skip comparisons whose answer is no: every policy is the one the
+// unfiltered comparison gives.
+func TestMatchFiltersKeepMatches(t *testing.T) {
+	const body = `rules:
+  - managers: [gomod]
+    names: ['example.com/org/*']
+    group: a
+  - managers: [npm, cargo]
+    depTypes: [dependencies, devDependencies]
+    names: ['@scope/**', 'Newtonsoft.*']
+    group: b
+  - names: ['!actions/cache']
+    labels: [l]
+  - names: ['/^Org[0-9]+/']
+    group: c
+  - names: ['{a,b}/*', 'münze*']
+    group: d
+  - depTypes: [direct]
+    names: ['example.com/org/**']
+    group: e
+  - managers: [helm]
+    names: ['registry-1.docker.io/bitnamicharts/*']
+    group: f
+  - managers: [docker]
+    datasources: [docker]
+    names: ['K*']
+    group: g
+  - names: ['a/**']
+    group: h
+  - managers: [docker]
+    datasources: [apk]
+    registryUrls: ['https://example.com/alpine']
+  - managers: [gomod]
+    currentAge: '> 1 day'
+    group: i
+  - managers: [npm]
+    updateTypes: [major]
+    ignore: true
+  - names: ['example.com/org/x']
+    versioning: loose
+`
+	c, err := load(t, ".deps.yaml", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := filterRules(c)
+	deps := []dep.Dep{
+		{Manager: "gomod", Name: "example.com/org/x", DepType: "direct", Version: "v1.0.0"},
+		{Manager: "gomod", Name: "Example.com/ORG/y", DepType: "indirect", Version: "v1.0.0"},
+		{Manager: "npm", Name: "@scope/pkg", DepType: "dependencies", Version: "1.0.0"},
+		{Manager: "npm", Name: "newtonsoft.json", DepType: "devDependencies", Version: "1.0.0"},
+		{Manager: "cargo", Name: "serde", DepType: "dependencies", Version: "1.0.0"},
+		{Manager: "github-actions", Name: "actions/cache", DepType: "action", Version: "v4"},
+		{Manager: "github-actions", Name: "actions/checkout", DepType: "action", Version: "v4"},
+		{Manager: "helm", Name: "redis", Source: "oci://registry-1.docker.io/bitnamicharts", Version: "18.0.0"},
+		{Manager: "docker", Name: "Kibana", DepType: "compose", Datasource: "docker", Version: "8.0.0"},
+		{Manager: "docker", Name: "\u212Aibana", DepType: "compose", Datasource: "docker", Version: "8.0.0"},
+		{Manager: "docker", Name: "münze/img", DepType: "compose", Datasource: "docker", Version: "1.0"},
+		{Manager: "docker", Name: "curl", DepType: "install", Datasource: "apk", Version: "8.0.0"},
+		{Manager: "unknown-manager", Name: "a", DepType: "weird", Version: "1.0.0"},
+		{Manager: "gomod", Name: "a", Version: "v1.0.0"},
+		{Manager: "bundler", Name: "Org12/thing", DepType: "dependencies", Version: "1.0.0"},
+	}
+	for _, d := range deps {
+		for _, kind := range []dep.UpdateType{"", dep.Major, dep.Minor} {
+			for _, age := range []time.Duration{UnknownAge, 2 * day} {
+				got, want := c.PolicyAt(d, kind, age), plain.PolicyAt(d, kind, age)
+				if !reflect.DeepEqual(got, want) {
+					t.Errorf("%s %s (kind %q, age %v):\n got %+v\nwant %+v", d.Manager, d.Name, kind, age, got, want)
+				}
+			}
+		}
+		if got, want := c.RegistryURLs(d), plain.RegistryURLs(d); got != want {
+			t.Errorf("%s %s: registryUrls = %q, want %q", d.Manager, d.Name, got, want)
+		}
+		if got, want := c.WantsCurrentAge(d), plain.WantsCurrentAge(d); got != want {
+			t.Errorf("%s %s: wantsCurrentAge = %v, want %v", d.Manager, d.Name, got, want)
+		}
+	}
+	if got, want := c.UnusedRules(deps), plain.UnusedRules(deps); !slices.Equal(got, want) {
+		t.Errorf("unused = %v, want %v", got, want)
+	}
+	if len(c.UnusedRules(deps)) == len(c.Rules) {
+		t.Error("no rule matched any dep; the comparison proves nothing")
 	}
 }
