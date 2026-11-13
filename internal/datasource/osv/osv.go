@@ -106,6 +106,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	cvss30 "github.com/pandatix/go-cvss/30"
 	cvss31 "github.com/pandatix/go-cvss/31"
@@ -826,7 +827,13 @@ func (v *vuln) advisory() dep.Advisory {
 	if a.Summary == "" {
 		line, _, _ := strings.Cut(strings.TrimSpace(v.Details), "\n")
 		if len(line) > 120 {
-			line = line[:117] + "..."
+			// Cut on a rune boundary: a summary cut mid-rune reaches PR bodies and the
+			// `deps plan` output as invalid UTF-8.
+			cut := 117
+			for cut > 0 && !utf8.RuneStart(line[cut]) {
+				cut--
+			}
+			line = line[:cut] + "..."
 		}
 		a.Summary = line
 	}

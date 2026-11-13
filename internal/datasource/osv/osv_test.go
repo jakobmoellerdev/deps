@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -624,6 +625,16 @@ func TestAdvisorySummaryTruncated(t *testing.T) {
 	a := v.advisory()
 	if len(a.Summary) != 120 || !strings.HasSuffix(a.Summary, "...") || a.URL != "https://osv.dev/vulnerability/X%2F1" {
 		t.Errorf("advisory = %+v", a)
+	}
+	// A summary cut mid-rune would reach PR bodies and `deps plan` as invalid UTF-8: the
+	// 117th byte of this one is inside the "ü" that starts at byte 116.
+	v = vuln{ID: "X", Details: strings.Repeat("a", 116) + "ü" + strings.Repeat("b", 100)}
+	a = v.advisory()
+	if !utf8.ValidString(a.Summary) {
+		t.Errorf("Summary = %q, not valid UTF-8", a.Summary)
+	}
+	if want := strings.Repeat("a", 116) + "..."; a.Summary != want {
+		t.Errorf("Summary = %q, want %q", a.Summary, want)
 	}
 }
 
