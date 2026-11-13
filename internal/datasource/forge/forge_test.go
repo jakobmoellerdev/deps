@@ -183,25 +183,36 @@ func TestArchived(t *testing.T) {
 	}
 }
 
-// TestFiltersUnpublished drops drafts and prereleases (Gitea/Forgejo) and upcoming releases
-// (GitLab).
+// TestFiltersUnpublished drops drafts (Gitea/Forgejo) and upcoming releases (GitLab), and
+// keeps published prereleases: a dep pinned at one has no candidate without them.
 func TestFiltersUnpublished(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/v4/") {
 			fmt.Fprint(w, `[{"tag_name":"v3","upcoming_release":true},{"tag_name":"v2","released_at":null},{"tag_name":""},{"tag_name":"v2"}]`)
 			return
 		}
-		fmt.Fprint(w, `[{"tag_name":"v4","draft":true},{"tag_name":"v3-rc1","prerelease":true},{"tag_name":"v2"}]`)
+		fmt.Fprint(w, `[{"tag_name":"v4","draft":true},{"tag_name":"v3-rc1","prerelease":true,"published_at":"2026-01-02T03:04:05Z"},{"tag_name":"v2"}]`)
 	}))
 	defer srv.Close()
-	for _, ds := range []string{GitLabReleases, GiteaReleases} {
-		s := New(ds, srv.Client(), nil, newAuth())
-		rels, err := s.Releases(t.Context(), dep.Dep{Name: "o/r", Source: srv.URL}, "")
+	for _, tc := range []struct {
+		ds   string
+		want []string
+	}{{GitLabReleases, []string{"v2"}}, {GiteaReleases, []string{"v3-rc1", "v2"}}, {ForgejoReleases, []string{"v3-rc1", "v2"}}} {
+		s := New(tc.ds, srv.Client(), nil, newAuth())
+		d := dep.Dep{Name: "o/r", Source: srv.URL}
+		rels, err := s.Releases(t.Context(), d, "")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := versions(rels); !slices.Equal(got, []string{"v2"}) {
-			t.Errorf("%s releases = %v, want [v2]", ds, got)
+		if got := versions(rels); !slices.Equal(got, tc.want) {
+			t.Errorf("%s releases = %v, want %v", tc.ds, got, tc.want)
+		}
+		if tc.ds == GitLabReleases {
+			continue
+		}
+		at, err := s.ReleaseTime(t.Context(), d, "v3-rc1")
+		if err != nil || !at.Equal(time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)) {
+			t.Errorf("%s ReleaseTime(v3-rc1) = %v, %v", tc.ds, at, err)
 		}
 	}
 }

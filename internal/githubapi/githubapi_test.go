@@ -122,15 +122,15 @@ func TestReleasesGraphQLPaging(t *testing.T) {
 		pages int
 	}{{"v50", 1}, {"v150", 2}, {"v10", 2}, {"v99999", MaxPages}, {"v450", MaxPages}} {
 		var listed, complete bool
-		if err := c.Releases(ctx, oR, find(step.tag), func(l *List) { _, listed = l.Find(step.tag); complete = l.Complete(); n = len(l.Stable()) }); err != nil {
+		if err := c.Releases(ctx, oR, find(step.tag), func(l *List) { _, listed = l.Find(step.tag); complete = l.Complete(); n = len(l.Published()) }); err != nil {
 			t.Fatal(err)
 		}
 		if len(s.reqs) != step.pages || listed != (step.tag != "v99999") || complete {
 			t.Errorf("%s: %d pages, listed %v, complete %v", step.tag, len(s.reqs), listed, complete)
 		}
 	}
-	if n != MaxPages*98 { // one draft and one prerelease per page
-		t.Errorf("stable = %d", n)
+	if n != MaxPages*99 { // one draft per page; prereleases are listed
+		t.Errorf("published = %d", n)
 	}
 	for i, q := range s.reqs {
 		want := any(nil)
@@ -243,16 +243,16 @@ func TestReleasesREST(t *testing.T) {
 	ctx := t.Context()
 	var rel Release
 	var ok, complete bool
-	var stable []string
+	var published []string
 	err := c.Releases(ctx, oR, nil, func(l *List) {
 		rel, ok = l.Find("v2")
 		complete = l.Complete()
-		for _, s := range l.Stable() {
-			stable = append(stable, s.Version)
+		for _, s := range l.Published() {
+			published = append(published, s.Version)
 		}
 	})
-	if err != nil || !ok || rel.Published.Format(time.DateOnly) != "2026-10-30" || !complete || !slices.Equal(stable, []string{"v2"}) {
-		t.Errorf("list: %+v %v %v %v %v", rel, ok, complete, stable, err)
+	if err != nil || !ok || rel.Published.Format(time.DateOnly) != "2026-10-30" || !complete || !slices.Equal(published, []string{"v2", "v1-rc"}) {
+		t.Errorf("list: %+v %v %v %v %v", rel, ok, complete, published, err)
 	}
 	for _, c2 := range []struct{ asset, want string }{{"a", "sha256:ab"}, {"x", ""}} {
 		if got, err := c.AssetDigest(ctx, oR, "v2", c2.asset); err != nil || got != c2.want {
@@ -499,13 +499,13 @@ func TestCanceledCallerIsNotCached(t *testing.T) {
 		if err := c.Releases(ctx, oR, nil, func(*List) {}); err == nil {
 			t.Error("canceled Releases = nil error")
 		}
-		var stable []string
+		var published []string
 		if err := c.Releases(t.Context(), oR, nil, func(l *List) {
-			for _, rel := range l.Stable() {
-				stable = append(stable, rel.Version)
+			for _, rel := range l.Published() {
+				published = append(published, rel.Version)
 			}
-		}); err != nil || !slices.Equal(stable, []string{"v2", "v1"}) {
-			t.Errorf("Releases after the canceled caller = %q, %v", stable, err)
+		}); err != nil || !slices.Equal(published, []string{"v2", "v1"}) {
+			t.Errorf("Releases after the canceled caller = %q, %v", published, err)
 		}
 	})
 }

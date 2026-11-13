@@ -42,7 +42,7 @@ var GitLabTagsDoc = refdoc.Datasource{
 var GiteaReleasesDoc = refdoc.Datasource{
 	Name:         GiteaReleases,
 	NameForm:     giteaName(DefaultGiteaURL),
-	Endpoints:    "`GET <registryUrl>/api/v1/repos/<owner>/<repo>/releases?draft=false&limit=50`." + pages + " Drafts and prereleases are dropped; the version is the `tag_name`" + giteaRepo,
+	Endpoints:    "`GET <registryUrl>/api/v1/repos/<owner>/<repo>/releases?draft=false&limit=50`." + pages + " Drafts are dropped, prereleases are listed (the versioning drops them for a dep at a stable version); the version is the `tag_name`" + giteaRepo,
 	Auth:         giteaAuth,
 	ReleaseTimes: "`published_at`",
 }

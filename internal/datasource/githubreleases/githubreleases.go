@@ -24,9 +24,11 @@ type Source struct {
 // New returns the github-releases datasource.
 func New(gh *githubapi.Client) *Source { return &Source{gh: gh} }
 
-// Releases lists the non-draft, non-prerelease releases of d.Name (`owner/repo` on github.com
-// or `http(s)://host/owner/repo` on GitHub Enterprise Server), newest first. Pages are fetched
-// only until d.Version's release (a prerelease too) is listed, else up to githubapi.MaxPages:
+// Releases lists the published (non-draft) releases of d.Name (`owner/repo` on github.com
+// or `http(s)://host/owner/repo` on GitHub Enterprise Server), newest first, prereleases
+// included: a dep pinned at one (`v2.0.0-rc.1`) has no candidate without them, and the
+// versioning scheme is what keeps prereleases away from a dep at a stable version. Pages are
+// fetched only until d.Version's release is listed, else up to githubapi.MaxPages:
 // the list is ordered by creation, so every release created after the current one precedes
 // it. A higher release created before it (the current one is a backport) is missed only when
 // its whole line saw no release while a page of the current line's followed; Renovate lists
@@ -34,7 +36,7 @@ func New(gh *githubapi.Client) *Source { return &Source{gh: gh} }
 // modified.
 func (s *Source) Releases(ctx context.Context, d dep.Dep, _ string) ([]datasource.Release, error) {
 	var rels []datasource.Release
-	err := s.with(ctx, d.Name, d.Version, func(l *githubapi.List) { rels = l.Stable() })
+	err := s.with(ctx, d.Name, d.Version, func(l *githubapi.List) { rels = l.Published() })
 	return rels, err
 }
 

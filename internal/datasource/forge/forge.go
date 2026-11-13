@@ -172,7 +172,9 @@ type entry struct {
 }
 
 // version returns the entry's tag, commit and time, or ok=false for an entry that is not a
-// published stable release (a draft, prerelease or upcoming release).
+// published release (a draft, or an upcoming GitLab release). A prerelease is published and
+// is listed: a dep pinned at one (`v2.0.0-rc.1`) has no candidate otherwise, and the
+// versioning scheme is what keeps prereleases away from a dep at a stable version.
 func (s *Source) version(e entry) (tag, commit string, at time.Time, ok bool) {
 	switch {
 	case s.spec.tags && s.spec.gitlab:
@@ -182,12 +184,12 @@ func (s *Source) version(e entry) (tag, commit string, at time.Time, ok bool) {
 	case s.spec.gitlab:
 		return e.TagName, "", e.ReleasedAt, e.TagName != "" && !e.Upcoming
 	}
-	return e.TagName, "", e.PublishedAt, e.TagName != "" && !e.Draft && !e.Prerelease
+	return e.TagName, "", e.PublishedAt, e.TagName != "" && !e.Draft
 }
 
 // Releases lists the releases (tags) of d's repository (see ParseRepo), newest first; release
-// lists drop drafts, prereleases and upcoming releases. Tag releases carry the tag's commit as
-// Digest. The slice must not be modified.
+// lists drop drafts and upcoming releases. Tag releases carry the tag's commit as Digest. The
+// slice must not be modified.
 func (s *Source) Releases(ctx context.Context, d dep.Dep, _ string) ([]datasource.Release, error) {
 	l, err := s.list(ctx, d)
 	if err != nil {

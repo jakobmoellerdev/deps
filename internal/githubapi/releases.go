@@ -43,16 +43,16 @@ type Asset struct {
 // List is the cached release list of one repository, newest first and without drafts,
 // fetched page by page on demand. Its methods are only valid inside a Releases callback.
 type List struct {
-	mu       sync.Mutex
-	pages    int
-	cursor   string // GraphQL endCursor of the last page
-	done     bool   // no more pages are fetched: complete, MaxPages reached, or an error
-	complete bool   // every release is listed
-	archived bool   // the repository is archived (GraphQL only; REST lists do not say)
-	err      error
-	rels     []Release
-	byTag    map[string]int // index in rels
-	stable   []datasource.Release
+	mu        sync.Mutex
+	pages     int
+	cursor    string // GraphQL endCursor of the last page
+	done      bool   // no more pages are fetched: complete, MaxPages reached, or an error
+	complete  bool   // every release is listed
+	archived  bool   // the repository is archived (GraphQL only; REST lists do not say)
+	err       error
+	rels      []Release
+	byTag     map[string]int // index in rels
+	published []datasource.Release
 }
 
 // Find returns the release with tag name tag.
@@ -64,9 +64,11 @@ func (l *List) Find(tag string) (Release, bool) {
 	return l.rels[i], true
 }
 
-// Stable returns the non-prerelease releases as datasource releases (Version = tag). The
-// slice is shared and must not be modified.
-func (l *List) Stable() []datasource.Release { return slices.Clip(l.stable) }
+// Published returns the published releases as datasource releases (Version = tag),
+// prereleases included: a dep pinned at a prerelease has no candidate without them, and the
+// versioning scheme keeps prereleases away from a dep at a stable version. The slice is
+// shared and must not be modified.
+func (l *List) Published() []datasource.Release { return slices.Clip(l.published) }
 
 // Complete reports whether the list holds every release of the repository.
 func (l *List) Complete() bool { return l.complete }
@@ -78,9 +80,7 @@ func (l *List) Archived() bool { return l.archived }
 func (l *List) add(rel Release) {
 	l.byTag[rel.Tag] = len(l.rels)
 	l.rels = append(l.rels, rel)
-	if !rel.Prerelease {
-		l.stable = append(l.stable, datasource.Release{Version: rel.Tag})
-	}
+	l.published = append(l.published, datasource.Release{Version: rel.Tag})
 }
 
 // Releases runs fn on r's release list after fetching pages until enough reports true or no
@@ -118,7 +118,7 @@ func (c *Client) Releases(ctx context.Context, r Repo, enough func(*List) bool, 
 func (c *Client) next(ctx context.Context, r Repo, l *List) error {
 	start := time.Now()
 	graphql := c.GraphQL(r)
-	rels, stable := len(l.rels), len(l.stable)
+	rels := len(l.rels)
 	var more bool
 	var err error
 	if graphql {
@@ -129,7 +129,7 @@ func (c *Client) next(ctx context.Context, r Repo, l *List) error {
 	slog.DebugContext(ctx, "github releases page", "repo", r.Path(), "graphql", graphql, "page", l.pages+1,
 		"releases", len(l.rels), "duration", time.Since(start), "err", err)
 	if err != nil && ctx.Err() != nil {
-		l.rollback(rels, stable)
+		l.rollback(rels)
 		return fmt.Errorf("releases %s: %w", r.Path(), err)
 	}
 	l.pages++
@@ -146,13 +146,13 @@ func (c *Client) next(ctx context.Context, r Repo, l *List) error {
 
 // rollback drops the releases a page added before it failed, so that fetching it again does
 // not list them twice. A REST page is decoded release by release (see decodePage).
-func (l *List) rollback(rels, stable int) {
-	for i := rels; i < len(l.rels); i++ {
+func (l *List) rollback(n int) {
+	for i := n; i < len(l.rels); i++ {
 		if l.byTag[l.rels[i].Tag] == i {
 			delete(l.byTag, l.rels[i].Tag)
 		}
 	}
-	l.rels, l.stable = l.rels[:rels], l.stable[:stable]
+	l.rels, l.published = l.rels[:n], l.published[:n]
 }
 
 const releasesQuery = `query($owner:String!,$name:String!,$first:Int!,$cursor:String){repository(owner:$owner,name:$name){isArchived ` +

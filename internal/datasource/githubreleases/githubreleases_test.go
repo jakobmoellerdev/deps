@@ -97,7 +97,7 @@ func TestReleasesPagination(t *testing.T) {
 			}
 			var want []string
 			for k := range min(c.total, githubapi.MaxPages*githubapi.PageSize) {
-				if k%10 != 9 && k%7 != 6 {
+				if k%10 != 9 { // drafts are dropped, prereleases are listed
 					want = append(want, fmt.Sprintf("v1.%d.0", k))
 				}
 			}
@@ -124,7 +124,7 @@ func TestReleasesStopAtCurrentVersion(t *testing.T) {
 	}{
 		{"v1.50.0", 1, true},
 		{"1.50.0", 1, true},                    // v-less match, no new request
-		{"v1.13.0", 1, false},                  // a prerelease is listed too: no further page, but no candidate
+		{"v1.13.0", 1, true},                   // a prerelease is listed as a candidate of one
 		{"v1.150.0", 2, true},                  // page 2
 		{"v1.21.0", 2, true},                   // already listed
 		{"v9.0.0", githubapi.MaxPages, false},  // not released: all pages up to the cap
@@ -330,7 +330,7 @@ func TestAssetDigest(t *testing.T) {
 		t.Errorf("requests = %d, want 1 (cached)", reqs.Load())
 	}
 	rels, err := s.Releases(ctx, dep.Dep{Name: "o/r"}, "")
-	if err != nil || len(rels) != 2 || reqs.Load() != 1 {
+	if err != nil || len(rels) != 3 || reqs.Load() != 1 { // the prerelease is listed
 		t.Errorf("Releases after AssetDigest: %v, %v, reqs %d", rels, err, reqs.Load())
 	}
 	if _, err := s.AssetDigest(ctx, "bad", "1", "a"); err == nil {
@@ -426,8 +426,9 @@ func TestGraphQL(t *testing.T) {
 	}))
 	ctx := t.Context()
 	rels, err := s.Releases(ctx, dep.Dep{Name: "o/r", Version: "v1.150.0"}, "")
-	// Two pages of 100 without drafts (every 10th) and prereleases (every 7th).
-	if err != nil || len(rels) != 154 || rels[0].Version != "v1.0.0" || slices.ContainsFunc(rels, func(r datasource.Release) bool { return r.Version == "v1.6.0" || r.Version == "v1.9.0" }) {
+	// Two pages of 100 without the drafts (every 10th); prereleases (every 7th) are listed.
+	if err != nil || len(rels) != 180 || rels[0].Version != "v1.0.0" || !slices.ContainsFunc(rels, func(r datasource.Release) bool { return r.Version == "v1.6.0" }) ||
+		slices.ContainsFunc(rels, func(r datasource.Release) bool { return r.Version == "v1.9.0" }) {
 		t.Fatalf("Releases = %d releases, %v", len(rels), err)
 	}
 	if got, err := s.ReleaseTime(ctx, dep.Dep{Name: "o/r"}, "1.150.0"); err != nil || got.Format(time.DateOnly) != "2026-10-01" {
