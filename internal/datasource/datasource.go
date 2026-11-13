@@ -97,6 +97,15 @@ type SourceRepo interface {
 	SourceRepo(ctx context.Context, d dep.Dep, version string) (string, error)
 }
 
+// SourceRevision is implemented by datasources that know the source commit a published
+// artifact was built from (OCI `org.opencontainers.image.revision`). It is optional; it lets
+// release notes compare two artifacts that differ only by digest.
+type SourceRevision interface {
+	// SourceRevision returns the commit of d at ref (a version or, for OCI, a digest), or ""
+	// when the artifact does not name one.
+	SourceRevision(ctx context.Context, d dep.Dep, ref string) (string, error)
+}
+
 // Revision is the newest commit of a dependency that tracks one (a Go pseudo-version, an
 // action pinned to a commit without a version).
 type Revision struct {

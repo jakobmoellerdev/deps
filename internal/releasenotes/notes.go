@@ -151,7 +151,7 @@ func collect(ups []dep.Update) []item {
 			from = u.Dep.Locked
 		}
 		digestOnly := from == u.NewVersion
-		if digestOnly && !(gitDigest(u.Dep.Datasource) && u.Dep.Digest != "" && u.NewDigest != "" &&
+		if digestOnly && !(digestComparable(u.Dep.Datasource) && u.Dep.Digest != "" && u.NewDigest != "" &&
 			u.Dep.Digest != u.NewDigest) {
 			continue
 		}
@@ -183,17 +183,37 @@ func collect(ups []dep.Update) []item {
 	return items
 }
 
-// gitDigest reports whether a digest of the datasource is a git commit, so that a
-// commit-to-commit compare link of the source repository is meaningful. OCI digests
-// (docker) name a manifest, not a commit.
-func gitDigest(ds string) bool {
+// digestComparable reports whether two digests of the datasource can be turned into a
+// commit-to-commit compare link: git datasources pin the commit itself, an OCI digest names a
+// manifest, whose commit the image's `org.opencontainers.image.revision` label gives (see
+// Notes.commit).
+func digestComparable(ds string) bool {
 	switch ds {
-	case dsGitTags, dsGitRefs, dsGitHubReleases,
+	case dsGitTags, dsGitRefs, dsGitHubReleases, dsDocker,
 		forgeds.GiteaReleases, forgeds.GiteaTags, forgeds.ForgejoReleases, forgeds.ForgejoTags,
 		forgeds.GitLabReleases, forgeds.GitLabTags:
 		return true
 	}
 	return false
+}
+
+// commit returns the source commit a digest of d stands for: the digest itself for a git
+// datasource, and for an OCI artifact the `org.opencontainers.image.revision` label of that
+// manifest (one config fetch per digest, cached by the datasource). "" when unknown.
+func (n *Notes) commit(ctx context.Context, d dep.Dep, digest string) string {
+	if d.Datasource != dsDocker {
+		return digest
+	}
+	sr, ok := n.sources[dsDocker].(datasource.SourceRevision)
+	if !ok {
+		return ""
+	}
+	rev, err := sr.SourceRevision(ctx, d, digest)
+	if err != nil {
+		slog.DebugContext(ctx, "image revision unknown", "name", d.Name, "digest", digest, "err", err)
+		return ""
+	}
+	return rev
 }
 
 func less(a, b string) bool {
@@ -208,7 +228,11 @@ func (n *Notes) block(ctx context.Context, it item) block {
 		b.title = strings.TrimSpace(it.d.Name+" "+it.from) + " " +
 			dep.ShortDigest(it.fromDigest) + " → " + dep.ShortDigest(it.toDigest)
 	}
-	r, ok := n.resolve(ctx, it.d, it.to)
+	ref := it.to
+	if it.toDigest != "" && it.d.Datasource == dsDocker {
+		ref = it.toDigest // the same config fetch the revision label comes from
+	}
+	r, ok := n.resolve(ctx, it.d, ref)
 	if !ok {
 		slog.DebugContext(ctx, "release notes: no source repository", "name", it.d.Name, "datasource", it.d.Datasource)
 		return b
@@ -216,7 +240,13 @@ func (n *Notes) block(ctx context.Context, it item) block {
 	if it.fromDigest != "" {
 		// The version is unchanged, so there are no releases in between; the commit-to-commit
 		// diff is what the update changed (Renovate's helpers:*DigestChangelogs).
-		b.compare = r.compare(it.fromDigest, it.toDigest)
+		from, to := n.commit(ctx, it.d, it.fromDigest), n.commit(ctx, it.d, it.toDigest)
+		if from == "" || to == "" || from == to {
+			slog.DebugContext(ctx, "release notes: no commits for digest update", "name", it.d.Name,
+				"from", it.fromDigest, "to", it.toDigest)
+			return b
+		}
+		b.compare = r.compare(from, to)
 		return b
 	}
 	rels, err := n.releases(ctx, r)

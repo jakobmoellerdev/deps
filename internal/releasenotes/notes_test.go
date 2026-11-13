@@ -30,6 +30,7 @@ type fakeSource struct {
 	err   error
 	repo  string
 	tags  []string
+	revs  map[string]string // ref (digest) -> commit
 }
 
 func (f *fakeSource) Releases(context.Context, dep.Dep, string) ([]datasource.Release, error) {
@@ -51,6 +52,10 @@ func (f *fakeSource) ReleaseTime(_ context.Context, d dep.Dep, v string) (time.T
 
 func (f *fakeSource) SourceRepo(context.Context, dep.Dep, string) (string, error) {
 	return f.repo, f.err
+}
+
+func (f *fakeSource) SourceRevision(_ context.Context, _ dep.Dep, ref string) (string, error) {
+	return f.revs[ref], f.err
 }
 
 // plainSource implements only datasource.Datasource.
@@ -672,11 +677,23 @@ func TestSectionDigestOnly(t *testing.T) {
 	if len(f.reqs) != 0 {
 		t.Errorf("requests = %q, want none (no releases in between)", f.reqs)
 	}
-	// An OCI digest is no commit: no compare link.
-	d.Datasource, d.Digest = dsDocker, "sha256:"+strings.Repeat("a", 64)
-	u = dep.Update{Dep: d, NewVersion: "v4.1.0", NewDigest: "sha256:" + strings.Repeat("b", 64)}
+	// An OCI digest names a manifest: the image's revision label gives the two commits.
+	oldImg, newImg := "sha256:"+strings.Repeat("a", 64), "sha256:"+strings.Repeat("b", 64)
+	d.Datasource, d.Digest = dsDocker, oldImg
+	u = dep.Update{Dep: d, NewVersion: "v4.1.0", NewDigest: newImg}
+	img := &fakeSource{repo: "https://github.com/o/r", revs: map[string]string{
+		oldImg: strings.Repeat("c", 40), newImg: strings.Repeat("d", 40),
+	}}
+	n = f.newNotes(nil, nil, map[string]datasource.Datasource{dsDocker: img})
+	want = "https://github.com/o/r/compare/" + strings.Repeat("c", 40) + "..." + strings.Repeat("d", 40)
+	if got := n.Section(t.Context(), []dep.Update{u}); !strings.Contains(got, want) {
+		t.Errorf("docker digest section = %q, want compare link %q", got, want)
+	}
+	// Without revision labels there is no commit pair, so no link.
+	img.revs = nil
+	n = f.newNotes(nil, nil, map[string]datasource.Datasource{dsDocker: img})
 	if got := n.Section(t.Context(), []dep.Update{u}); got != "" {
-		t.Errorf("docker digest section = %q, want none", got)
+		t.Errorf("docker digest section without revisions = %q, want none", got)
 	}
 }
 

@@ -69,14 +69,20 @@ type tagListing struct {
 	meta map[string]tagMeta // tag → listed digest and time; nil unless the registry lists them
 }
 
-// imageConfig is what deps keeps of a tag's image config: its creation time and source label.
+// imageConfig is what deps keeps of a tag's image config: its creation time, source label and
+// the commit it was built from.
 type imageConfig struct {
-	created time.Time
-	source  string
+	created  time.Time
+	source   string
+	revision string
 }
 
-// sourceLabel is the OCI annotation (and image label) naming the image's source repository.
-const sourceLabel = "org.opencontainers.image.source"
+// sourceLabel is the OCI annotation (and image label) naming the image's source repository;
+// revisionLabel names the commit it was built from.
+const (
+	sourceLabel   = "org.opencontainers.image.source"
+	revisionLabel = "org.opencontainers.image.revision"
+)
 
 // New returns the docker datasource. Requests go through client's transport; sem bounds
 // concurrent registry operations and is shared with other datasources (nil = unbounded).
@@ -359,13 +365,28 @@ func (s *Source) SourceRepo(ctx context.Context, d dep.Dep, version string) (str
 	return c.source, err
 }
 
-// config fetches the image config of tag version of the canonical repository name once per
-// (repository, tag). On the pull-limited registry the tag is first resolved with the HEAD that
-// Digest shares, which is free, and the config is fetched once per (repository, digest): tags
-// of one image (postgres:18 and postgres:18.6) cost one counted manifest GET.
+// SourceRevision implements datasource.SourceRevision with the image's
+// `org.opencontainers.image.revision` label, the commit it was built from, from the same
+// config fetch as SourceRepo. ref is a tag or a digest (`sha256:…`).
+func (s *Source) SourceRevision(ctx context.Context, d dep.Dep, ref string) (string, error) {
+	name, err := repoName(d)
+	if err != nil {
+		return "", err
+	}
+	c, err := s.config(ctx, name, ref)
+	return c.revision, err
+}
+
+// config fetches the image config of tag or digest version of the canonical repository name
+// once per (repository, tag). On the pull-limited registry the tag is first resolved with the
+// HEAD that Digest shares, which is free, and the config is fetched once per (repository,
+// digest): tags of one image (postgres:18 and postgres:18.6) cost one counted manifest GET.
 func (s *Source) config(ctx context.Context, name, version string) (imageConfig, error) {
 	key, ref := name+":"+version, version
-	if s.limitsPulls(name) {
+	switch {
+	case isDigest(version):
+		key = name + "@" + version
+	case s.limitsPulls(name):
 		dg, err := s.digest(ctx, name, version)
 		if err != nil {
 			return imageConfig{}, fmt.Errorf("image config %s: %w", key, err)
@@ -373,13 +394,21 @@ func (s *Source) config(ctx context.Context, name, version string) (imageConfig,
 		key, ref = name+"@"+dg, dg
 	}
 	return s.configs.Do(ctx, key, func() (imageConfig, error) {
-		created, source, err := s.fetchConfig(ctx, name, ref)
+		c, err := s.fetchConfig(ctx, name, ref)
 		if err != nil {
 			err = s.pullLimitHint(name, fmt.Errorf("image config %s: %w", key, err))
 		}
-		slog.DebugContext(ctx, "image config fetched", "ref", key, "created", created, "source", source, "err", err)
-		return imageConfig{created, source}, err
+		slog.DebugContext(ctx, "image config fetched", "ref", key, "created", c.created,
+			"source", c.source, "revision", c.revision, "err", err)
+		return c, err
 	})
+}
+
+// isDigest reports whether ref is an OCI digest (`<algorithm>:<hex>`) rather than a tag; a
+// tag cannot contain a colon.
+func isDigest(ref string) bool {
+	alg, hex, ok := strings.Cut(ref, ":")
+	return ok && alg != "" && hex != ""
 }
 
 // limitsPulls reports whether the canonical repository name is on the pull-limited registry.
@@ -399,56 +428,58 @@ func (s *Source) pullLimitHint(name string, err error) error {
 
 // fetchConfig reads the config blob of ref (tag or digest): manifest, (index: first platform
 // manifest), config. Artifacts whose config is no image config (Helm charts) are not fetched
-// further: their manifest's `org.opencontainers.image.created` and `…source` annotations answer
-// instead; a Helm chart without the annotation (bitnamicharts, grafana and karpenter push
-// none) is dated by its chart archive (chartTime). An image config without `created` falls
-// back to the manifest annotation as well.
-func (s *Source) fetchConfig(ctx context.Context, name, ref string) (time.Time, string, error) {
+// further: their manifest's `org.opencontainers.image.created`, `…source` and `…revision`
+// annotations answer instead; a Helm chart without the annotation (bitnamicharts, grafana and
+// karpenter push none) is dated by its chart archive (chartTime). An image config without
+// `created` falls back to the manifest annotation as well.
+func (s *Source) fetchConfig(ctx context.Context, name, ref string) (imageConfig, error) {
 	release, err := httpx.Acquire(ctx, s.sem)
 	if err != nil {
-		return time.Time{}, "", err
+		return imageConfig{}, err
 	}
 	defer release()
 	repo, err := s.repository(name)
 	if err != nil {
-		return time.Time{}, "", err
+		return imageConfig{}, err
 	}
 	ctx = s.pullContext(ctx, repo)
 	desc, b, err := fetchManifest(ctx, repo, ref)
 	if err != nil {
-		return time.Time{}, "", err
+		return imageConfig{}, err
 	}
 	if isIndex(desc.MediaType) {
 		if desc, err = firstImage(b); err != nil {
-			return time.Time{}, "", err
+			return imageConfig{}, err
 		}
 		if b, err = content.FetchAll(ctx, repo, desc); err != nil {
-			return time.Time{}, "", err
+			return imageConfig{}, err
 		}
 	}
 	var m ocispec.Manifest
 	if err := json.Unmarshal(b, &m); err != nil {
-		return time.Time{}, "", fmt.Errorf("manifest %s: %w", desc.Digest, err)
+		return imageConfig{}, fmt.Errorf("manifest %s: %w", desc.Digest, err)
 	}
 	created, _ := time.Parse(time.RFC3339, m.Annotations[ocispec.AnnotationCreated])
-	source := m.Annotations[sourceLabel]
+	c := imageConfig{created: created, source: m.Annotations[sourceLabel], revision: m.Annotations[revisionLabel]}
 	if m.Config.MediaType != ocispec.MediaTypeImageConfig && m.Config.MediaType != mediaTypeDockerConfig {
-		if created.IsZero() {
-			created = chartTime(ctx, repo, m.Layers)
+		if c.created.IsZero() {
+			c.created = chartTime(ctx, repo, m.Layers)
 		}
-		return created, source, nil
+		return c, nil
 	}
 	if b, err = content.FetchAll(ctx, repo, m.Config); err != nil {
-		return time.Time{}, "", err
+		return imageConfig{}, err
 	}
 	var img ocispec.Image
 	if err := json.Unmarshal(b, &img); err != nil {
-		return time.Time{}, "", fmt.Errorf("config %s: %w", m.Config.Digest, err)
+		return imageConfig{}, fmt.Errorf("config %s: %w", m.Config.Digest, err)
 	}
 	if img.Created != nil {
-		created = *img.Created
+		c.created = *img.Created
 	}
-	return created, cmp.Or(img.Config.Labels[sourceLabel], source), nil
+	c.source = cmp.Or(img.Config.Labels[sourceLabel], c.source)
+	c.revision = cmp.Or(img.Config.Labels[revisionLabel], c.revision)
+	return c, nil
 }
 
 // mediaTypeHelmChart is the layer media type of a Helm chart archive (`helm push`).
