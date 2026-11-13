@@ -45,7 +45,7 @@ type Source struct {
 	rcs     datasource.Memo[string, []string] // workspace directory -> its .bazelrc registries
 
 	mu      sync.Mutex
-	located map[string]*module // file + "\x00" + name -> module of the Releases lookup
+	located map[string]*module // locatedKey(d) -> module of the Releases lookup
 }
 
 // module is a module's metadata.json: the versions that are not yanked, in registry order, and
@@ -90,10 +90,17 @@ func (*Source) Digest(_ context.Context, d dep.Dep, _ string) (string, error) {
 func (s *Source) SourceRepo(_ context.Context, d dep.Dep, _ string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if m := s.located[d.File+"\x00"+d.Name]; m != nil {
+	if m := s.located[locatedKey(d)]; m != nil {
 		return m.repo, nil
 	}
 	return "", nil
+}
+
+// locatedKey keys the located map: one MODULE.bazel can declare the same module twice with
+// different single_version_override registries, so the module of a lookup belongs to
+// (file, name, source), not to (file, name).
+func locatedKey(d dep.Dep) string {
+	return d.File + "\x00" + d.Name + "\x00" + d.Source
 }
 
 // lookup returns the module of d from the first of its registries that has it.
@@ -125,7 +132,7 @@ func (s *Source) lookup(ctx context.Context, d dep.Dep, dir string) (*module, er
 		}
 		if err == nil {
 			s.mu.Lock()
-			s.located[d.File+"\x00"+d.Name] = m
+			s.located[locatedKey(d)] = m
 			s.mu.Unlock()
 		}
 		return m, err

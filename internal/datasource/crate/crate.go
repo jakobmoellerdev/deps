@@ -47,7 +47,7 @@ type Source struct {
 	repos      datasource.Memo[string, string] // api + "\x00" + credential + "\x00" + name@version; "config\x00" + registry.key("") -> api
 	registries map[string]*registry            // index URL + "\x00" + token
 	configs    map[string]*configEntry         // manifest directory -> Cargo configuration
-	located    map[string]*registry            // file + "\x00" + name -> registry of the Releases lookup
+	located    map[string]*registry            // locatedKey(d) -> registry of the Releases lookup
 	clones     []string                        // git index clones, removed by Close
 }
 
@@ -90,7 +90,7 @@ func (s *Source) Releases(ctx context.Context, d dep.Dep, dir string) ([]datasou
 		return nil, err
 	}
 	s.mu.Lock()
-	s.located[d.File+"\x00"+d.Name] = r
+	s.located[locatedKey(d)] = r
 	s.mu.Unlock()
 	e, err := s.load(ctx, r, d.Name)
 	if err != nil {
@@ -102,10 +102,17 @@ func (s *Source) Releases(ctx context.Context, d dep.Dep, dir string) ([]datasou
 	return e.rels, nil
 }
 
+// locatedKey keys the located map: one manifest can declare the same crate twice (a
+// [dependencies] entry on crates.io and a [build-dependencies] entry with `registry = "…"`),
+// so the registry of a lookup belongs to (file, name, source), not to (file, name).
+func locatedKey(d dep.Dep) string {
+	return d.File + "\x00" + d.Name + "\x00" + d.Source
+}
+
 // locate returns the registry of d's Releases lookup, else crates.io.
 func (s *Source) locate(d dep.Dep) *registry {
 	s.mu.Lock()
-	r := s.located[d.File+"\x00"+d.Name]
+	r := s.located[locatedKey(d)]
 	s.mu.Unlock()
 	if r == nil {
 		r = s.registry("crates-io", "sparse+"+s.index, "", s.api)
@@ -127,7 +134,7 @@ func (s *Source) ReleaseTime(ctx context.Context, d dep.Dep, version string) (ti
 // earlier Releases lookup (complete by then).
 func (s *Source) Deprecation(d dep.Dep, version string) string {
 	s.mu.Lock()
-	r := s.located[d.File+"\x00"+d.Name]
+	r := s.located[locatedKey(d)]
 	s.mu.Unlock()
 	var e *entry
 	if r != nil {

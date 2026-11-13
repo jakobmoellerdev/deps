@@ -100,6 +100,42 @@ func TestReleasesDefaultRegistry(t *testing.T) {
 	}
 }
 
+// TestSourceRepoPerRegistry pins that two deps of the same file and module name but different
+// registries keep their own metadata: the located module is keyed by the source too, so the
+// order in which the scheduler runs the Releases lookups cannot swap their source repository.
+func TestSourceRepoPerRegistry(t *testing.T) {
+	var hits atomic.Int32
+	bcr := registry(t, &hits, nil)
+	fork := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/modules/rules_go/metadata.json" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"versions":["0.65.0"],"repository":["github:acme/rules_go"]}`))
+	}))
+	t.Cleanup(fork.Close)
+	s := New(bcr.Client(), nil, nil, env(map[string]string{"DEPS_BAZEL_REGISTRY_URL": bcr.URL + "/"}))
+	dir := t.TempDir()
+	def := dep.Dep{Name: "rules_go", File: "MODULE.bazel"}
+	overridden := dep.Dep{Name: "rules_go", File: "MODULE.bazel", Source: fork.URL}
+	for _, d := range []dep.Dep{def, overridden} {
+		if _, err := s.Releases(t.Context(), d, dir); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, c := range []struct {
+		d    dep.Dep
+		want string
+	}{
+		{def, "https://github.com/bazel-contrib/rules_go"},
+		{overridden, "https://github.com/acme/rules_go"},
+	} {
+		if got, err := s.SourceRepo(t.Context(), c.d, "0.65.0"); err != nil || got != c.want {
+			t.Errorf("SourceRepo(source %q) = %q, %v; want %q", c.d.Source, got, err, c.want)
+		}
+	}
+}
+
 // The .bazelrc of brpc and github/codeql name several registries; the first that has the
 // module answers. Platform tokens go to custom registry hosts only.
 func TestReleasesBazelrcRegistries(t *testing.T) {

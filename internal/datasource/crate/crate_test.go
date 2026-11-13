@@ -38,6 +38,9 @@ func serve(t *testing.T, hits *atomic.Int32) *httptest.Server {
 		case "/index/2/cc":
 			fmt.Fprintln(w, `{"name":"cc","vers":"1.0.0","yanked":false}`)
 			fmt.Fprintln(w, `{"name":"cc","vers":"1.1.0","yanked":true}`)
+		case "/private/2/cc":
+			fmt.Fprintln(w, `{"name":"cc","vers":"1.0.0","yanked":false}`)
+			fmt.Fprintln(w, `{"name":"cc","vers":"1.1.0","yanked":false}`)
 		case "/index/1/a", "/index/3/a/abc":
 			fmt.Fprintln(w, `{"name":"a","vers":"0.1.0","yanked":true}`)
 		case "/index/br/ok/broken":
@@ -149,6 +152,31 @@ func TestReleases(t *testing.T) {
 		if got, _ := s.Best(tc.cur, cands, nil, nil); got != tc.want {
 			t.Errorf("%s %s: best = %q, want %q", tc.scheme, tc.cur, got, tc.want)
 		}
+	}
+}
+
+// TestDeprecationPerRegistry pins that two deps of the same manifest and crate name but
+// different registries (`cc = "1"` under [dependencies] and `cc = { version = "1", registry =
+// "private" }` under [build-dependencies]) keep their own index: the located registry is keyed
+// by the source too, so the order of the Releases lookups cannot swap their yanked versions.
+func TestDeprecationPerRegistry(t *testing.T) {
+	var hits atomic.Int32
+	srv := serve(t, &hits)
+	s := newSource(srv)
+	dir := t.TempDir()
+	cratesIO := dep.Dep{Name: "cc", File: "Cargo.toml", Version: "1.0.0"}
+	private := dep.Dep{Name: "cc", File: "Cargo.toml", Version: "1.0.0", Source: "sparse+" + srv.URL + "/private/"}
+	for _, d := range []dep.Dep{cratesIO, private} {
+		if _, err := s.Releases(t.Context(), d, dir); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 1.1.0 is yanked on crates.io and published on the private registry.
+	if got := s.Deprecation(cratesIO, "1.1.0"); got != "version 1.1.0 yanked" {
+		t.Errorf("Deprecation(crates.io) = %q, want the yanked 1.1.0", got)
+	}
+	if got := s.Deprecation(private, "1.1.0"); got != "" {
+		t.Errorf("Deprecation(private) = %q, want none", got)
 	}
 }
 
