@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 )
 
-// CopyTree copies the tree at src to dst, keeping file modes and symlinks. Directories below
-// src for which skip reports true are left out.
+// CopyTree copies the tree at src to dst, keeping file modes and symlinks. The entries below
+// src for which skip reports true are left out, a directory with everything below it.
 func CopyTree(src, dst string, skip func(path string, d fs.DirEntry) bool) error {
 	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -18,12 +18,15 @@ func CopyTree(src, dst string, skip func(path string, d fs.DirEntry) bool) error
 		if err != nil {
 			return err
 		}
+		if rel != "." && skip(p, d) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		to := filepath.Join(dst, rel)
 		switch t := d.Type(); {
 		case t.IsDir():
-			if rel != "." && skip(p, d) {
-				return filepath.SkipDir
-			}
 			return os.MkdirAll(to, 0o755)
 		case t&fs.ModeSymlink != 0:
 			target, err := os.Readlink(p)

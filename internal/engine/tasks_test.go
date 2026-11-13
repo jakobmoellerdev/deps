@@ -237,6 +237,41 @@ func TestBuildWithTasksFiles(t *testing.T) {
 	}
 }
 
+// The files git ignores are left out of the copy the commands run in: they can never become a
+// change, and on a CI checkout they are most of its bytes. A tracked file an ignore rule
+// matches (git add -f) is not one of them, and a file a command creates still becomes a
+// change.
+func TestBuildWithTasksIgnored(t *testing.T) {
+	dir := t.TempDir()
+	repo(t, dir, map[string]string{".gitignore": "node_modules/\n*.log\nforced.txt\n", "a.txt": "a\n"})
+	for name, content := range map[string]string{"forced.txt": "f\n", "debug.log": "l\n", "node_modules/dep/index.js": "d\n", "node_modules/top.js": "t\n"} {
+		p := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git(t, dir, "add", "-f", "forced.txt")
+	git(t, dir, "commit", "-qm", "forced")
+	base := git(t, dir, "rev-parse", "HEAD")
+	ups := []dep.Update{{Tasks: dep.Tasks{Commands: []string{
+		`for f in node_modules/dep/index.js node_modules/top.js debug.log forced.txt a.txt; do [ -e "$f" ] && echo "$f" >> seen.txt; done; echo gen > gen.txt`,
+	}}}}
+	got, err := BuildWithTasks(t.Context(), dir, base, ups, nil, TaskAllowlist{"*"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	for _, c := range got {
+		paths = append(paths, c.Path+"="+string(c.New))
+	}
+	if want := []string{"gen.txt=gen\n", "seen.txt=forced.txt\na.txt\n"}; !slices.Equal(paths, want) {
+		t.Errorf("changes = %q, want %q", paths, want)
+	}
+}
+
 // apply keeps what files allow: other files the commands changed below --dir return to their
 // state before them (the build's or the user's changes included); ignored files stay.
 func TestApplyTasksFiles(t *testing.T) {

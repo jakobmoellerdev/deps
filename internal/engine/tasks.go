@@ -180,16 +180,16 @@ func runTasks(ctx context.Context, dir string, runs []TaskRun) error {
 }
 
 // BuildWithTasks runs the postUpgradeTasks of ups on changes, the build of ups on the checkout
-// root, which is commit head. The top of root's work tree is copied without .git to a
-// temporary directory and made a throwaway repository of head (scratchRepo), changes are
-// written into it and the runs (TaskRuns) run in root's directory there, so git works for them as in the
-// checkout, but every write lands in the copy. The copy's changes against head below root
-// (git add -A, so .gitignore decides) then replace changes. The checkout's repository is only
-// read. Submodule pointers cannot change: a command that moves a submodule's HEAD fails the
-// group, and files inside submodules never become changes; the tasks' files globs limit what
-// the commands add to changes (taskFilter), and a symlink they create, change or delete there
-// fails the group. A command allow does not allow fails it before anything runs; without
-// tasks it returns changes.
+// root, which is commit head. The top of root's work tree is copied without .git and without
+// the files git ignores (copySkip) to a temporary directory and made a throwaway repository of
+// head (scratchRepo), changes are written into it and the runs (TaskRuns) run in root's
+// directory there, so git works for them as in the checkout, but every write lands in the
+// copy. The copy's changes against head below root (git add -A, so .gitignore decides) then
+// replace changes. The checkout's repository is only read. Submodule pointers cannot change: a
+// command that moves a submodule's HEAD fails the group, and files inside submodules never
+// become changes; the tasks' files globs limit what the commands add to changes (taskFilter),
+// and a symlink they create, change or delete there fails the group. A command allow does not
+// allow fails it before anything runs; without tasks it returns changes.
 func BuildWithTasks(ctx context.Context, root, head string, ups []dep.Update, changes []FileChange, allow TaskAllowlist) ([]FileChange, error) {
 	runs := TaskRuns(ups)
 	if len(runs) == 0 {
@@ -209,7 +209,7 @@ func BuildWithTasks(ctx context.Context, root, head string, ups []dep.Update, ch
 	}
 	defer os.RemoveAll(tmp)
 	top := filepath.Join(tmp, "tree")
-	if err := toolrun.CopyTree(realTop, top, func(_ string, d fs.DirEntry) bool { return d.Name() == ".git" }); err != nil {
+	if err := toolrun.CopyTree(realTop, top, copySkip(ctx, realTop)); err != nil {
 		return nil, err
 	}
 	links, subs, err := scratchRepo(ctx, realTop, top, head)
@@ -250,6 +250,31 @@ func BuildWithTasks(ctx context.Context, root, head string, ups []dep.Update, ch
 		return nil, err
 	}
 	return taskFilter(ups, changes, after), nil
+}
+
+// copySkip is the toolrun.CopyTree filter for the work tree top: .git, and the entries git
+// ignores there, whole directories (node_modules, .venv, target, vendor) collapsed into one
+// entry by `git ls-files --directory`. An ignored file cannot become a change, since the copy
+// is diffed through `git add -A`, so copying it would only cost the bytes of a CI checkout's
+// build output, once per PR group. git decides rather than the gitignore package: the index
+// is part of the answer (a tracked file an ignore rule matches, git add -f, is not ignored
+// and must stay, or `git add -A` would report it deleted), as are core.excludesFile and
+// .git/info/exclude. When git cannot list them, everything but .git is copied as before.
+func copySkip(ctx context.Context, top string) func(string, fs.DirEntry) bool {
+	out, err := gitOut(ctx, top, nil, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory", "--no-empty-directory")
+	if err != nil {
+		return func(_ string, d fs.DirEntry) bool { return d.Name() == ".git" }
+	}
+	ignored := map[string]bool{}
+	for e := range strings.SplitSeq(out, "\x00") {
+		if e = strings.TrimSuffix(e, "/"); e != "" {
+			ignored[e] = true
+		}
+	}
+	prefix := top + string(os.PathSeparator)
+	return func(p string, d fs.DirEntry) bool {
+		return d.Name() == ".git" || ignored[filepath.ToSlash(strings.TrimPrefix(p, prefix))]
+	}
 }
 
 // taskFilter returns after, the changes with the tasks' output, limited to the paths the tasks'
