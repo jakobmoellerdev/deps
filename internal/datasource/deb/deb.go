@@ -155,7 +155,9 @@ func (s *Source) want(comp, pkg string) {
 
 // Releases lists the versions of package d.Name in the components of d's registry URLs
 // (datasource.Datasource), merged in registry and component order, each once. A component
-// whose index fails is skipped when another one lists the package, as in Renovate.
+// whose index fails is skipped when another one lists the package, as in Renovate. The
+// indexes still missing are scanned concurrently (see prefetch), so a registry's components
+// cost the longest download instead of their sum.
 func (s *Source) Releases(ctx context.Context, d dep.Dep, _ string) ([]datasource.Release, error) {
 	var comps []string
 	for _, r := range registries(d) {
@@ -164,6 +166,9 @@ func (s *Source) Releases(ctx context.Context, d dep.Dep, _ string) ([]datasourc
 			return nil, err
 		}
 		comps = append(comps, cs...)
+	}
+	if len(comps) > 1 {
+		s.prefetch(ctx, comps, d.Name)
 	}
 	var out []datasource.Release
 	var errs []error
@@ -191,6 +196,32 @@ func (s *Source) Releases(ctx context.Context, d dep.Dep, _ string) ([]datasourc
 		return nil, errors.Join(errs...)
 	}
 	return nil, fmt.Errorf("deb package %s not found in %s", d.Name, strings.Join(registries(d), " "))
+}
+
+// prefetch starts the scan of the component indexes of comps that no caller has shared yet,
+// one goroutine each (the request pool still bounds them), and waits for them: the default
+// Debian `main,contrib,non-free` and Ubuntu's `main,universe,multiverse,restricted` otherwise
+// download their indexes one after another, and universe's Packages.gz alone is tens of MB.
+// The scans are the same ones the caller's loop would run, memoised under the same keys, so
+// its results and errors do not change; a single missing index is left to the caller.
+func (s *Source) prefetch(ctx context.Context, comps []string, pkg string) {
+	n := 0
+	for _, c := range comps {
+		if _, ok := s.indexes.Peek(c); !ok {
+			n++
+		}
+	}
+	if n < 2 {
+		return
+	}
+	var wg sync.WaitGroup
+	for _, c := range comps {
+		if _, ok := s.indexes.Peek(c); ok {
+			continue
+		}
+		wg.Go(func() { _, _ = s.lookup(ctx, c, pkg) })
+	}
+	wg.Wait()
 }
 
 // Digest is unsupported: package versions are not digest-pinned.
