@@ -34,6 +34,7 @@ type Fetcher interface {
 // repository, then the file's blob. Results are cached, so a file several configs extend (a
 // multi-repository run) is fetched once, and the fetched repositories are kept until Close,
 // so the files of one repository and ref (presets of a config repository) share one fetch.
+// Fetches of different files and repositories run concurrently; Close must not.
 type GitFetcher struct {
 	// Server returns the base URL of the forge owner/name entries are on, e.g.
 	// https://github.com; it is called at most once, when such an entry is first fetched.
@@ -43,43 +44,82 @@ type GitFetcher struct {
 	// credential helpers apply to other hosts and when Auth has none. nil = git's only.
 	Auth *httpx.Auth
 
-	mu        sync.Mutex
+	serverMu  sync.Mutex // held while Server is called: it answers once
 	server    string
 	serverErr error
 	serverSet bool
-	cache     map[extendref.Extend]fetched
-	dir       string // the parent of the fetched repositories; "" before the first fetch
-	repos     map[gitRef]fetchedRepo
+
+	mu    sync.Mutex // guards the maps and dir, never held while git runs
+	cache map[extendref.Extend]*call[[]byte]
+	dir   string // the parent of the fetched repositories; "" before the first fetch
+	repos map[gitRef]*call[string]
 }
 
 // gitRef is a ref of a repository: what one fetch reads.
 type gitRef struct{ url, ref string }
 
-type fetchedRepo struct {
-	dir string // the bare repository with the ref as FETCH_HEAD
-	err error
+// call is the result of one fetch, shared by the callers that ask for the same thing.
+type call[T any] struct {
+	done     chan struct{} // closed once v and err are set
+	v        T
+	err      error
+	canceled bool // the context of the caller that ran it ended: the result is not its state
 }
 
-type fetched struct {
-	data []byte
-	err  error
+// share runs fn for key once: callers that ask for the same key while it runs wait for its
+// result instead of running fn again, callers for other keys run it concurrently. A result
+// produced after its caller's context ended is not kept, and a caller waiting for it runs fn
+// itself.
+func share[K comparable, T any](ctx context.Context, mu *sync.Mutex, m map[K]*call[T], key K, fn func(context.Context) (T, error)) (T, error) {
+	for {
+		mu.Lock()
+		c, ok := m[key]
+		if !ok {
+			c = &call[T]{done: make(chan struct{})}
+			m[key] = c
+			mu.Unlock()
+			c.v, c.err = fn(ctx)
+			if c.canceled = ctx.Err() != nil; c.canceled {
+				mu.Lock()
+				delete(m, key)
+				mu.Unlock()
+			}
+			close(c.done)
+			return c.v, c.err
+		}
+		mu.Unlock()
+		select {
+		case <-c.done:
+		case <-ctx.Done():
+			var zero T
+			return zero, ctx.Err()
+		}
+		if !c.canceled {
+			return c.v, c.err
+		}
+	}
+}
+
+// calls returns the fetches of files and of repositories, made on first use (and after
+// Close, which drops the repositories).
+func (g *GitFetcher) calls() (map[extendref.Extend]*call[[]byte], map[gitRef]*call[string]) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.cache == nil {
+		g.cache = map[extendref.Extend]*call[[]byte]{}
+	}
+	if g.repos == nil {
+		g.repos = map[gitRef]*call[string]{}
+	}
+	return g.cache, g.repos
 }
 
 // Fetch implements Fetcher.
 func (g *GitFetcher) Fetch(ctx context.Context, e extendref.Extend) ([]byte, error) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if r, ok := g.cache[e]; ok {
-		return r.data, r.err
-	}
-	data, err := g.fetch(ctx, e)
-	if ctx.Err() == nil { // a canceled fetch is not the file's state
-		if g.cache == nil {
-			g.cache = map[extendref.Extend]fetched{}
-		}
-		g.cache[e] = fetched{data, err}
-	}
-	return data, err
+	cache, _ := g.calls()
+	return share(ctx, &g.mu, cache, e, func(ctx context.Context) ([]byte, error) {
+		return g.fetch(ctx, e)
+	})
 }
 
 // repoURL returns the git URL of e.Repo: the URL itself, or owner/name on the forge.
@@ -87,6 +127,8 @@ func (g *GitFetcher) repoURL(ctx context.Context, e extendref.Extend) (string, e
 	if e.IsURL() {
 		return e.Repo, nil
 	}
+	g.serverMu.Lock()
+	defer g.serverMu.Unlock()
 	if !g.serverSet {
 		g.serverSet = true
 		if g.Server == nil {
@@ -119,22 +161,19 @@ func (g *GitFetcher) fetch(ctx context.Context, e extendref.Extend) ([]byte, err
 }
 
 // repo returns the bare repository r is fetched into, fetching it the first time; like
-// Fetch's results, a failure is cached unless ctx ended.
+// Fetch's results, a failure is cached unless ctx ended, and callers asking for the ref
+// while it is fetched share that fetch.
 func (g *GitFetcher) repo(ctx context.Context, r gitRef) (string, error) {
-	if f, ok := g.repos[r]; ok {
-		return f.dir, f.err
-	}
-	dir, err := g.fetchRepo(ctx, r)
-	if ctx.Err() == nil {
-		if g.repos == nil {
-			g.repos = map[gitRef]fetchedRepo{}
-		}
-		g.repos[r] = fetchedRepo{dir, err}
-	}
-	return dir, err
+	_, repos := g.calls()
+	return share(ctx, &g.mu, repos, r, func(ctx context.Context) (string, error) {
+		return g.fetchRepo(ctx, r)
+	})
 }
 
-func (g *GitFetcher) fetchRepo(ctx context.Context, r gitRef) (string, error) {
+// parent returns the directory the fetched repositories are created in, made on first use.
+func (g *GitFetcher) parent() (string, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	if g.dir == "" {
 		dir, err := os.MkdirTemp("", "deps-extends-*")
 		if err != nil {
@@ -142,7 +181,15 @@ func (g *GitFetcher) fetchRepo(ctx context.Context, r gitRef) (string, error) {
 		}
 		g.dir = dir
 	}
-	dir, err := os.MkdirTemp(g.dir, "repo-*")
+	return g.dir, nil
+}
+
+func (g *GitFetcher) fetchRepo(ctx context.Context, r gitRef) (string, error) {
+	parent, err := g.parent()
+	if err != nil {
+		return "", err
+	}
+	dir, err := os.MkdirTemp(parent, "repo-*")
 	if err != nil {
 		return "", err
 	}
@@ -268,7 +315,9 @@ type loader struct {
 	// not validated.
 	incomplete bool
 	seen       map[string]bool
-	stack      []string // the chain being loaded, for cycle errors
+	// files are the contents of the extends entries read ahead (prefetch), by Extend key.
+	files map[string]fetched
+	stack []string // the chain being loaded, for cycle errors
 }
 
 // add decodes src, loads the files it extends, then appends it as a layer. Problems of the
@@ -303,6 +352,7 @@ func (l *loader) add(src []byte, name, display string, via int) error {
 	if via < 0 {
 		l.localPos, l.extends = d.pos, exts
 	}
+	l.prefetch(exts, d)
 	for i, s := range exts {
 		field := fmt.Sprintf("extends[%d]", i)
 		if d.suppressed(field) {
@@ -321,6 +371,68 @@ func (l *loader) add(src []byte, name, display string, via int) error {
 	}
 	l.layers = append(l.layers, layer{name: name, display: display, root: root, pos: d.pos, bad: d.bad, via: via})
 	return nil
+}
+
+// maxExtendsFetches is how many extended files are read at once (git processes).
+const maxExtendsFetches = 8
+
+// fetched is the result of reading one extends entry.
+type fetched struct {
+	data []byte
+	err  error
+}
+
+// prefetch reads the files of the extends entries exts at once, so that entries of different
+// repositories cost one read instead of their sum (GitFetcher fetches different repositories
+// concurrently). The walk below takes them from l.files, so no entry is read twice; entries
+// it skips are left out.
+func (l *loader) prefetch(exts []string, d *decoder) {
+	if l.fetch == nil || len(exts) < 2 {
+		return
+	}
+	type result struct {
+		key string
+		fetched
+	}
+	results := make([]result, len(exts))
+	queued := map[string]bool{}
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, maxExtendsFetches)
+	for i, s := range exts {
+		if d.suppressed(fmt.Sprintf("extends[%d]", i)) {
+			continue
+		}
+		e, err := extendref.Parse(s)
+		if err != nil {
+			continue // the walk reports why the entry cannot be loaded
+		}
+		key := e.String()
+		_, done := l.files[key]
+		if done || queued[key] || l.seen[key] {
+			continue
+		}
+		queued[key] = true
+		wg.Go(func() {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			data, err := l.fetch.Fetch(l.ctx, e)
+			results[i] = result{key, fetched{data, err}}
+		})
+	}
+	wg.Wait()
+	for _, r := range results {
+		if r.key != "" {
+			l.files[r.key] = r.fetched
+		}
+	}
+}
+
+// read returns the content of the file e names: the one prefetch read ahead, or a fetch.
+func (l *loader) read(e extendref.Extend) ([]byte, error) {
+	if f, ok := l.files[e.String()]; ok {
+		return f.data, f.err
+	}
+	return l.fetch.Fetch(l.ctx, e)
 }
 
 // extend loads the file of extends entry s, reached through the local file's entry via;
@@ -345,7 +457,7 @@ func (l *loader) extend(s string, via int) string {
 	if l.fetch == nil {
 		return "extends is not supported by this command"
 	}
-	data, err := l.fetch.Fetch(l.ctx, e)
+	data, err := l.read(e)
 	if err != nil {
 		return fmt.Sprintf("%s: %v", key, err)
 	}

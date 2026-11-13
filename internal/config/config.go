@@ -969,7 +969,7 @@ func loadChain(ctx context.Context, src []byte, p, display string, fetch Fetcher
 	if seen == nil {
 		seen = map[string]bool{}
 	}
-	l := &loader{ctx: ctx, fetch: fetch, path: p, seen: seen, fields: map[reflect.Type][]structField{}}
+	l := &loader{ctx: ctx, fetch: fetch, path: p, seen: seen, files: map[string]fetched{}, fields: map[reflect.Type][]structField{}}
 	if err := l.add(src, p, display, -1); err != nil {
 		return nil, err
 	}

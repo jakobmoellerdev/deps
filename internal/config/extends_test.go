@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config/extendref"
@@ -17,14 +18,18 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
 )
 
-// fakeFetcher serves extended files by Extend.String(), counting fetches.
+// fakeFetcher serves extended files by Extend.String(), counting fetches. The loader reads
+// the entries of a file at once, so Fetch is called concurrently.
 type fakeFetcher struct {
 	files map[string]string
+	mu    sync.Mutex
 	calls []string
 }
 
 func (f *fakeFetcher) Fetch(_ context.Context, e extendref.Extend) ([]byte, error) {
+	f.mu.Lock()
 	f.calls = append(f.calls, e.String())
+	f.mu.Unlock()
 	s, ok := f.files[e.String()]
 	if !ok {
 		return nil, errors.New("not found")
@@ -490,5 +495,95 @@ func TestGitFetcherHelperAnswers(t *testing.T) {
 	out, err := cmd.Output()
 	if err != nil || !strings.Contains(string(out), "username=x-access-token\n") || !strings.Contains(string(out), "password=tok\n") {
 		t.Errorf("git credential fill = %q, %v", out, err)
+	}
+}
+
+// TestGitFetcherConcurrent reads several files of two repositories and three refs at once:
+// each ref is fetched once and every caller gets its file (run with -race).
+func TestGitFetcherConcurrent(t *testing.T) {
+	u1 := gitRepo(t, map[string]string{".deps.yaml": "pin: digest\n", "presets/go.yaml": "rules: [{managers: [gomod], group: go}]\n"})
+	u2 := gitRepo(t, map[string]string{".deps.yaml": "pin: keep\n"})
+	g := &GitFetcher{}
+	defer g.Close()
+	cases := []struct {
+		e    extendref.Extend
+		want string
+	}{
+		{extendref.Extend{Repo: u1, Path: ".deps.yaml"}, "pin: digest\n"},
+		{extendref.Extend{Repo: u1, Path: "presets/go.yaml"}, "rules: [{managers: [gomod], group: go}]\n"},
+		{extendref.Extend{Repo: u1, Path: ".deps.yaml", Ref: "v1"}, "pin: digest\n"},
+		{extendref.Extend{Repo: u2, Path: ".deps.yaml"}, "pin: keep\n"},
+	}
+	var wg sync.WaitGroup
+	for range 4 {
+		for _, tc := range cases {
+			wg.Go(func() {
+				got, err := g.Fetch(t.Context(), tc.e)
+				if err != nil || string(got) != tc.want {
+					t.Errorf("Fetch(%v) = %q, %v; want %q", tc.e, got, err, tc.want)
+				}
+			})
+		}
+	}
+	wg.Wait()
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if len(g.repos) != 3 {
+		t.Errorf("fetched repositories = %d, want 3 (two refs of %s, one of %s)", len(g.repos), u1, u2)
+	}
+}
+
+// TestLoadExtendsSeveralRepos loads a config extending files of several repositories, which
+// are read at once: the layers keep the order of the entries.
+func TestLoadExtendsSeveralRepos(t *testing.T) {
+	var urls, entries []string
+	for i := range 3 {
+		urls = append(urls, gitRepo(t, map[string]string{".deps.yaml": fmt.Sprintf("rules: [{names: [n%d], group: g%d}]\n", i, i)}))
+		entries = append(entries, "  - "+urls[i]+"//.deps.yaml\n")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".deps.yaml"), []byte("extends:\n"+strings.Join(entries, "")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	g := &GitFetcher{}
+	defer g.Close()
+	c, err := Load(t.Context(), dir, "", g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var groups []string
+	for i := range c.Rules {
+		groups = append(groups, c.Rules[i].Group)
+	}
+	if want := []string{"g0", "g1", "g2"}; !slices.Equal(groups, want) {
+		t.Errorf("rule groups = %q, want %q", groups, want)
+	}
+	if got, want := len(c.Extends), 3; got != want {
+		t.Errorf("extends = %d, want %d", got, want)
+	}
+}
+
+// BenchmarkLoadExtendsRepos loads a config extending one file of each of six repositories:
+// they are fetched at once, so the wait is the slowest fetch, not their sum.
+func BenchmarkLoadExtendsRepos(b *testing.B) {
+	var entries []string
+	for i := range 6 {
+		u := gitRepo(b, map[string]string{".deps.yaml": fmt.Sprintf("rules: [{names: [n%d], group: g%d}]\n", i, i)})
+		entries = append(entries, "  - "+u+"//.deps.yaml\n")
+	}
+	dir := b.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".deps.yaml"), []byte("extends:\n"+strings.Join(entries, "")), 0o644); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		g := &GitFetcher{}
+		c, err := Load(b.Context(), dir, "", g)
+		if err != nil || len(c.Rules) != len(entries) {
+			b.Fatalf("Load = %v, %v", c, err)
+		}
+		if err := g.Close(); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
