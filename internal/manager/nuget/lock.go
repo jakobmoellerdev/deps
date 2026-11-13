@@ -159,8 +159,9 @@ func (*nugetManager) LockRoots(root string, files []string) []manager.LockRoot {
 // LockMaintainer): it refreshes the packages.lock.json files of the repository with `dotnet
 // restore --use-lock-file` in a temporary copy of it. A version an MSBuild file sets can reach
 // any project below it (Directory.Packages.props, Directory.Build.props, imports), so the
-// scope is the repository and every lockfile in it is restored. The working tree is never
-// touched. Locks memoizes the scans of the repository; without it every call scans again.
+// scope is the repository and every lockfile in it is a sibling; only the projects a patched
+// file reaches are restored (restoreTargets). The working tree is never touched. Locks
+// memoizes the scans of the repository; without it every call scans again.
 type Locker struct{ Locks *LockCache }
 
 // Scope returns the repository (".") for an MSBuild file when it holds a packages.lock.json
@@ -175,9 +176,9 @@ func (Locker) Siblings() []string { return nil }
 // ScopeSiblings lists every packages.lock.json below dir next to a project.
 func (l Locker) ScopeSiblings(dir string) []string { return l.Locks.scan(dir, false) }
 
-// Process restores every project with a packages.lock.json against the patched MSBuild files:
-// NuGet re-resolves a project whose package references no longer match its lockfile, and
-// keeps the others. It returns the lockfiles that changed.
+// Process restores the projects with a packages.lock.json that the patched MSBuild files
+// reach (restoreTargets): NuGet re-resolves a project whose package references no longer
+// match its lockfile, and keeps the others. It returns the lockfiles that changed.
 func (Locker) Process(ctx context.Context, dir string, manifests, files map[string][]byte) (map[string][]byte, error) {
 	return restore(ctx, dir, manifests, files, false)
 }
@@ -191,10 +192,18 @@ func (Locker) Maintain(ctx context.Context, dir string, files map[string][]byte)
 }
 
 // restore runs `dotnet restore <project> --use-lock-file` (--force-evaluate when force) for
-// each project next to one of the lockfiles in files, in a mirror of dir holding the patched
-// manifests and the lockfiles as copies (mirrorOptions).
+// each project next to one of the lockfiles the patched manifests reach (restoreTargets; with
+// force, all of them), in a mirror of dir holding the patched manifests and the lockfiles as
+// copies (mirrorOptions). The lockfiles of the other projects stay as they are.
 func restore(ctx context.Context, dir string, manifests, files map[string][]byte, force bool) (map[string][]byte, error) {
 	if len(files) == 0 {
+		return nil, nil
+	}
+	targets := slices.Sorted(maps.Keys(files))
+	if !force {
+		targets = restoreTargets(dir, manifests, files)
+	}
+	if len(targets) == 0 {
 		return nil, nil
 	}
 	bin, err := exec.LookPath("dotnet")
@@ -213,8 +222,7 @@ func restore(ctx context.Context, dir string, manifests, files map[string][]byte
 	if force {
 		args = append(args, "--force-evaluate")
 	}
-	names := slices.Sorted(maps.Keys(files))
-	for _, l := range names {
+	for _, l := range targets {
 		for _, p := range projects(filepath.Join(base, filepath.FromSlash(path.Dir(l)))) {
 			if err := dotnet(ctx, bin, base, dir, slices.Concat([]string{"restore", filepath.Join(filepath.FromSlash(path.Dir(l)), p)}, args)); err != nil {
 				return nil, err
@@ -222,7 +230,7 @@ func restore(ctx context.Context, dir string, manifests, files map[string][]byte
 		}
 	}
 	out := map[string][]byte{}
-	for _, l := range names {
+	for _, l := range slices.Sorted(maps.Keys(files)) {
 		b, err := os.ReadFile(filepath.Join(base, filepath.FromSlash(l)))
 		if err != nil {
 			return nil, err
