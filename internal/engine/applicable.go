@@ -35,8 +35,9 @@ type SkippedUpdate struct {
 // file or its manager.FileEditor files) is built alone; those whose own build fails only with
 // skips are left out with the reasons, and the others are built again. If that build still
 // fails with skips (updates that are inapplicable only together), the updates touching those
-// files are added one at a time in order, each left out when it makes their build fail with
-// skips. Other errors are returned like Build's.
+// files are added in chunks, in order: a chunk whose build is clean is accepted whole, a
+// failing chunk is halved until one update is left, which is left out when its own build
+// with the ones accepted before it fails with skips. Other errors are returned like Build's.
 func BuildApplicable(ctx context.Context, root string, managers []manager.Manager, updates []dep.Update, post map[string]PostProcessor) ([]FileChange, []SkippedUpdate, []error) {
 	changes, errs := Build(ctx, root, managers, updates, post)
 	files := skipFiles(errs)
@@ -76,26 +77,84 @@ func BuildApplicable(ctx context.Context, root string, managers []manager.Manage
 		}
 		check = touching(root, managers, updates, files)
 	}
-	// Together: add the updates touching the failing files one at a time.
+	// Together: the updates touching the failing files are added in chunks. A chunk that
+	// builds clean accepts all of its updates at once and doubles the size of the next one, a
+	// chunk that fails is halved until one update is left, which the build of the updates
+	// accepted before it decides on its own. That is the very build the one-at-a-time scan
+	// would have run for it, with the same updates accepted before it, so the updates left
+	// out and their reasons are the same; a clean chunk only accepts updates that the scan
+	// would have accepted too, since its build holds every one of them. With a handful of
+	// inapplicable updates among many this takes O(k log n) builds instead of one per update,
+	// each of them a package manager run of seconds.
 	together := make([]string, len(updates))
 	var accepted []dep.Update
+	idx := make([]int, 0, len(check))
 	for i, t := range check {
-		if !t {
+		if t {
+			idx = append(idx, i)
+		}
+	}
+	size := len(idx)
+	if size == len(updates) {
+		// The last build was this very set and it failed with skips: halve it right away.
+		size /= 2
+	}
+	// grow is the size of the chunk to try after one of n updates built clean: twice as many,
+	// but no more than the run of applicable updates expected between two inapplicable ones,
+	// ln2 / p for p the share of them seen so far. A scope whose updates are inapplicable left
+	// and right settles at one at a time that way, instead of failing chunk after chunk, and
+	// one whose updates are all applicable but a few keeps doubling. decided counts the
+	// updates the loop has settled and left how many of them it had to leave out; the eight
+	// applicable ones added to decided keep the first one left out from cutting the chunks
+	// short on their own.
+	var decided, left int
+	grow := func(n int) int {
+		switch {
+		case len(idx) < 3:
+			return 1 // too few left for a chunk to save more builds than a failing one costs
+		case left == 0:
+			return 2 * n
+		}
+		if run := 7 * (decided + 8) / (10 * (left + 1)); run >= 4 {
+			return min(2*n, run)
+		}
+		return 1
+	}
+	for size = max(size, 1); len(idx) > 0; {
+		n := min(size, len(idx))
+		if n == 1 {
+			i := idx[0]
+			idx, decided = idx[1:], decided+1
+			if len(accepted) == 0 && own[i] {
+				// Its own build is the one the alone phase above ran, which found no skip.
+				accepted, size = append(accepted, updates[i]), grow(1)
+				continue
+			}
+			_, errs := Build(ctx, root, managers, append(slices.Clip(accepted), updates[i]), post)
+			if err := ctx.Err(); err != nil {
+				return nil, nil, []error{err}
+			}
+			if reason, ok := skipOnly(skipErrs(errs)); ok {
+				together[i], left, size = reason, left+1, 1
+			} else {
+				accepted, size = append(accepted, updates[i]), grow(1)
+			}
 			continue
 		}
-		if len(accepted) == 0 && own[i] {
-			accepted = append(accepted, updates[i])
-			continue
+		batch := slices.Clip(accepted)
+		for _, i := range idx[:n] {
+			batch = append(batch, updates[i])
 		}
-		_, errs := Build(ctx, root, managers, append(slices.Clip(accepted), updates[i]), post)
-		if reason, ok := skipOnly(skipErrs(errs)); ok {
-			together[i] = reason
-		} else {
-			accepted = append(accepted, updates[i])
-		}
+		_, errs := Build(ctx, root, managers, batch, post)
 		if err := ctx.Err(); err != nil {
 			return nil, nil, []error{err}
 		}
+		if _, ok := skipOnly(skipErrs(errs)); ok {
+			size = n / 2
+			continue
+		}
+		accepted, idx, decided = batch, idx[n:], decided+n
+		size = grow(n)
 	}
 	updates, more := leaveOut(updates, together)
 	if len(more) > 0 {

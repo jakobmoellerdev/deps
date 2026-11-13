@@ -333,3 +333,21 @@ func BenchmarkBuildScopeSiblings(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkBuildApplicableMany applies 128 updates of one scope of which one can be applied
+// only on its own, the shape of a compiled requirements file whose inputs do not admit one
+// of the versions: the together phase has to decide the other 127. runs/op is the number of
+// post-processor runs one `apply` costs, the package manager runs that dominate it.
+func BenchmarkBuildApplicableMany(b *testing.B) {
+	root, ups, names := applyFixture(b, 128)
+	m := &applyModel{names: names, together: map[string]bool{names[64]: true}}
+	ms := []manager.Manager{actions.New()}
+	b.ReportAllocs()
+	for b.Loop() {
+		_, skipped, errs := BuildApplicable(b.Context(), root, ms, ups, m.post())
+		if len(errs) != 0 || len(skipped) != 1 {
+			b.Fatalf("skipped = %d, errs = %v", len(skipped), errs)
+		}
+	}
+	b.ReportMetric(float64(m.runs.Load())/float64(b.N), "runs/op")
+}
