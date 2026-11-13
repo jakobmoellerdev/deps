@@ -150,6 +150,43 @@ func TestMergeBase(t *testing.T) {
 	}
 }
 
+// A file both the checkout's and the base branch's config extend is read once, as within one
+// chain, so its rules and custom managers appear once.
+func TestMergeBaseSharedExtends(t *testing.T) {
+	shared := "rules:\n  - names: [s]\n    group: shared\ncustom:\n  - files: [Makefile]\n"
+	c, f, err := loadExtends(t, "extends: [o/shared]\nuseBaseBranchConfig: merge\nrules:\n  - names: [a]\n    group: checkout\n",
+		map[string]string{"o/shared//.deps.yaml": shared})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.calls = nil
+	base := "extends: [o/shared]\nrules:\n  - names: [b]\n    group: release\n"
+	m, err := c.MergeBase(t.Context(), []byte(base), "release/1.x:.deps.yaml", "release/1.x:.deps.yaml", f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var groups []string
+	for i := range m.Rules {
+		groups = append(groups, m.Rules[i].Group)
+	}
+	if want := []string{"shared", "checkout", "release"}; !slices.Equal(groups, want) {
+		t.Errorf("rule groups = %q, want %q", groups, want)
+	}
+	if len(m.Custom) != 1 {
+		t.Errorf("custom managers = %d, want 1", len(m.Custom))
+	}
+	if len(f.calls) != 0 {
+		t.Errorf("fetches during MergeBase = %q, want none: the checkout's chain already read the file", f.calls)
+	}
+	if got, want := m.Rules[0].Group, "shared"; got != want {
+		t.Errorf("rules[0].group = %q, want %q", got, want)
+	}
+	file, _ := m.Rules[0].Source()
+	if file != "o/shared//.deps.yaml" {
+		t.Errorf("rules[0] source = %q", file)
+	}
+}
+
 func TestMergeBaseErrors(t *testing.T) {
 	c, err := load(t, ".deps.yaml", "useBaseBranchConfig: merge\ndashboard: {enabled: true}\nrules:\n  - names: [a]\n    dashboardApproval: true\n")
 	if err != nil {

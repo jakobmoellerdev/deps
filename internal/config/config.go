@@ -950,7 +950,7 @@ func Read(ctx context.Context, src []byte, path, display string, fetch Fetcher) 
 // explain), reading the files its extends entries name with fetch. The problems of every
 // file's content and of the merged configuration are reported together.
 func parse(ctx context.Context, src []byte, p, display string, fetch Fetcher) (*Config, error) {
-	l, err := loadChain(ctx, src, p, display, fetch)
+	l, err := loadChain(ctx, src, p, display, fetch, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -958,9 +958,14 @@ func parse(ctx context.Context, src []byte, p, display string, fetch Fetcher) (*
 }
 
 // loadChain decodes the document src of file p and the files its extends entries name (read
-// with fetch) into layers; a chain that cannot be loaded completely is an *Error.
-func loadChain(ctx context.Context, src []byte, p, display string, fetch Fetcher) (*loader, error) {
-	l := &loader{ctx: ctx, fetch: fetch, path: p, seen: map[string]bool{}, fields: map[reflect.Type][]structField{}}
+// with fetch) into layers; a chain that cannot be loaded completely is an *Error. seen, when
+// given, names the extended files the chain must not read again (MergeBase: the files the
+// configuration being merged over already holds).
+func loadChain(ctx context.Context, src []byte, p, display string, fetch Fetcher, seen map[string]bool) (*loader, error) {
+	if seen == nil {
+		seen = map[string]bool{}
+	}
+	l := &loader{ctx: ctx, fetch: fetch, path: p, seen: seen, fields: map[reflect.Type][]structField{}}
 	if err := l.add(src, p, display, -1); err != nil {
 		return nil, err
 	}
@@ -1007,11 +1012,19 @@ func build(p string, layers []layer, probs []*Problem, extends []string) (*Confi
 // MergeBase returns the configuration of a base branch under useBaseBranchConfig: src, the
 // config file on the base branch (path names it in errors, display in deps explain and rule
 // sources), and the files it extends merged over c as an extends chain merges, the base's
-// keys replacing c's and its rules and custom managers following c's. baseBranches and
-// useBaseBranchConfig stay c's (as in Renovate). The merged configuration is validated as a
-// whole; a problem in one of c's files names that file. All failures are *Error.
+// keys replacing c's and its rules and custom managers following c's. A file c already
+// extends is not read again, as within one chain: its rules stay where c reaches them.
+// baseBranches and useBaseBranchConfig stay c's (as in Renovate). The merged configuration
+// is validated as a whole; a problem in one of c's files names that file. All failures are
+// *Error.
 func (c *Config) MergeBase(ctx context.Context, src []byte, path, display string, fetch Fetcher) (*Config, error) {
-	l, err := loadChain(ctx, src, path, display, fetch)
+	seen := make(map[string]bool, len(c.layers))
+	for _, ly := range c.layers {
+		if ly.via >= 0 {
+			seen[ly.name] = true
+		}
+	}
+	l, err := loadChain(ctx, src, path, display, fetch, seen)
 	if err != nil {
 		return nil, err
 	}
