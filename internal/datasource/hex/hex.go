@@ -66,8 +66,9 @@ func New(client *http.Client, sem chan struct{}, getenv func(string) string) *So
 }
 
 // Releases lists every published version of the package d.Name (`name`, or
-// `name:organization` for a package of a private organization), oldest first; retired versions
-// are listed (Deprecation names them). The result is shared and must not be modified.
+// `name:organization` for a package of a private organization), oldest first, without the
+// versions retired with `mix hex.retire` (Deprecation still names them for the version in
+// use). The result is shared and must not be modified.
 func (s *Source) Releases(ctx context.Context, d dep.Dep, _ string) ([]datasource.Release, error) {
 	p, err := s.lookup(ctx, d.Name)
 	if err != nil {
@@ -148,22 +149,6 @@ func (s *Source) lookup(ctx context.Context, name string) (*pkg, error) {
 			return nil, err
 		}
 		p := &pkg{times: map[string]time.Time{}, retired: map[string]string{}}
-		vs := map[string]*semver.Version{}
-		for _, rel := range r.Releases {
-			v, err := semver.StrictNewVersion(rel.Version)
-			if err != nil || vs[rel.Version] != nil {
-				continue
-			}
-			vs[rel.Version] = v
-			p.rels = append(p.rels, datasource.Release{Version: rel.Version})
-			if t, err := time.Parse(time.RFC3339Nano, rel.InsertedAt); err == nil {
-				p.times[rel.Version] = t.UTC()
-			}
-		}
-		if len(p.rels) == 0 {
-			return nil, fmt.Errorf("GET %s: no releases", u)
-		}
-		slices.SortFunc(p.rels, func(a, b datasource.Release) int { return vs[a.Version].Compare(vs[b.Version]) })
 		for v, ret := range r.Retirements {
 			why := ""
 			if ret.Reason != "" {
@@ -175,6 +160,27 @@ func (s *Source) lookup(ctx context.Context, name string) (*pkg, error) {
 			}
 			p.retired[v] = why
 		}
+		vs := map[string]*semver.Version{}
+		published := 0
+		for _, rel := range r.Releases {
+			v, err := semver.StrictNewVersion(rel.Version)
+			if err != nil || vs[rel.Version] != nil {
+				continue
+			}
+			vs[rel.Version] = v
+			published++
+			if t, err := time.Parse(time.RFC3339Nano, rel.InsertedAt); err == nil {
+				p.times[rel.Version] = t.UTC()
+			}
+			if _, ok := p.retired[rel.Version]; ok {
+				continue // `mix hex.retire`d: never an update candidate
+			}
+			p.rels = append(p.rels, datasource.Release{Version: rel.Version})
+		}
+		if published == 0 {
+			return nil, fmt.Errorf("GET %s: no releases", u)
+		}
+		slices.SortFunc(p.rels, func(a, b datasource.Release) int { return vs[a.Version].Compare(vs[b.Version]) })
 		for k, v := range r.Meta.Links {
 			if strings.EqualFold(k, "github") {
 				p.repo = v

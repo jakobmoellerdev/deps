@@ -96,9 +96,20 @@ func TestReleases(t *testing.T) {
 		t.Errorf("requests = %d, want one per package", n)
 	}
 	pc := dep.Dep{Name: "plug_cowboy"}
-	if _, err := s.Releases(t.Context(), pc, ""); err != nil {
+	pcr, err := s.Releases(t.Context(), pc, "")
+	if err != nil {
 		t.Fatal(err)
 	}
+	// 2.2.0, 2.2.1 and 2.2.2 are retired as invalid: they must never be update candidates.
+	for _, v := range []string{"2.2.0", "2.2.1", "2.2.2"} {
+		if slices.Contains(versions(pcr), v) {
+			t.Errorf("retired %s listed in releases %v", v, versions(pcr))
+		}
+	}
+	if !slices.Contains(versions(pcr), "2.3.0") {
+		t.Errorf("releases = %v, want the versions that are not retired", versions(pcr))
+	}
+	// Deprecation still reports the retirement of the version in use.
 	if got := s.Deprecation(pc, "2.2.0"); got != "version 2.2.0 retired (invalid: Broken telemetry support)" {
 		t.Errorf("deprecation = %q", got)
 	}
