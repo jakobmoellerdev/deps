@@ -837,11 +837,21 @@ func (v *vuln) advisory() dep.Advisory {
 		}
 		a.Summary = line
 	}
+	// The advisory's own page is the link to show; a WEB reference (a blog post, a release
+	// note, an issue) only stands in when the record names no ADVISORY one, whatever order
+	// the record lists its references in.
+	var web string
 	for _, r := range v.References {
-		if r.Type == "ADVISORY" || r.Type == "WEB" {
+		if r.Type == "ADVISORY" {
 			a.URL = r.URL
-			break
+			return a
 		}
+		if r.Type == "WEB" && web == "" {
+			web = r.URL
+		}
+	}
+	if web != "" {
+		a.URL = web
 	}
 	return a
 }

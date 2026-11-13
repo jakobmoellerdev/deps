@@ -638,6 +638,33 @@ func TestAdvisorySummaryTruncated(t *testing.T) {
 	}
 }
 
+// The advisory's own page wins over a WEB reference listed before it.
+func TestAdvisoryURLPrefersAdvisoryReference(t *testing.T) {
+	for _, c := range []struct {
+		types []string
+		want  string
+	}{
+		{[]string{"WEB", "ADVISORY"}, "https://example.com/advisory"},
+		{[]string{"ADVISORY", "WEB"}, "https://example.com/advisory"},
+		{[]string{"REPORT", "WEB", "ADVISORY"}, "https://example.com/advisory"},
+		{[]string{"REPORT", "WEB", "FIX"}, "https://example.com/web"},
+		{[]string{"PACKAGE", "REPORT"}, "https://osv.dev/vulnerability/X"},
+	} {
+		refs := make([]string, len(c.types))
+		for i, ty := range c.types {
+			refs[i] = fmt.Sprintf(`{"type":%q,"url":"https://example.com/%s"}`, ty, strings.ToLower(ty))
+		}
+		var v vuln
+		doc := fmt.Sprintf(`{"id":"X","summary":"s","references":[%s]}`, strings.Join(refs, ","))
+		if err := json.Unmarshal([]byte(doc), &v); err != nil {
+			t.Fatal(err)
+		}
+		if got := v.advisory().URL; got != c.want {
+			t.Errorf("references %v: URL = %q, want %q", c.types, got, c.want)
+		}
+	}
+}
+
 func TestAdvisoriesNpm(t *testing.T) {
 	f := newFake(t)
 	f.results["npm|lodash|4.17.20|"] = result{ids: []string{"GHSA-35jh-r3h4-6jhm", "CVE-ALIAS"}}
