@@ -512,38 +512,43 @@ func (i *gitlabIssue) issue() Issue {
 	return Issue{Number: i.IID, Title: i.Title, Body: i.Description, URL: i.WebURL}
 }
 
-// ListIssues pages through the open issues. A project with issues disabled (issues_enabled
-// false in the project, cached from DefaultBranch) is ErrIssuesDisabled: GitLab lists no
-// issues for it and refuses to create one with 403.
-func (g *gitlabClient) ListIssues(ctx context.Context, maxPages int, f IssueFilter) ([]Issue, error) {
+// ListIssues pages through the open issues, narrowed to those holding f.Title in their title
+// (GitLab searches its database, so an issue created moments ago is in the answer). A project
+// with issues disabled (issues_enabled false in the project, cached from DefaultBranch) is
+// ErrIssuesDisabled: GitLab lists no issues for it and refuses to create one with 403.
+func (g *gitlabClient) ListIssues(ctx context.Context, maxPages int, f IssueFilter) (IssueList, error) {
 	p, err := g.projectInfo(ctx)
 	if err != nil {
-		return nil, err
+		return IssueList{}, err
 	}
 	if p.IssuesEnabled != nil && !*p.IssuesEnabled {
-		return nil, fmt.Errorf("%w: issues_enabled is false in %s", ErrIssuesDisabled, g.r.repo)
+		return IssueList{}, fmt.Errorf("%w: issues_enabled is false in %s", ErrIssuesDisabled, g.r.repo)
 	}
 	const per = 100
-	order := ""
+	query := ""
 	if f.Oldest {
-		order = "&order_by=created_at&sort=asc"
+		query = "&order_by=created_at&sort=asc"
 	}
-	var out []Issue
+	if f.Title != "" {
+		query += "&in=title&search=" + url.QueryEscape(f.Title)
+	}
+	var out IssueList
 	for page := 1; page <= maxPages; page++ {
 		var is []gitlabIssue
-		if err := g.do(ctx, http.MethodGet, g.project+"/issues?state=opened"+order+"&per_page=100&page="+strconv.Itoa(page), nil, &is); err != nil {
-			return nil, err
+		if err := g.do(ctx, http.MethodGet, g.project+"/issues?state=opened"+query+"&per_page=100&page="+strconv.Itoa(page), nil, &is); err != nil {
+			return IssueList{}, err
 		}
 		found := false
 		for i := range is {
 			v := is[i].issue()
-			out = append(out, v)
+			out.Issues = append(out.Issues, v)
 			found = found || (f.Stop != nil && f.Stop(v))
 		}
 		if found || len(is) < per {
-			break
+			return out, nil
 		}
 	}
+	out.Truncated = true
 	return out, nil
 }
 

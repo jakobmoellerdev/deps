@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	neturl "net/url"
 	"regexp"
@@ -540,8 +541,15 @@ func (g *githubClient) MergePR(ctx context.Context, pr PR, strategy string) erro
 }
 
 // ListIssues pages through open issues; GitHub lists PRs as issues, they are dropped. GitHub
-// answers 410 Gone when issues are disabled.
-func (g *githubClient) ListIssues(ctx context.Context, maxPages int, f IssueFilter) ([]Issue, error) {
+// answers 410 Gone when issues are disabled. A title is looked up with the search API, which
+// is the only filter by title GitHub's REST API has; the paging is the fallback when that
+// search fails.
+func (g *githubClient) ListIssues(ctx context.Context, maxPages int, f IssueFilter) (IssueList, error) {
+	if f.Title != "" {
+		if is, ok := g.searchIssues(ctx, f.Title); ok {
+			return IssueList{Issues: is}, nil
+		}
+	}
 	order := ""
 	if f.Oldest {
 		order = "&sort=created&direction=asc"
@@ -550,9 +558,35 @@ func (g *githubClient) ListIssues(ctx context.Context, maxPages int, f IssueFilt
 		return "/repos/" + g.repo + "/issues?state=open" + order + "&per_page=100&page=" + strconv.Itoa(page)
 	})
 	if hasStatus(err, http.StatusGone, "") {
-		return nil, fmt.Errorf("%w: %w", ErrIssuesDisabled, err)
+		return IssueList{}, fmt.Errorf("%w: %w", ErrIssuesDisabled, err)
 	}
 	return is, err
+}
+
+// searchIssues finds the open issues of the repository whose title holds title. ok reports
+// whether GitHub answered the search at all (an empty result is an answer): the search API
+// has a rate limit of its own and is not served by every deployment, and the caller then
+// lists the issues instead. GitHub serves the search from an index that lags a few seconds
+// behind, so an issue created moments ago may still be missing from the answer.
+func (g *githubClient) searchIssues(ctx context.Context, title string) ([]Issue, bool) {
+	// A phrase search. GitHub's query syntax has no escape for the quotes delimiting it, so
+	// a title holding one is searched without it; the caller compares the titles anyway.
+	q := `repo:` + g.repo + ` is:issue is:open in:title "` + strings.ReplaceAll(title, `"`, " ") + `"`
+	var out struct {
+		Items []apiIssue `json:"items"`
+	}
+	path := "/search/issues?advanced_search=true&per_page=100&q=" + neturl.QueryEscape(q)
+	if err := g.do(ctx, http.MethodGet, path, nil, &out, g.headers); err != nil {
+		slog.DebugContext(ctx, "issue search failed, listing the open issues instead", "repo", g.repo, "err", err)
+		return nil, false
+	}
+	is := make([]Issue, 0, len(out.Items))
+	for i := range out.Items {
+		if !out.Items[i].isPR() {
+			is = append(is, out.Items[i].issue())
+		}
+	}
+	return is, true
 }
 
 // CreateIssue creates an issue; GitHub takes label names (and creates missing labels).
@@ -605,13 +639,14 @@ func listPRs(ctx context.Context, r *rest, h func(http.Header), conv func(*apiPR
 }
 
 // listIssues pages through an issue list; a short page (PRs included), or a page holding an
-// issue stop accepts, ends it.
-func listIssues(ctx context.Context, r *rest, h func(http.Header), per, maxPages int, stop func(Issue) bool, path func(int) string) ([]Issue, error) {
-	var out []Issue
+// issue stop accepts, ends it. Running out of pages on a full one leaves the list Truncated:
+// the issue the caller looks for may be on a page it did not read.
+func listIssues(ctx context.Context, r *rest, h func(http.Header), per, maxPages int, stop func(Issue) bool, path func(int) string) (IssueList, error) {
+	var out IssueList
 	for page := 1; page <= maxPages; page++ {
 		var is []apiIssue
 		if err := r.do(ctx, http.MethodGet, path(page), nil, &is, h); err != nil {
-			return nil, err
+			return IssueList{}, err
 		}
 		found := false
 		for i := range is {
@@ -619,12 +654,13 @@ func listIssues(ctx context.Context, r *rest, h func(http.Header), per, maxPages
 				continue
 			}
 			v := is[i].issue()
-			out = append(out, v)
+			out.Issues = append(out.Issues, v)
 			found = found || (stop != nil && stop(v))
 		}
 		if found || len(is) < per {
-			break
+			return out, nil
 		}
 	}
+	out.Truncated = true
 	return out, nil
 }

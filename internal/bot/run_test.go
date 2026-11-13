@@ -172,6 +172,8 @@ type fakePC struct {
 	issues        []platform.Issue
 	issuePages    int
 	issueOldest   bool
+	issueTitle    string           // the title the listing was narrowed to
+	noIssueSearch bool             // a forge that cannot narrow a listing by title
 	createdIssues []platform.Issue // title, body
 	issueLabels   [][]string
 	updatedIssues []platform.Issue // number, body
@@ -267,29 +269,38 @@ func (c *fakePC) MergePR(_ context.Context, pr platform.PR, strategy string) err
 // fakeIssuesPerPage is the page size the fake pages c.issues in, like the forges.
 const fakeIssuesPerPage = 100
 
-func (c *fakePC) ListIssues(_ context.Context, maxPages int, f platform.IssueFilter) ([]platform.Issue, error) {
+func (c *fakePC) ListIssues(_ context.Context, maxPages int, f platform.IssueFilter) (platform.IssueList, error) {
 	fakeListMu.Lock()
-	c.issuePages, c.issueOldest = maxPages, f.Oldest
+	c.issuePages, c.issueOldest, c.issueTitle = maxPages, f.Oldest, f.Title
 	fakeListMu.Unlock()
 	if err := fail(c.fail, "ListIssues", ""); err != nil {
-		return nil, err
+		return platform.IssueList{}, err
 	}
-	// The forges list the newest issue first unless the filter asks for the oldest.
+	// The forges narrow the listing to the titles holding f.Title and list the newest issue
+	// first unless the filter asks for the oldest.
 	is := slices.Clone(c.issues)
+	if f.Title != "" && !c.noIssueSearch {
+		is = slices.DeleteFunc(is, func(i platform.Issue) bool { return !strings.Contains(i.Title, f.Title) })
+	}
 	slices.SortFunc(is, func(a, b platform.Issue) int {
 		if f.Oldest {
 			return cmp.Compare(a.Number, b.Number)
 		}
 		return cmp.Compare(b.Number, a.Number)
 	})
-	var out []platform.Issue
-	for page := 0; page < maxPages && page*fakeIssuesPerPage < len(is); page++ {
-		p := is[page*fakeIssuesPerPage : min((page+1)*fakeIssuesPerPage, len(is))]
-		out = append(out, p...)
-		if f.Stop != nil && slices.ContainsFunc(p, f.Stop) {
-			break
+	var out platform.IssueList
+	for page := range maxPages {
+		lo := page * fakeIssuesPerPage
+		if lo >= len(is) {
+			return out, nil
+		}
+		p := is[lo:min(lo+fakeIssuesPerPage, len(is))]
+		out.Issues = append(out.Issues, p...)
+		if len(p) < fakeIssuesPerPage || f.Stop != nil && slices.ContainsFunc(p, f.Stop) {
+			return out, nil
 		}
 	}
+	out.Truncated = len(is) > 0
 	return out, nil
 }
 func (c *fakePC) CreateIssue(_ context.Context, title, body string, labels []string) (platform.Issue, error) {
@@ -1086,6 +1097,29 @@ func TestRunStateErrors(t *testing.T) {
 				t.Errorf("acted despite state error: actions=%v pushed=%v created=%v", acts, g.pushed, pc.created)
 			}
 		})
+	}
+}
+
+// A forge that cannot narrow a listing by title (fakePC.noIssueSearch), with more open
+// issues than the scan pages through: the dashboard may be behind them, so the run fails
+// instead of opening a second dashboard, which it would then do on every run.
+func TestDashboardListingTruncated(t *testing.T) {
+	var issues []platform.Issue
+	for n := range dashboardIssuePages * fakeIssuesPerPage {
+		issues = append(issues, platform.Issue{Number: 1 + n, Title: fmt.Sprintf("bug %d", n)})
+	}
+	pc := &fakePC{issues: issues, noIssueSearch: true}
+	d, err := loadDashboard(t.Context(), pc, dashTitle)
+	if err == nil || !strings.Contains(err.Error(), "not creating a second dashboard") {
+		t.Fatalf("loadDashboard = %+v %v, want the listing reported as truncated", d, err)
+	}
+	if pc.issueTitle != dashTitle {
+		t.Errorf("the lookup must narrow the listing to the dashboard title, got %q", pc.issueTitle)
+	}
+	// The dashboard of a listing that ended on its own is created as before.
+	pc = &fakePC{issues: issues[:len(issues)-1], noIssueSearch: true}
+	if d, err := loadDashboard(t.Context(), pc, dashTitle); err != nil || d.issue != nil {
+		t.Fatalf("loadDashboard = %+v %v, want no dashboard and no error", d, err)
 	}
 }
 

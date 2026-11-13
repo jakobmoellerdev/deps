@@ -28,7 +28,7 @@ func (c *slowListPC) ListPRs(ctx context.Context, state string, n int) ([]platfo
 	return c.fakePC.ListPRs(ctx, state, n)
 }
 
-func (c *slowListPC) ListIssues(ctx context.Context, maxPages int, f platform.IssueFilter) ([]platform.Issue, error) {
+func (c *slowListPC) ListIssues(ctx context.Context, maxPages int, f platform.IssueFilter) (platform.IssueList, error) {
 	time.Sleep(listLatency)
 	return c.fakePC.ListIssues(ctx, maxPages, f)
 }

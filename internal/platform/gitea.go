@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	neturl "net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -177,20 +178,25 @@ func (g *giteaClient) Checks(ctx context.Context, sha string) (CheckState, error
 	return ChecksFailure, nil
 }
 
-// ListIssues pages through open issues. A 404 for an existing repository whose issues are
-// disabled or external (has_issues false, external_tracker set) is ErrIssuesDisabled.
-func (g *giteaClient) ListIssues(ctx context.Context, maxPages int, f IssueFilter) ([]Issue, error) {
-	order := ""
+// ListIssues pages through open issues, narrowed to those holding f.Title in their title or
+// body (the keyword search of Gitea and Forgejo, which their database answers: an issue
+// created moments ago is in it). A 404 for an existing repository whose issues are disabled
+// or external (has_issues false, external_tracker set) is ErrIssuesDisabled.
+func (g *giteaClient) ListIssues(ctx context.Context, maxPages int, f IssueFilter) (IssueList, error) {
+	query := ""
 	if f.Oldest {
-		order = "&sort=oldest"
+		query = "&sort=oldest"
+	}
+	if f.Title != "" {
+		query += "&q=" + neturl.QueryEscape(f.Title)
 	}
 	is, err := listIssues(ctx, &g.rest, g.headers, 50, maxPages, f.Stop, func(page int) string {
-		return "/repos/" + g.repo + "/issues?state=open&type=issues" + order + "&limit=50&page=" + strconv.Itoa(page)
+		return "/repos/" + g.repo + "/issues?state=open&type=issues" + query + "&limit=50&page=" + strconv.Itoa(page)
 	})
 	if hasStatus(err, http.StatusNotFound, "") {
 		if repo, rerr := g.repository(ctx, g.headers); rerr == nil &&
 			(repo.HasIssues != nil && !*repo.HasIssues || present(repo.ExternalTracker)) {
-			return nil, fmt.Errorf("%w: %w", ErrIssuesDisabled, err)
+			return IssueList{}, fmt.Errorf("%w: %w", ErrIssuesDisabled, err)
 		}
 	}
 	return is, err

@@ -152,6 +152,26 @@ func TestDashboardBeyondPageWindow(t *testing.T) {
 	}
 }
 
+// A repository with more open issues and pull requests than the scan pages through still
+// finds its dashboard behind them: the forge narrows the listing to the issues titled like
+// it. Missing it would open a new dashboard on every run.
+func TestDashboardBehindOlderIssues(t *testing.T) {
+	root, res := dashFixture(t)
+	var issues []platform.Issue
+	for n := range dashboardIssuePages * fakeIssuesPerPage {
+		issues = append(issues, platform.Issue{Number: 1 + n, Title: fmt.Sprintf("bug %d", n)})
+	}
+	issues = append(issues, platform.Issue{Number: 5000, Title: dashTitle, Body: "stale " + dashboardMarker, URL: "https://forge/issues/5000"})
+	pc := &fakePC{issues: issues}
+	_, errs, dash := dashRun(t, Options{}, res, root, pc, &fakeGit{})
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	if dash.Status != StatusUpdated || dash.Number != 5000 || len(pc.createdIssues) != 0 {
+		t.Fatalf("dashboard %+v, created %+v; want #5000 updated and no duplicate", dash, pc.createdIssues)
+	}
+}
+
 func TestDashboardCheckboxCreateBypassesScheduleAndLimit(t *testing.T) {
 	root, res := dashFixture(t)
 	weekly, err := schedule.Parse([]string{"0 0 * * 0", "0 6 * * 1"}, nil)

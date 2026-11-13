@@ -71,14 +71,28 @@ type Issue struct {
 	URL    string
 }
 
-// IssueFilter orders and shortens the open-issue listing of ListIssues.
+// IssueFilter narrows, orders and shortens the open-issue listing of ListIssues.
 type IssueFilter struct {
+	// Title is the exact title the caller looks for, "" for all issues. The forge narrows
+	// the listing to the issues whose title (Gitea and Forgejo: whose title or body) holds
+	// it, so one long-lived issue is found however many others are open; the caller still
+	// compares the titles, since the forges search rather than match.
+	Title string
 	// Oldest lists the issues created first instead of the forge's newest-first default, so
 	// a long-lived issue stays in reach however many issues are opened after it.
 	Oldest bool
 	// Stop ends the paging after the page holding the first issue it accepts; nil pages to
 	// maxPages.
 	Stop func(Issue) bool
+}
+
+// IssueList is what ListIssues found.
+type IssueList struct {
+	Issues []Issue
+	// Truncated reports that the listing ran into maxPages with issues left over and Stop
+	// never matched: an issue that is not in Issues may still exist. A caller that creates
+	// what it did not find must not do so then.
+	Truncated bool
 }
 
 // PRMetadata is what a new update PR gets besides its title and body.
@@ -172,9 +186,10 @@ type Client interface {
 	Checks(ctx context.Context, sha string) (CheckState, error)
 	// MergePR merges pr now with strategy, provided its head is still pr.HeadSHA.
 	MergePR(ctx context.Context, pr PR, strategy string) error
-	// ListIssues pages through the open issues (PRs excluded) as f orders and shortens them,
-	// at most maxPages pages; ErrIssuesDisabled when the repository has no issue tracker.
-	ListIssues(ctx context.Context, maxPages int, f IssueFilter) ([]Issue, error)
+	// ListIssues lists the open issues (PRs excluded) as f narrows, orders and shortens
+	// them, paging at most maxPages pages; ErrIssuesDisabled when the repository has no
+	// issue tracker.
+	ListIssues(ctx context.Context, maxPages int, f IssueFilter) (IssueList, error)
 	CreateIssue(ctx context.Context, title, body string, labels []string) (Issue, error)
 	UpdateIssue(ctx context.Context, number int, body string) error
 }

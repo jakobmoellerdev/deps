@@ -27,8 +27,11 @@ const (
 	dashboardMaxBytes  = 60000
 	dashboardMaxErrors = 20
 	dashboardErrorLen  = 300
-	// dashboardIssuePages bounds the open-issue scan that finds the dashboard. The scan runs
-	// oldest first and stops at the dashboard, so newer issues never push it out of reach.
+	// dashboardIssuePages bounds the open-issue scan that finds the dashboard. The forge
+	// narrows the listing to the issues titled like it (platform.IssueFilter.Title) and the
+	// scan runs oldest first and stops at the dashboard, so these pages are far more than
+	// the lookup needs; a scan that still runs out of them does not create a second
+	// dashboard but fails (loadDashboard).
 	dashboardIssuePages = 10
 )
 
@@ -43,20 +46,22 @@ type dashboard struct {
 }
 
 // loadDashboard finds the open issue titled title whose body has the dashboard marker (the
-// lowest number if there are several) and parses its ticked checkboxes. The dashboard is
-// created once and stays open, so the oldest issues are listed first and the listing ends at
-// the first match: a repository with thousands of newer open issues still finds it.
+// lowest number if there are several) and parses its ticked checkboxes. The forge narrows the
+// listing to the issues titled like the dashboard, and the rest is listed oldest first and
+// ends at the first match, so a repository with thousands of other open issues still finds
+// it. A listing that ran out of pages without finding it is an error: the dashboard is
+// created once and stays open, and creating a second one on every run is worse than failing.
 func loadDashboard(ctx context.Context, pc platform.Client, title string) (*dashboard, error) {
 	isDashboard := func(is platform.Issue) bool {
 		return is.Title == title && strings.Contains(is.Body, dashboardMarker)
 	}
-	issues, err := pc.ListIssues(ctx, dashboardIssuePages, platform.IssueFilter{Oldest: true, Stop: isDashboard})
+	list, err := pc.ListIssues(ctx, dashboardIssuePages, platform.IssueFilter{Title: title, Oldest: true, Stop: isDashboard})
 	if err != nil {
 		return nil, fmt.Errorf("list issues: %w", err)
 	}
 	d := &dashboard{create: map[string]bool{}, recreate: map[string]bool{}, rebase: map[string]bool{}, pr: map[string]bool{}}
-	for i := range issues {
-		is := &issues[i]
+	for i := range list.Issues {
+		is := &list.Issues[i]
 		if !isDashboard(*is) {
 			continue
 		}
@@ -65,6 +70,9 @@ func loadDashboard(ctx context.Context, pc platform.Client, title string) (*dash
 		}
 	}
 	if d.issue == nil {
+		if list.Truncated {
+			return nil, fmt.Errorf("the dashboard issue %q was not found among the %d oldest open issues the forge listed, and there are more: not creating a second dashboard", title, len(list.Issues))
+		}
 		return d, nil
 	}
 	for _, m := range checkedRe.FindAllStringSubmatch(d.issue.Body, -1) {

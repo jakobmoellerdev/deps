@@ -528,10 +528,13 @@ func TestGitLabListIssues(t *testing.T) {
 		"GET " + glAPI + "/issues?state=opened&per_page=100&page=1":                              {body: "[" + strings.Join(full, ",") + "]"},
 		"GET " + glAPI + "/issues?state=opened&per_page=100&page=2":                              {body: `[{"iid":101,"title":"Dependency Dashboard","description":"d","web_url":"u"}]`},
 		"GET " + glAPI + "/issues?state=opened&order_by=created_at&sort=asc&per_page=100&page=1": {body: "[" + strings.Join(full, ",") + "]"},
+		"GET " + glAPI + "/issues?state=opened&order_by=created_at&sort=asc&in=title&search=Dependency+Dashboard&per_page=100&page=1": {
+			body: `[{"iid":101,"title":"Dependency Dashboard","description":"d","web_url":"u"}]`,
+		},
 	})
 	is, err := c.ListIssues(t.Context(), 3, IssueFilter{})
-	if err != nil || len(is) != 101 || is[100] != (Issue{Number: 101, Title: "Dependency Dashboard", Body: "d", URL: "u"}) {
-		t.Fatalf("ListIssues = %d %v", len(is), err)
+	if err != nil || len(is.Issues) != 101 || is.Issues[100] != (Issue{Number: 101, Title: "Dependency Dashboard", Body: "d", URL: "u"}) || is.Truncated {
+		t.Fatalf("ListIssues = %d %v", len(is.Issues), err)
 	}
 	if n := len(calls()); n != 3 {
 		t.Errorf("calls = %v", uris(calls()))
@@ -539,8 +542,13 @@ func TestGitLabListIssues(t *testing.T) {
 	// Oldest orders by creation ascending, and Stop ends the paging on the first match's
 	// page, so page 2 is not requested.
 	stop := IssueFilter{Oldest: true, Stop: func(i Issue) bool { return i.Number == 7 }}
-	if is, err := c.ListIssues(t.Context(), 3, stop); err != nil || len(is) != 100 {
-		t.Errorf("ListIssues oldest = %d %v", len(is), err)
+	if is, err := c.ListIssues(t.Context(), 3, stop); err != nil || len(is.Issues) != 100 || is.Truncated {
+		t.Errorf("ListIssues oldest = %d %v truncated %v", len(is.Issues), err, is.Truncated)
+	}
+	// A title narrows the listing to the issues holding it in their title.
+	if is, err := c.ListIssues(t.Context(), 3, IssueFilter{Title: "Dependency Dashboard", Oldest: true}); err != nil ||
+		len(is.Issues) != 1 || is.Issues[0].Number != 101 {
+		t.Errorf("ListIssues title = %+v %v", is, err)
 	}
 
 	issues := "GET " + glAPI + "/issues?state=opened&per_page=100&page=1"
