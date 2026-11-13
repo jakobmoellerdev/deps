@@ -328,15 +328,41 @@ func (w *budget) text(s string) {
 // dashboardMore ends a list cut by the size limit.
 const dashboardMore = "- … %d more not listed (dashboard size limit)\n"
 
-// heading writes the markdown heading h ("## Title") when it fits with room for a cut list;
-// it reports whether it did.
-func (w *budget) heading(h string) bool {
-	s := "\n" + h + "\n"
-	if !w.fits(len(s), len(dashboardMore)+8) {
+// put writes s when it fits, keeping room for a cut list ending in more; it reports whether
+// it did.
+func (w *budget) put(s, more string) bool {
+	if !w.fits(len(s), len(more)+8) {
 		return false
 	}
 	w.text(s)
 	return true
+}
+
+// items writes the lines that fit, each followed by end, and ends a list cut by the size
+// limit with more ("… %d more").
+func (w *budget) items(lines []string, end, more string) {
+	for i, l := range lines {
+		if !w.fits(len(l)+len(end), len(more)+8) {
+			w.text(fmt.Sprintf(more, len(lines)-i))
+			return
+		}
+		w.text(l)
+		w.text(end)
+	}
+}
+
+// list writes head and the lines that fit below it, one per line; an empty list, and one
+// whose head does not fit, write nothing.
+func (w *budget) list(head string, lines []string, more string) {
+	if len(lines) > 0 && w.put(head, more) {
+		w.items(lines, "\n", more)
+	}
+}
+
+// heading writes the markdown heading h ("## Title") when it fits with room for a cut list;
+// it reports whether it did.
+func (w *budget) heading(h string) bool {
+	return w.put("\n"+h+"\n", dashboardMore)
 }
 
 // section writes a heading of level ("##", "###"), an optional intro and the lines that fit;
@@ -349,17 +375,7 @@ func (w *budget) section(level, heading, intro string, lines []string) {
 	if intro != "" {
 		head += intro + "\n\n"
 	}
-	if !w.fits(len(head), len(dashboardMore)+8) {
-		return
-	}
-	w.text(head)
-	for i, l := range lines {
-		if !w.fits(len(l)+1, len(dashboardMore)+8) {
-			w.text(fmt.Sprintf(dashboardMore, len(lines)-i))
-			return
-		}
-		w.text(l + "\n")
-	}
+	w.list(head, lines, dashboardMore)
 }
 
 // detected writes the detected dependencies under the heading title as <details> per manager

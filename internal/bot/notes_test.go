@@ -40,6 +40,61 @@ func TestPRBodyNotes(t *testing.T) {
 	}
 }
 
+// bigNotes answers a release notes section of one <details> block per update.
+type bigNotes struct{ fakeNotes }
+
+func (*bigNotes) Section(_ context.Context, ups []dep.Update) string {
+	var b strings.Builder
+	b.WriteString("### Release notes\n")
+	for _, u := range ups {
+		fmt.Fprintf(&b, "\n<details>\n<summary>Release notes: %s</summary>\n\n%s\n\n</details>\n", u.Dep.Name, strings.Repeat("note ", 100))
+	}
+	return b.String()
+}
+
+// A group of hundreds of updates with advisories, warnings and release notes renders a body
+// within prBodyMaxBytes: GitHub refuses a longer one with 422 "body is too long", so deps
+// would push the branch and retry the PR on every run. The markers it reads back and the
+// rebase checkbox survive the cut, every <details> block opened in the notes is closed, and
+// the cut lists say so.
+func TestPRBodyBudget(t *testing.T) {
+	ups := make([]dep.Update, 600)
+	for i := range ups {
+		ups[i] = dep.Update{
+			Dep: dep.Dep{
+				Manager: "gomod", File: fmt.Sprintf("services/service%03d/go.mod", i), Line: i + 3,
+				Name: fmt.Sprintf("github.com/example/long-module-name-%03d", i), Version: "v1.0.0",
+			},
+			Type: dep.Minor, NewVersion: "v1.1.0",
+			Advisories: []dep.Advisory{{ID: fmt.Sprintf("GO-2026-%04d", i), Summary: strings.Repeat("summary ", 8)}},
+			Warnings:   []string{fmt.Sprintf("long-module-name-%03d is deprecated by its author", i)},
+		}
+	}
+	grp := engine.Group{Updates: ups, Header: "Header.", Footer: "Footer."}
+	body := prBody(t.Context(), Options{Notes: &bigNotes{}}, grp, "abc", "in")
+	// GitHub refuses a longer body with 422 "body is too long".
+	const githubMaxBody = 65536
+	if len(body) > githubMaxBody {
+		t.Errorf("body is %d bytes, want at most %d", len(body), githubMaxBody)
+	}
+	for _, want := range []string{
+		"| `services/service000/go.mod:3` | `v1.0.0` | `v1.1.0` | minor |",
+		"more not listed (pull request size limit)",
+		rebaseCheckbox, "<!-- deps:fingerprint=abc -->", "<!-- deps:input=in -->",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body lacks %q (%d bytes)", want, len(body))
+		}
+	}
+	if open, closed := strings.Count(body, "<details>"), strings.Count(body, "</details>"); open != closed {
+		t.Errorf("%d <details> blocks opened, %d closed", open, closed)
+	}
+	// Closing a PR ignores the versions its marker records, so they are all kept.
+	if got := bodyVersions(body); len(got) != len(ups) {
+		t.Errorf("versions marker records %d updates, want %d", len(got), len(ups))
+	}
+}
+
 // slowNotes answers Age after a registry-like delay.
 type slowNotes struct{ fakeNotes }
 

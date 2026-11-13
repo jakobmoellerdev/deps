@@ -1383,22 +1383,42 @@ func bodyFingerprint(body string) string {
 	return ""
 }
 
+// Pull request body limits.
+const (
+	// prBodyMaxBytes bounds the body: GitHub refuses one over 65536 characters with 422
+	// "body is too long", which would make deps push the branch and retry the PR on every
+	// run. The room left over covers the forge counting characters where deps counts bytes.
+	prBodyMaxBytes = 60000
+	// prBodyMore ends a list cut by the size limit. It starts on a line of its own, which
+	// also ends the update table.
+	prBodyMore = "\n… %d more not listed (pull request size limit)\n"
+	// prNotesCut ends release notes cut by the size limit.
+	prNotesCut = "\n… more release notes not listed (pull request size limit)\n"
+	// prNotesMin is the room release notes need to be worth looking up: below it not even
+	// one block would fit, and the lookups are requests to registries and forges.
+	prNotesMin = 2048
+)
+
 // prBody renders the body of grp's PR with content fingerprint fp and input fingerprint input
 // ("" = none): the group's header, the update table and release notes (o.Notes), its footer,
 // the line linking the workflow run writing it (o.Run), then a rule, the unticked
 // rebaseCheckbox and the markers.
+//
+// The body is bounded to prBodyMaxBytes: prTail, which carries what deps reads back, is
+// written whatever the size, and the table, the security and warning lists and the release
+// notes above it are cut to what is left, marked where they are.
 func prBody(ctx context.Context, o Options, grp engine.Group, fp, input string) string {
 	notes := o.Notes
 	ups := grp.Updates
-	var b strings.Builder
+	tail := prTail(o, fp, input, ups)
+	w := &budget{left: prBodyMaxBytes - len(tail)}
 	if grp.Header != "" {
-		b.WriteString(grp.Header + "\n\n")
+		w.put(grp.Header+"\n\n", prBodyMore)
 	}
 	var ages []string
-	if notes == nil {
-		b.WriteString("| File | From | To | Type |\n|---|---|---|---|\n")
-	} else {
-		b.WriteString("| File | From | To | Type | Age |\n|---|---|---|---|---|\n")
+	head := "| File | From | To | Type |\n|---|---|---|---|\n"
+	if notes != nil {
+		head = "| File | From | To | Type | Age |\n|---|---|---|---|---|\n"
 		// Each Age may be a registry request; look them up concurrently.
 		ages = make([]string, len(ups))
 		var wg sync.WaitGroup
@@ -1407,87 +1427,52 @@ func prBody(ctx context.Context, o Options, grp engine.Group, fp, input string) 
 		}
 		wg.Wait()
 	}
+	rows := make([]string, len(ups))
 	for i, u := range ups {
+		var r strings.Builder
 		if u.Maintenance() {
-			fmt.Fprintf(&b, "| `%s` | | | lock file maintenance |", u.Dep.Name)
+			fmt.Fprintf(&r, "| `%s` | | | lock file maintenance |", u.Dep.Name)
 		} else {
 			from, to := u.FromTo()
 			typ := string(u.Type)
 			if u.Lockfile {
 				typ += " (lockfile)"
 			}
-			fmt.Fprintf(&b, "| `%s:%d` | `%s` | `%s` | %s |", u.Dep.File, u.Dep.Line, from, to, typ)
+			fmt.Fprintf(&r, "| `%s:%d` | `%s` | `%s` | %s |", u.Dep.File, u.Dep.Line, from, to, typ)
 		}
 		if notes != nil {
-			fmt.Fprintf(&b, " %s |", ages[i])
+			fmt.Fprintf(&r, " %s |", ages[i])
 		}
-		b.WriteByte('\n')
+		rows[i] = r.String()
 	}
+	w.list(head, rows, prBodyMore)
 	if slices.ContainsFunc(ups, dep.Update.Maintenance) {
-		b.WriteString("\nLock file maintenance moves every locked dependency to the newest version its manifest admits; the manifests are unchanged")
+		s := "\nLock file maintenance moves every locked dependency to the newest version its manifest admits; the manifests are unchanged"
 		if slices.ContainsFunc(ups, func(u dep.Update) bool { return u.Maintenance() && path.Base(u.Dep.File) == "go.mod" }) {
-			b.WriteString(" (in `go.mod`, only the `// indirect` requirements move)")
+			s += " (in `go.mod`, only the `// indirect` requirements move)"
 		}
-		b.WriteString(".\n")
+		w.put(s+".\n", prBodyMore)
 	}
-	moved := map[string]bool{}
-	for _, u := range ups {
-		if u.NewName == "" || moved[u.Dep.Name+" "+u.NewName] {
-			continue
-		}
-		moved[u.Dep.Name+" "+u.NewName] = true
-		if u.Type == dep.Replacement {
-			fmt.Fprintf(&b, "\n`%s` is replaced by `%s` %s: it moved or was renamed upstream. The new package's API may differ, so the build may need fixes.\n", u.Dep.Name, u.NewName, u.NewVersion)
-			continue
-		}
-		fmt.Fprintf(&b, "\n`%s` moves to the module path `%s`: the require and the import paths in the module's `.go` files are rewritten. The new major version's API may have changed, so the build may need fixes.\n", u.Dep.Name, u.NewName)
-	}
-	var adv []dep.Advisory
-	for _, u := range ups {
-		adv = append(adv, u.Advisories...)
-	}
-	if len(adv) > 0 {
-		b.WriteString("\n### Security\n\n")
-		seen := map[string]bool{}
-		for _, a := range adv {
-			if seen[a.ID] {
-				continue
-			}
-			seen[a.ID] = true
-			id := a.ID
-			if a.URL != "" {
-				id = "[" + a.ID + "](" + a.URL + ")"
-			}
-			line := "- " + id + ": " + a.Summary
-			if risk := a.Risk(); risk != "" {
-				line += " (" + risk + ")"
-			}
-			b.WriteString(line + "\n")
-		}
-	}
-	warned := map[string]bool{}
-	for _, u := range ups {
-		for _, w := range u.Warnings {
-			line := "- `" + u.Dep.Name + "`: " + oneLine(w, dashboardErrorLen)
-			if warned[line] {
-				continue
-			}
-			if len(warned) == 0 {
-				b.WriteString("\n### Warnings\n\nConsider replacing these dependencies rather than updating them.\n\n")
-			}
-			warned[line] = true
-			b.WriteString(line + "\n")
-		}
-	}
-	if notes != nil {
-		if s := notes.Section(ctx, ups); s != "" {
-			b.WriteString("\n")
-			b.WriteString(s)
+	w.items(movedNotes(ups), "", prBodyMore)
+	w.list("\n### Security\n\n", advisoryLines(ups), prBodyMore)
+	w.list("\n### Warnings\n\nConsider replacing these dependencies rather than updating them.\n\n", warnedLines(ups), prBodyMore)
+	if notes != nil && w.left >= prNotesMin {
+		if s := clipNotes(notes.Section(ctx, ups), w.left-1); s != "" {
+			w.text("\n" + s)
 		}
 	}
 	if grp.Footer != "" {
-		b.WriteString("\n" + grp.Footer + "\n")
+		w.put("\n"+grp.Footer+"\n", prBodyMore)
 	}
+	w.text(tail)
+	return w.b.String()
+}
+
+// prTail renders the end of a PR body, which is written whatever the size budget: the line
+// linking the workflow run writing it, a rule, the unticked rebaseCheckbox and the markers
+// deps reads back (the content and input fingerprints and the targets of the updates).
+func prTail(o Options, fp, input string, ups []dep.Update) string {
+	var b strings.Builder
 	if l := runLine(o.Run); l != "" {
 		b.WriteString("\n" + l + "\n")
 	}
@@ -1500,6 +1485,85 @@ func prBody(ctx context.Context, o Options, grp engine.Group, fp, input string) 
 		fmt.Fprintf(&b, "<!-- deps:input=%s -->\n", input)
 	}
 	return b.String()
+}
+
+// movedNotes renders one paragraph per dependency of ups that moves to another name, each on
+// a line of its own; nil when none does.
+func movedNotes(ups []dep.Update) []string {
+	var out []string
+	moved := map[string]bool{}
+	for _, u := range ups {
+		if u.NewName == "" || moved[u.Dep.Name+" "+u.NewName] {
+			continue
+		}
+		moved[u.Dep.Name+" "+u.NewName] = true
+		if u.Type == dep.Replacement {
+			out = append(out, "\n`"+u.Dep.Name+"` is replaced by `"+u.NewName+"` "+u.NewVersion+
+				": it moved or was renamed upstream. The new package's API may differ, so the build may need fixes.\n")
+			continue
+		}
+		out = append(out, "\n`"+u.Dep.Name+"` moves to the module path `"+u.NewName+
+			"`: the require and the import paths in the module's `.go` files are rewritten. The new major version's API may have changed, so the build may need fixes.\n")
+	}
+	return out
+}
+
+// advisoryLines renders one list item per advisory the updates of ups fix, each advisory
+// once; nil without one.
+func advisoryLines(ups []dep.Update) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, u := range ups {
+		for _, a := range u.Advisories {
+			if seen[a.ID] {
+				continue
+			}
+			seen[a.ID] = true
+			id := a.ID
+			if a.URL != "" {
+				id = "[" + a.ID + "](" + a.URL + ")"
+			}
+			line := "- " + id + ": " + a.Summary
+			if risk := a.Risk(); risk != "" {
+				line += " (" + risk + ")"
+			}
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// warnedLines renders one list item per dependency warning of ups, each once; nil without
+// one.
+func warnedLines(ups []dep.Update) []string {
+	var out []string
+	warned := map[string]bool{}
+	for _, u := range ups {
+		for _, w := range u.Warnings {
+			line := "- `" + u.Dep.Name + "`: " + oneLine(w, dashboardErrorLen)
+			if warned[line] {
+				continue
+			}
+			warned[line] = true
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// clipNotes returns the release notes section s within n bytes: cut after a whole <details>
+// block and marked, or "" when not even its first block fits. A block cut in the middle
+// would leave its <details> open and swallow the rest of the body.
+func clipNotes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	const end = "</details>\n"
+	i := strings.LastIndex(s[:max(0, min(len(s), n-len(prNotesCut)))], end)
+	if i < 0 {
+		return ""
+	}
+	return s[:i+len(end)] + prNotesCut
 }
 
 // linkTextEscaper escapes what would end or nest markdown link text.
