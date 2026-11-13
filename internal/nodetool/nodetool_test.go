@@ -264,6 +264,12 @@ func TestScope(t *testing.T) {
 			if ok != (tt.want != "") || got != tt.want {
 				t.Errorf("Scope(%s) = %q, %v, want %q", tt.manifest, got, ok, tt.want)
 			}
+			s := NewScopes()
+			for range 2 { // a cached pass answers the same, also on the second call
+				if got, ok := s.Scope(t.Context(), root, tt.manifest); ok != (tt.want != "") || got != tt.want {
+					t.Errorf("Scopes.Scope(%s) = %q, %v, want %q", tt.manifest, got, ok, tt.want)
+				}
+			}
 		})
 	}
 }

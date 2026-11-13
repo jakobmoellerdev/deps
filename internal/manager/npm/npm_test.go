@@ -228,6 +228,17 @@ func TestLockRoots(t *testing.T) {
 	}
 }
 
+// TestLockRootsMembers pins that the members of one workspace, whose lookups the pass caches,
+// still yield exactly their shared lock root.
+func TestLockRootsMembers(t *testing.T) {
+	root, files := monorepo(t, 5)
+	files = append(files, "package.json", "outside/package.json") // the root and a non-member
+	got := New().(manager.LockMaintainer).LockRoots(root, files)
+	if fmt.Sprint(got) != "[{package.json pnpm-lock.yaml}]" {
+		t.Errorf("lock roots = %v", got)
+	}
+}
+
 func TestPackageManager(t *testing.T) {
 	for _, tt := range []struct{ value, name, version, skip string }{
 		{"pnpm@9.12.1", "pnpm", "9.12.1", ""},

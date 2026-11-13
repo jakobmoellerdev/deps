@@ -195,6 +195,21 @@ func (Locker) Scope(ctx context.Context, root, manifest string) (string, bool) {
 	return lockScope(ctx, root, manifest, nil)
 }
 
+// Scopes answers Locker.Scope for the manifests of one pass over a tree with the lockfile and
+// workspace lookups of each directory done once: the members of a monorepo share the stat of
+// their lock root and the read and parse of its package.json and pnpm-workspace.yaml. It
+// holds what it read, so a Scopes must not outlive one pass; it is not safe for concurrent
+// use.
+type Scopes struct{ c *scopeCache }
+
+// NewScopes returns a Scopes with an empty cache.
+func NewScopes() *Scopes { return &Scopes{c: newScopeCache()} }
+
+// Scope is Locker.Scope with the lookups of this pass cached.
+func (s *Scopes) Scope(ctx context.Context, root, manifest string) (string, bool) {
+	return lockScope(ctx, root, manifest, s.c)
+}
+
 // scopeCache memoises the lockfile and workspace lookups of lockScope across the manifests of
 // one tree; the directory keys are absolute.
 type scopeCache struct {

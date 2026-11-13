@@ -207,14 +207,15 @@ func (npmManager) ReadLocks(root string, files [][]dep.Dep) []error {
 }
 
 // LockRoots implements manager.LockMaintainer: the lockfile the post-processor updates
-// (nodetool.Lockfile) in each file's lock root (nodetool.Locker.Scope), with the package.json
-// next to it; workspace members share their root's. A root without package.json (only
-// pnpm-workspace.yaml) is left out: the package managers need it.
+// (nodetool.Lockfile) in each file's lock root (nodetool.Locker.Scope, resolved once per
+// directory), with the package.json next to it; workspace members share their root's. A root
+// without package.json (only pnpm-workspace.yaml) is left out: the package managers need it.
 func (npmManager) LockRoots(root string, files []string) []manager.LockRoot {
 	var out []manager.LockRoot
 	seen := map[string]bool{}
+	scopes := nodetool.NewScopes()
 	for _, f := range files {
-		dir, ok := nodetool.Locker{}.Scope(context.Background(), root, f)
+		dir, ok := scopes.Scope(context.Background(), root, f)
 		if !ok || seen[dir] {
 			continue
 		}
