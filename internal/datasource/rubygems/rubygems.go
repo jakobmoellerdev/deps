@@ -42,8 +42,9 @@ type Source struct {
 	repos datasource.Memo[string, string] // by name
 }
 
-// gem is what a server lists for a gem: every version once (platform builds merged) and, from
-// the rubygems.org API, the earliest build time of each.
+// gem is what a server lists for a gem: every version with a Ruby platform build once (the
+// other builds of it merged in) and, from the rubygems.org API, the earliest build time of
+// each version.
 type gem struct {
 	rels  []datasource.Release
 	times map[string]time.Time
@@ -179,24 +180,34 @@ func (s *Source) fetch(ctx context.Context, srv, name string) (g *gem, err error
 // version is an element of the versions API response; other fields are skipped.
 type version struct {
 	Number    string `json:"number"`
+	Platform  string `json:"platform"`
 	CreatedAt string `json:"created_at"`
 }
 
+// rubyPlatform reports whether platform is the plain Ruby platform, the only build an MRI
+// `gem install` of a version takes. A server that publishes no platform at all (an empty
+// field or no `-<platform>` suffix) counts as Ruby.
+func rubyPlatform(platform string) bool {
+	return platform == "" || platform == "ruby"
+}
+
 // versions reads `<base>/api/v1/versions/<name>.json`: one entry per platform build, newest
-// first.
+// first. Only versions with a Ruby build are listed; the release time of a version is the
+// earliest of all its builds.
 func (s *Source) versions(ctx context.Context, base, name string) (*gem, error) {
 	g := &gem{times: map[string]time.Time{}}
+	listed := map[string]bool{}
 	err := s.get(ctx, base+"/api/v1/versions/"+url.PathEscape(name)+".json", func(r io.Reader) error {
 		return datasource.DecodeArray(r, func(v version) {
 			if v.Number == "" {
 				return
 			}
-			if _, seen := g.times[v.Number]; !seen {
+			if rubyPlatform(v.Platform) && !listed[v.Number] {
+				listed[v.Number] = true
 				g.rels = append(g.rels, datasource.Release{Version: v.Number})
-				g.times[v.Number] = time.Time{}
 			}
 			if t, err := time.Parse(time.RFC3339, v.CreatedAt); err == nil {
-				if old := g.times[v.Number]; old.IsZero() || t.Before(old) {
+				if old, seen := g.times[v.Number]; !seen || old.IsZero() || t.Before(old) {
 					g.times[v.Number] = t
 				}
 			}
@@ -209,7 +220,8 @@ func (s *Source) versions(ctx context.Context, base, name string) (*gem, error) 
 }
 
 // compact reads the compact index `<base>/info/<name>`: after the `---` line, one line per
-// build, `<version>[-<platform>] <dependencies>|<requirements>`.
+// build, `<version>[-<platform>] <dependencies>|<requirements>`. Only versions with a Ruby
+// build (a line without a platform suffix) are listed.
 func (s *Source) compact(ctx context.Context, base, name string) (*gem, error) {
 	g := &gem{}
 	err := s.get(ctx, base+"/info/"+url.PathEscape(name), func(r io.Reader) error {
@@ -224,8 +236,8 @@ func (s *Source) compact(ctx context.Context, base, name string) (*gem, error) {
 				continue
 			}
 			v, _, _ := strings.Cut(line, " ")
-			v, _, _ = strings.Cut(v, "-") // the platform; gem versions have no "-"
-			if v != "" && !seen[v] {
+			v, platform, _ := strings.Cut(v, "-") // the platform; gem versions have no "-"
+			if v != "" && rubyPlatform(platform) && !seen[v] {
 				seen[v] = true
 				g.rels = append(g.rels, datasource.Release{Version: v})
 			}

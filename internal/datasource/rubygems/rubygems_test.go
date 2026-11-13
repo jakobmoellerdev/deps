@@ -60,6 +60,13 @@ func serve(t *testing.T, hits *atomic.Int32) *httptest.Server {
 			http.Error(w, "down", http.StatusInternalServerError)
 		case "/compact/info/odd":
 			fmt.Fprint(w, "no separator\n")
+		// jruby_only: 1.0.0 has a Ruby build, 2.0.0 is a JRuby-only release.
+		case "/api/v1/versions/jruby_only.json":
+			fmt.Fprint(w, `[{"number":"2.0.0","platform":"java","created_at":"2025-02-01T00:00:00.000Z"},`+
+				`{"number":"1.0.0","platform":"java","created_at":"2024-01-01T00:00:00.000Z"},`+
+				`{"number":"1.0.0","platform":"ruby","created_at":"2024-01-01T00:00:01.000Z"}]`)
+		case "/compact/info/jruby_only":
+			fmt.Fprint(w, "---\n1.0.0 |checksum:aa\n2.0.0-java |checksum:bb\n")
 		default:
 			http.NotFound(w, r)
 		}
@@ -108,6 +115,20 @@ func TestReleasesRubygemsOrg(t *testing.T) {
 	}
 	if n := hits.Load(); n != 2 { // once per server key ("" and the rubygems.org URL)
 		t.Errorf("hits = %d, want 2", n)
+	}
+}
+
+// TestReleasesPlatformOnly pins that a version published only for a non-Ruby platform (a
+// JRuby-only release) is not offered to an MRI dep: `gem install` would fail on it.
+func TestReleasesPlatformOnly(t *testing.T) {
+	var hits atomic.Int32
+	srv := serve(t, &hits)
+	s := newSource(srv, nil)
+	for _, src := range []string{"", srv.URL + "/compact"} {
+		rels, err := s.Releases(t.Context(), dep.Dep{Name: "jruby_only", Source: src}, "")
+		if err != nil || !slices.Equal(versionsOf(rels), []string{"1.0.0"}) {
+			t.Errorf("Releases(%q) = %v, %v, want [1.0.0]", src, versionsOf(rels), err)
+		}
 	}
 }
 
