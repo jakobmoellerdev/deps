@@ -298,7 +298,9 @@ func (src *remoteSource) eachRepository(ctx context.Context, o *rootOpts, stderr
 
 // repoSessions opens the session of each clone: the first one of the command loads the
 // config and builds the datasources, later ones share them (session.forCheckout), so a
-// release list fetched for one repository is reused for the next.
+// release list fetched for one repository is reused for the next. The token a session gets
+// is the one of its own forge (remoteSource.tokenFor): the session's auth registers it for
+// the forge of the clone, so a clone of a foreign forge must be opened without it.
 type repoSessions struct {
 	base *session
 }
@@ -329,15 +331,23 @@ func (p *repoSessions) close() {
 	}
 }
 
-// authHeader is the git auth header the clone of t gets. A target given as a URL carries the
-// forge of that URL, which may be a host the token does not belong to; writing the header
-// into its clone config would hand the forge credentials to a foreign server, so only a
-// target on the token's own host is authenticated and every other one is cloned anonymously.
-func (src *remoteSource) authHeader(t repoTarget) string {
-	if src.tokenHost == "" || !strings.EqualFold(t.Info.Host, src.tokenHost) {
+// tokenFor is the forge token a target on info's forge may see: the source's token when
+// info names the forge the token belongs to, "" for every other forge. A --repositories
+// entry given as a git URL carries the forge of that URL, which may be a host the token
+// does not belong to, and handing it the forge credentials would leak them to a foreign
+// server.
+func (src *remoteSource) tokenFor(info platform.Info) string {
+	if src.tokenHost == "" || !strings.EqualFold(info.Host, src.tokenHost) {
 		return ""
 	}
-	return gitAuthHeader(src.token)
+	return src.token
+}
+
+// authHeader is the git auth header the clone of t gets: the header is written into the
+// clone's config, so only a target on the token's own forge is authenticated and every
+// other one is cloned anonymously.
+func (src *remoteSource) authHeader(t repoTarget) string {
+	return gitAuthHeader(src.tokenFor(t.Info))
 }
 
 // gitAuthHeader is the http.extraheader that authenticates git with token as Basic

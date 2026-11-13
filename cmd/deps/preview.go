@@ -82,7 +82,9 @@ func previewRemote(ctx context.Context, cmd *cli.Command, o *rootOpts, entries [
 	if t.Info.APIURL == "" {
 		return fmt.Errorf("--pr: no forge API for %s: give the repository as owner/name on a known forge", t.URL)
 	}
-	pr, err := platform.NewClient(t.Info, token, client).GetPR(ctx, number)
+	// The entry may name a foreign forge, which must see neither the token in an API
+	// request nor the git credentials in the clone config (remoteSource.tokenFor).
+	pr, err := platform.NewClient(t.Info, src.tokenFor(t.Info), client).GetPR(ctx, number)
 	// A PR opened from a fork comes back with ErrForkPR. preview only reads its base branch
 	// and clones refs/pull/<n>/head from the base repository, which works for a fork too.
 	if err != nil && !errors.Is(err, platform.ErrForkPR) {
@@ -98,7 +100,7 @@ func previewRemote(ctx context.Context, cmd *cli.Command, o *rootOpts, entries [
 		return err
 	}
 	defer os.RemoveAll(work)
-	header := gitAuthHeader(token)
+	header := src.authHeader(t)
 	headRef := fmt.Sprintf("refs/pull/%d/head", number)
 	if t.Info.Kind == platform.GitLab {
 		headRef = fmt.Sprintf("refs/merge-requests/%d/head", number)

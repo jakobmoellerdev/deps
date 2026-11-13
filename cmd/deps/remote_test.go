@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/platform"
@@ -241,7 +242,9 @@ func TestPreviewPullRequest(t *testing.T) {
 	git(t, work, "add", "-A")
 	git(t, work, "commit", "-qm", "pr")
 	git(t, work, "push", "-q", "origin", "HEAD:refs/pull/7/head")
-	f.mux.HandleFunc("GET git.test/api/v1/repos/o/r/pulls/7", func(w http.ResponseWriter, _ *http.Request) {
+	var auth string
+	f.mux.HandleFunc("GET git.test/api/v1/repos/o/r/pulls/7", func(w http.ResponseWriter, r *http.Request) {
+		auth = r.Header.Get("Authorization")
 		io.WriteString(w, `{"number":7,"title":"t","head":{"ref":"feature","sha":"deadbeef"},"base":{"ref":"main"},"state":"open"}`)
 	})
 
@@ -259,6 +262,14 @@ func TestPreviewPullRequest(t *testing.T) {
 		t.Errorf("stderr:\n%s", stderr)
 	}
 	_ = stdout
+	// The repository is on the token's own forge, so the API client carries the token and
+	// the clones carry the git credentials.
+	if auth != "token tok" {
+		t.Errorf("pull request request authorization = %q, want the token", auth)
+	}
+	if !strings.Contains(stderr, "::add-mask::"+base64.StdEncoding.EncodeToString([]byte("x-access-token:tok"))) {
+		t.Errorf("clone not authenticated:\n%s", stderr)
+	}
 }
 
 // A --repositories entry given as a git URL carries its own forge, which may be a host the
@@ -318,3 +329,76 @@ func TestRunRepositoriesAuthenticatesClones(t *testing.T) {
 		t.Errorf("header for a foreign host = %q, want none", h)
 	}
 }
+
+// A --repositories entry naming a foreign forge must see no forge credentials: neither the
+// token in the API request that reads the pull request nor the git credentials in the clone
+// config, and the session of a clone there is opened without the token too.
+func TestRemoteSourceForeignForgeKeepsTheToken(t *testing.T) {
+	cleanEnv(t)
+	f := newFakeNet(t)
+	giteaEnv(t) // the token belongs to git.test
+	t.Setenv("DEPS_TOKEN", "tok")
+	root := forge(t, map[string]map[string]string{"x/y": {".github/workflows/ci.yml": workflow}})
+	// github.com is the foreign forge here; its clones are served from the same local root.
+	t.Setenv("GIT_CONFIG_COUNT", "2")
+	t.Setenv("GIT_CONFIG_KEY_1", "url.file://"+filepath.ToSlash(root)+"/.insteadOf")
+	t.Setenv("GIT_CONFIG_VALUE_1", "https://github.com/")
+	work := t.TempDir()
+	git(t, "", "clone", "-q", filepath.Join(root, "x", "y.git"), work)
+	writeFiles(t, work, map[string]string{".github/workflows/pr.yml": workflow})
+	git(t, work, "add", "-A")
+	git(t, work, "commit", "-qm", "pr")
+	git(t, work, "push", "-q", "origin", "HEAD:refs/pull/3/head")
+	// Every request of the commands, so the lookups of the session are seen too.
+	var mu sync.Mutex
+	sent := map[string]string{}
+	prevClient := newHTTPClient
+	newHTTPClient = func() *http.Client {
+		return &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if a := r.Header.Get("Authorization"); a != "" {
+				mu.Lock()
+				sent[r.URL.Host] = a
+				mu.Unlock()
+			}
+			return f.RoundTrip(r)
+		})}
+	}
+	t.Cleanup(func() { newHTTPClient = prevClient })
+	var auth string
+	f.mux.HandleFunc("GET api.github.com/repos/x/y/pulls/3", func(w http.ResponseWriter, r *http.Request) {
+		auth = r.Header.Get("Authorization")
+		io.WriteString(w, `{"number":3,"title":"t","head":{"ref":"feature","sha":"deadbeef"},"base":{"ref":"main"},"state":"open"}`)
+	})
+
+	_, stderr, code := execute(t, "preview", "--dir", t.TempDir(), "--repositories", "https://github.com/x/y.git", "--pr", "3")
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	if auth != "" {
+		t.Errorf("foreign forge API request authorization = %q, want none", auth)
+	}
+	// The clone credentials are masked right before they are written into a clone's config,
+	// so their mask in the job log tells that the foreign clone got them.
+	if creds := base64.StdEncoding.EncodeToString([]byte("x-access-token:tok")); strings.Contains(stderr, creds) {
+		t.Errorf("foreign clone got the git credentials:\n%s", stderr)
+	}
+	// plan of the same entry opens the session of the clone without the token: its auth
+	// would otherwise register the token for the foreign forge and send it with every
+	// lookup there, such as the tags of the actions the cloned workflow uses.
+	_, stderr, code = execute(t, "plan", "--dir", t.TempDir(), "--repositories", "https://github.com/x/y.git")
+	if code != 0 {
+		t.Fatalf("plan: exit %d\n%s", code, stderr)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, host := range []string{"github.com", "api.github.com"} {
+		if a := sent[host]; a != "" {
+			t.Errorf("request to the foreign forge %s carried %q, want no credentials", host, a)
+		}
+	}
+}
+
+// roundTripFunc is an http.RoundTripper of one function.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

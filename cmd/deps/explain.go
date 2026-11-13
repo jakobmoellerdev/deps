@@ -90,7 +90,7 @@ func explainRepositories(ctx context.Context, cmd *cli.Command, o *rootOpts, bas
 	var sessions repoSessions
 	defer sessions.close()
 	_, failed, err := src.eachRepository(ctx, o, stderr, nil, func(dir, _ string, info platform.Info) error {
-		s, err := sessions.open(ctx, o, dir, info, src.token, client, stderr)
+		s, err := sessions.open(ctx, o, dir, info, src.tokenFor(info), client, stderr)
 		if err != nil {
 			return err
 		}

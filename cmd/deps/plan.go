@@ -148,7 +148,7 @@ func repositoriesCommand(ctx context.Context, cmd *cli.Command, o *rootOpts, ent
 	var sessions repoSessions
 	defer sessions.close()
 	total, failed, err := src.eachRepository(ctx, o, stderr, multi, func(dir, name string, info platform.Info) error {
-		s, err := sessions.open(ctx, o, dir, info, src.token, client, stderr)
+		s, err := sessions.open(ctx, o, dir, info, src.tokenFor(info), client, stderr)
 		if err != nil {
 			return err
 		}
