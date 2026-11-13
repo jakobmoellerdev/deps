@@ -320,8 +320,7 @@ func runBot(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts) erro
 		return fmt.Errorf("no token for %s", info.Host)
 	}
 	if len(specs) > 0 {
-		src := &remoteSource{specs: specs, info: info, token: sh.token, client: sh.client}
-		return runRepositories(ctx, cmd, o, r, sh, src)
+		return runRepositories(ctx, cmd, o, r, sh, runRemoteSource(specs, info, sh))
 	}
 
 	s, err := newSession(ctx, o, info, sh.token, sh.client, cmd.Root().ErrWriter)
@@ -565,6 +564,15 @@ func expandRepositories(ctx context.Context, info platform.Info, token string, c
 		}
 	}
 	return out, nil
+}
+
+// runRemoteSource is the repository source of run --repositories: run only accepts
+// owner/name entries on its own forge, so every repository is on info's forge and the forge
+// token belongs to that same host. Naming it (tokenHost) is what authenticates the clones:
+// without it remoteSource.authHeader leaves every clone anonymous and both the fetch of a
+// private repository and the push of a run fail.
+func runRemoteSource(specs []repoSpec, info platform.Info, sh *runShared) *remoteSource {
+	return &remoteSource{specs: specs, info: info, token: sh.token, client: sh.client, tokenHost: info.Host}
 }
 
 // runRepositories runs the bot on each repository of --repositories in turn: a shallow clone

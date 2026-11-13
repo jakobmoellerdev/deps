@@ -285,3 +285,36 @@ func TestRemoteSourceAuthHeaderOnlyOwnHost(t *testing.T) {
 		t.Errorf("header without a forge = %q, want none", h)
 	}
 }
+
+// run --repositories clones with the forge token: the source it builds names the token's
+// host, so every clone of that forge carries the auth header. Without it the clones go out
+// anonymously and a private repository fails at the fetch, a public one at the push.
+func TestRunRepositoriesAuthenticatesClones(t *testing.T) {
+	cleanEnv(t)
+	newFakeNet(t)
+	giteaEnv(t)
+	t.Setenv("DEPS_TOKEN", "tok")
+	forge(t, map[string]map[string]string{"o/r": {".github/workflows/ci.yml": workflow}})
+
+	_, stderr, code := execute(t, "run", "--dry-run", "--dir", t.TempDir(), "--repositories", "o/r")
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	// The credentials are masked in the job log right before they are written into the
+	// clone's config (gitAuthHeader), so their mask tells the clone is authenticated.
+	creds := base64.StdEncoding.EncodeToString([]byte("x-access-token:tok"))
+	if !strings.Contains(stderr, "::add-mask::"+creds+"\n") {
+		t.Errorf("clone not authenticated:\n%s", stderr)
+	}
+
+	// That source hands the token to its own forge alone.
+	info := platform.Info{Kind: platform.Gitea, Host: "git.test", ServerURL: "https://git.test"}
+	src := runRemoteSource([]repoSpec{{Repo: "o/r"}}, info, &runShared{token: "tok"})
+	if h := src.authHeader(repoTarget{Info: info}); !strings.Contains(h, creds) {
+		t.Errorf("header for the token's own host = %q, want the token", h)
+	}
+	foreign := repoTarget{Info: platform.Info{Kind: platform.GitLab, Host: "gitlab.example.org", ServerURL: "https://gitlab.example.org"}}
+	if h := src.authHeader(foreign); h != "" {
+		t.Errorf("header for a foreign host = %q, want none", h)
+	}
+}
