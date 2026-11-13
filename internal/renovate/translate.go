@@ -240,8 +240,11 @@ var elementPrefixRe = regexp.MustCompile(`^(rules\[0\]\.|custom\[0\]\.|customDat
 
 // check validates a .deps.yaml fragment; it returns "" or its problems as "<field>: <msg>",
 // the field without the element prefix, joined with "; ".
-func check(fragment omap) string {
-	_, err := config.Parse(mustMarshal(fragment, ""), "renovate")
+func check(fragment omap) string { return checkYAML(mustMarshal(fragment, "")) }
+
+// checkYAML validates a rendered .deps.yaml fragment as check does.
+func checkYAML(src []byte) string {
+	_, err := config.Parse(src, "renovate")
 	if err == nil {
 		return ""
 	}
@@ -413,6 +416,7 @@ type translator struct {
 	monorepos bool
 	repl      replacementPresets
 	cds       omap            // translated customDatasources
+	cdsSrc    []byte          // cds as YAML, rendered on demand (cdsYAML); nil after a change
 	cdKept    map[string]bool // names in cds
 	custom    []item
 	rules     []item
@@ -1145,6 +1149,7 @@ func (t *translator) customDatasources(v any) {
 			continue
 		}
 		t.cds.set(name, out)
+		t.cdsSrc = nil
 		t.cdKept[name] = true
 	}
 }

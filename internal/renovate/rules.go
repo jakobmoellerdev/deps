@@ -548,8 +548,8 @@ func (t *translator) renovateManagers(origin string, managers, cats []string, ha
 	return slices.DeleteFunc(byName, func(m string) bool { return !slices.Contains(byCat, m) })
 }
 
-// effects translates the effect keys of a rule; each is validated alone and dropped with
-// a note when deps rejects it.
+// effects translates the effect keys of a rule; they are validated together, and one that
+// deps rejects on its own is dropped with a note.
 func (t *translator) effects(origin string, r map[string]any) map[string]effect {
 	eff := map[string]effect{}
 	for _, k := range slices.Sorted(mapKeys(r)) {
@@ -689,6 +689,17 @@ func (t *translator) effects(origin string, r map[string]any) map[string]effect 
 			repl.set(key, e.v)
 		}
 	}
+	// A rule body deps accepts as a whole accepts every effect in it, so the common case
+	// needs one validation; only a body with a problem is taken apart to locate it.
+	if len(eff) > 1 {
+		whole := make(omap, 0, len(eff))
+		for _, key := range slices.Sorted(maps.Keys(eff)) {
+			whole.set(key, eff[key].v)
+		}
+		if check(t.ruleContext(omap{{"rules", []item{{body: whole}}}})) == "" {
+			return eff
+		}
+	}
 	if len(repl) > 0 {
 		if msg := check(t.ruleContext(omap{{"rules", []item{{body: repl}}}})); msg != "" {
 			for _, f := range repl {
@@ -709,13 +720,26 @@ func (t *translator) effects(origin string, r map[string]any) map[string]effect 
 	return eff
 }
 
-// addRule validates a translated rule and adds it, or drops it with a note.
+// addRule validates a translated rule and adds it, or drops it with a note. The rule is
+// validated against the custom datasources, whose rendering (cdsYAML) every rule shares.
 func (t *translator) addRule(origin string, body omap) {
-	if msg := check(t.ruleContext(omap{{"customDatasources", t.cds}, {"rules", []item{{body: body}}}})); msg != "" {
+	rule := mustMarshal(t.ruleContext(omap{{"rules", []item{{body: body}}}}), "")
+	cds := t.cdsYAML()
+	src := make([]byte, 0, len(cds)+len(rule))
+	if msg := checkYAML(append(append(src, cds...), rule...)); msg != "" {
 		t.n.warn(origin, "dropped: %s", msg)
 		return
 	}
 	t.rules = append(t.rules, item{origin: origin, body: body})
+}
+
+// cdsYAML returns the translated customDatasources as the YAML every rule check carries,
+// rendered once per change: the rules of a config are validated against the same ones.
+func (t *translator) cdsYAML() []byte {
+	if t.cdsSrc == nil {
+		t.cdsSrc = mustMarshal(omap{{"customDatasources", t.cds}}, "")
+	}
+	return t.cdsSrc
 }
 
 func appendNew(l []string, s string) []string {

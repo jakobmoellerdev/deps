@@ -715,6 +715,38 @@ func TestLoadRules(t *testing.T) {
 			src:   `{nix: {enabled: true}}`,
 			rules: strings.TrimPrefix(strings.TrimSuffix(defaultExclusions, nixExclusion), "\n"),
 		},
+		{
+			name: "a rule's effects are all kept when deps accepts them together",
+			src:  `{packageRules: [{matchManagers: ['gomod'], groupName: 'g', automerge: true, minimumReleaseAge: '3 days', labels: ['deps'], reviewers: ['alice']}]}`,
+			rules: `  - # packageRules[0]
+    managers: [gomod]
+    group: g
+    minimumReleaseAge: 3 days
+    automerge: true
+    labels: [deps]
+    reviewers: [alice]` + defaultExclusions,
+		},
+		{
+			name: "only the effect deps rejects is dropped, with its own message",
+			src:  `{packageRules: [{matchManagers: ['gomod'], groupName: 'g', automerge: true, labels: ['bad,label'], reviewers: ['@@bad'], assignees: ['alice']}]}`,
+			rules: `  - # packageRules[0]
+    managers: [gomod]
+    group: g
+    automerge: true
+    assignees: [alice]` + defaultExclusions,
+			notes: []string{
+				`warn packageRules[0].labels: dropped: labels[0]: must be a non-blank label name without ',', got "bad,label"`,
+				`warn packageRules[0].reviewers: dropped: reviewers[0]: must be a user name or team:<slug>, got "@@bad"`,
+			},
+		},
+		{
+			name: "a rule of a custom datasource is validated against the translated customDatasources",
+			src:  `{customDatasources: {ds0: {defaultRegistryUrlTemplate: 'https://x.example/r.json', format: 'json'}}, packageRules: [{matchDatasources: ['custom.ds0'], groupName: 'g', automerge: true}]}`,
+			rules: `  - # packageRules[0]
+    datasources: [custom.ds0]
+    group: g
+    automerge: true` + defaultExclusions,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
