@@ -98,6 +98,76 @@ func TestExtract(t *testing.T) {
 	}
 }
 
+// A replace directive with a version names the module the build actually uses, so it is the
+// one that updates (Renovate's gomod manager extracts it with the `replace` depType too);
+// the replaced require stays skipped. A filesystem replacement has no version.
+func TestExtractVersionedReplace(t *testing.T) {
+	const mod = `module example.com/x
+
+go 1.27
+
+require (
+	github.com/a/b v1.0.0
+	github.com/c/d v1.0.0
+	github.com/e/f v1.0.0
+)
+
+replace github.com/a/b => github.com/fork/b v1.2.3
+
+replace (
+	github.com/c/d => github.com/c/d v1.1.0
+	github.com/e/f => ../f
+)
+`
+	b := []byte(mod)
+	deps, err := New().Extract("go.mod", b, manager.Env{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []dep.Dep
+	for _, d := range deps {
+		if d.DepType == "replace" {
+			got = append(got, d)
+		}
+	}
+	want := []struct {
+		name, ver string
+		line      int
+	}{
+		{"github.com/fork/b", "v1.2.3", 11},
+		{"github.com/c/d", "v1.1.0", 14},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d replace deps: %+v", len(got), got)
+	}
+	for i, w := range want {
+		d := got[i]
+		if d.Manager != Name || d.Name != w.name || d.Version != w.ver || d.Line != w.line ||
+			d.Datasource != "go" || d.Versioning != "go" || d.Skip != "" {
+			t.Errorf("%d: %+v", i, d)
+		}
+		if s := string(b[d.RefSpan.Start:d.RefSpan.End]); s != w.ver {
+			t.Errorf("%d: version span %q", i, s)
+		}
+		if len(d.NameParts) != 1 || string(b[d.NameParts[0].Span.Start:d.NameParts[0].Span.End]) != w.name {
+			t.Errorf("%d: name parts %+v", i, d.NameParts)
+		}
+	}
+	for _, d := range deps {
+		if d.DepType != "replace" && strings.HasPrefix(d.Name, "github.com/") && d.Skip != "replaced" {
+			t.Errorf("require %s: skip %q, want replaced", d.Name, d.Skip)
+		}
+	}
+	edits, err := New().Edits(dep.Update{Dep: got[0], NewVersion: "v1.3.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := patch.Apply(b, edits)
+	if err != nil || !bytes.Contains(out, []byte("replace github.com/a/b => github.com/fork/b v1.3.0\n")) {
+		t.Errorf("patched:\n%s\n%v", out, err)
+	}
+}
+
 func TestDirectives(t *testing.T) {
 	tests := []struct {
 		name, src            string

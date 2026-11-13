@@ -574,7 +574,8 @@
                     "direct",
                     "indirect",
                     "go",
-                    "toolchain"
+                    "toolchain",
+                    "replace"
                   ]
                 }
               }
@@ -3394,6 +3395,7 @@
               "indirect",
               "go",
               "toolchain",
+              "replace",
               "dockerfile",
               "compose",
               "workflow",
@@ -3438,7 +3440,6 @@
               "build-dependencies",
               "workspace.dependencies",
               "patch",
-              "replace",
               "project.dependencies",
               "project.optional-dependencies",
               "dependency-groups",

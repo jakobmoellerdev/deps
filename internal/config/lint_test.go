@@ -103,7 +103,7 @@ func TestManagerRegistryLists(t *testing.T) {
 	if len(byManager) != len(Managers) || Managers[len(Managers)-1] != "custom" {
 		t.Fatalf("Managers = %v, ManagerDepTypes = %v", Managers, byManager)
 	}
-	if !slices.Equal(byManager["gomod"], []string{"direct", "indirect", "go", "toolchain"}) {
+	if !slices.Equal(byManager["gomod"], []string{"direct", "indirect", "go", "toolchain", "replace"}) {
 		t.Errorf("gomod dep types = %v", byManager["gomod"])
 	}
 	if want := append(slices.Clone(Datasources), "azure-tags", "bitbucket-server-tags", "bitbucket-tags", "github-digest", "github-release-attachments", "github-tags", "golang-version", "node"); !slices.Equal(DatasourceNames, want) {

@@ -288,6 +288,7 @@ Updates the requirements and the `go`/`toolchain` directives of Go modules, and 
 | `indirect` | `require … // indirect` | `go` | `go` | ignored (opt in with a rule setting `ignore: false`) |
 | `go` | `go 1.x` directive of `go.mod` or `go.work` | `go-toolchain` | `tag` | ignored (opt in with a rule setting `ignore: false`) |
 | `toolchain` | `toolchain go1.x.y` of `go.mod` or `go.work`; the span covers the version after `go` | `go-toolchain` | `tag` | updated |
+| `replace` | the replacement module of a `replace <module> => <module> <version>` directive; the span covers that version | `go` | `go` | updated |
 
 **Skips:**
 
@@ -324,6 +325,11 @@ Updates the requirements and the `go`/`toolchain` directives of Go modules, and 
 - A version is only an update when its `go.mod` declares the path it is required as. The `@v/<version>.mod` of a candidate that passed the other checks is read from the module download cache, else the GOPROXY URLs (one request per module@version and run). One that declares another path (`github.com/google/cel-go` v0.32.0 declares `cel.dev/cel-go`) is rejected like a too new one, and the next candidate of its PR bucket is tried; for a renamed module the next 8 are fetched concurrently. This applies to major module paths and pseudo-version heads too.
 - A requirement left without updates this way is skipped with `module path changed to <declared> (<module>@<version>)` (the newest such version): moving to the new path is a code change deps does not make. A failed `.mod` lookup is logged and leaves the candidate to `go mod tidy`; GONOPROXY/GOPRIVATE modules are not checked.
 - When `go mod tidy` still refuses a module version this way (`module declares its path as … but was required as …`, for a module the update pulls in, or one the check could not read), `run` skips the update with the same reason instead of failing: its PR group is reported as `skipped: update cannot be applied` and is no error, so it does not keep obsolete PRs open (`apply` leaves the update out and applies the others).
+
+**`replace` directives.**
+
+- A `require` that a `replace` directive targets is skipped (`replaced`): its version is not what the build uses.
+- The replacement is extracted instead when it carries a version (`replace github.com/a/b => github.com/fork/b v1.2.3` updates `github.com/fork/b`), with the `replace` dep type, as Renovate's gomod manager does. A replacement by a filesystem path has no version and is left out.
 
 **Replacements.**
 

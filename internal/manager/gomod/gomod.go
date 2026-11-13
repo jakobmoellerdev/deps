@@ -72,7 +72,7 @@ func (gomodManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, 
 	if err != nil {
 		return nil, err
 	}
-	deps := make([]dep.Dep, 0, len(f.Require)+2)
+	deps := make([]dep.Dep, 0, len(f.Require)+len(f.Replace)+2)
 	if f.Go != nil {
 		deps = append(deps, directive(file, src, "go", f.Go.Version, f.Go.Syntax))
 	}
@@ -97,6 +97,29 @@ func (gomodManager) Extract(file string, src []byte, _ manager.Env) ([]dep.Dep, 
 		}
 		if replaced(f, r.Mod.Path) {
 			d.Skip = "replaced"
+		}
+		deps = append(deps, d)
+	}
+	for _, r := range f.Replace {
+		// A replacement by a filesystem path has no version and nothing to update; the
+		// replaced require is skipped either way.
+		if r.New.Version == "" {
+			continue
+		}
+		d := dep.Dep{
+			Manager: Name, Datasource: "go", Versioning: "go", DepType: "replace",
+			File: file, Name: r.New.Path, Version: r.New.Version, Line: r.Syntax.Start.Line,
+		}
+		s, e := r.Syntax.Start.Byte, r.Syntax.End.Byte
+		// The replacement is the last token of the directive, so its version and path are
+		// the last occurrences even when a module replaces itself.
+		if i := bytes.LastIndex(src[s:e], []byte(r.New.Version)); i >= 0 {
+			d.RefSpan = dep.Span{Start: s + i, End: s + i + len(r.New.Version)}
+		} else {
+			d.Skip = "cannot locate value"
+		}
+		if i := bytes.LastIndex(src[s:e], []byte(r.New.Path)); i >= 0 {
+			d.NameParts = []dep.NamePart{{Span: dep.Span{Start: s + i, End: s + i + len(r.New.Path)}, Text: r.New.Path}}
 		}
 		deps = append(deps, d)
 	}
