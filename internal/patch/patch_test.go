@@ -42,3 +42,18 @@ func TestApply(t *testing.T) {
 		})
 	}
 }
+
+// TestApplyOrderIndependent covers two zero-width insertions at the same offset: neither is
+// in the span of the other, so both apply, and the sort has to order them by their text
+// instead of by the order the managers happened to produce them in.
+func TestApplyOrderIndependent(t *testing.T) {
+	src := []byte("uses: a@v1\n")
+	a, b := Edit{5, 5, "", "a"}, Edit{5, 5, "", "b"}
+	const want = "uses:ab a@v1\n"
+	for _, edits := range [][]Edit{{a, b}, {b, a}} {
+		got, err := Apply(src, edits)
+		if err != nil || string(got) != want {
+			t.Errorf("Apply(%v) = %q, %v; want %q", edits, got, err, want)
+		}
+	}
+}

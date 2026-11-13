@@ -13,17 +13,21 @@ type Edit struct {
 	Old, New   string
 }
 
-// Apply applies non-overlapping edits in a single pre-sized pass. edits is
-// sorted in place by Start and then End, so that an insertion at the start of
-// a replaced span is applied before it and the result does not depend on the
-// order the edits came in. Identical edits (several deps sharing one version
-// definition, such as a Maven property) are applied once.
+// Apply applies non-overlapping edits in a single pre-sized pass. Identical edits (several
+// deps sharing one version definition, such as a Maven property) are applied once.
+//
+// Apply owns the edits slice: it sorts it in place by Start, End, Old and New, so that an
+// insertion at the start of a replaced span is applied before it and the result never depends
+// on the order the edits came in, and it drops the duplicates, which leaves the entries past
+// the ones it keeps zeroed. The caller must not read the slice after the call.
 func Apply(src []byte, edits []Edit) ([]byte, error) {
-	slices.SortStableFunc(edits, func(a, b Edit) int {
-		if a.Start != b.Start {
-			return cmp.Compare(a.Start, b.Start)
-		}
-		return cmp.Compare(a.End, b.End)
+	slices.SortFunc(edits, func(a, b Edit) int {
+		return cmp.Or(
+			cmp.Compare(a.Start, b.Start),
+			cmp.Compare(a.End, b.End),
+			cmp.Compare(a.Old, b.Old),
+			cmp.Compare(a.New, b.New),
+		)
 	})
 	edits = slices.Compact(edits)
 	size := len(src)
