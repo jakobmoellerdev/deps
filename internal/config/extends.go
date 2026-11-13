@@ -176,11 +176,12 @@ func (g *GitFetcher) Close() error {
 
 // credentialEnv returns the environment that makes git answer the credential request for
 // the host of the https URL u with Auth's static credentials: a credential helper scoped to
-// scheme://host that prints them from the environment, so the token is in neither the
-// command line nor a file. nil when Auth has none for the host.
+// https://host that prints them from the environment, so the token is in neither the
+// command line nor a file. nil when Auth has none for the host, and for every other scheme:
+// over plain http the token would go out in cleartext.
 func (g *GitFetcher) credentialEnv(u string) []string {
 	p, err := url.Parse(u)
-	if err != nil || (p.Scheme != "https" && p.Scheme != "http") {
+	if err != nil || p.Scheme != "https" {
 		return nil
 	}
 	user, pass, ok := g.Auth.Static(p.Hostname())
@@ -188,7 +189,7 @@ func (g *GitFetcher) credentialEnv(u string) []string {
 		return nil
 	}
 	helper := `!f() { test "$1" = get || return 0; echo "username=$DEPS_EXTENDS_USER"; echo "password=$DEPS_EXTENDS_TOKEN"; }; f`
-	return append(gitConfigEnv(os.Getenv, "credential."+p.Scheme+"://"+p.Host+".helper", helper),
+	return append(gitConfigEnv(os.Getenv, "credential.https://"+p.Host+".helper", helper),
 		"DEPS_EXTENDS_USER="+user, "DEPS_EXTENDS_TOKEN="+pass)
 }
 

@@ -459,7 +459,9 @@ func TestGitFetcherCredentialEnv(t *testing.T) {
 	if strings.Contains(strings.Join(env[:3], "\n"), "tok\n") {
 		t.Errorf("token in the git config: %v", env)
 	}
-	for _, u := range []string{"https://other.example.com/org/cfg.git", "ssh://git@git.example.com/org/cfg.git", "git@git.example.com:org/cfg.git", "::"} {
+	// Only https: over plain http git would answer the 401 challenge with the token in
+	// cleartext.
+	for _, u := range []string{"http://git.example.com/org/cfg.git", "https://other.example.com/org/cfg.git", "ssh://git@git.example.com/org/cfg.git", "git@git.example.com:org/cfg.git", "::"} {
 		if env := g.credentialEnv(u); env != nil {
 			t.Errorf("credentialEnv(%q) = %v, want none", u, env)
 		}
