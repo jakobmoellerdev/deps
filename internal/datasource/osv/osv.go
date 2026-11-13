@@ -479,8 +479,9 @@ func terraformTarget(d dep.Dep) *target {
 // lookup runs querybatch over queries and fetches every distinct advisory found. A fetch starts
 // as soon as the batch naming its advisory returns, while other batches and later pages are
 // still running. Fetchers are bounded by the capacity of sem (maxFetchers without one).
-// Advisories that cannot be fetched are logged and left out; it fails when querybatch fails,
-// ctx ends, or no advisory found could be fetched.
+// It fails when querybatch fails, ctx ends, or an advisory a query named cannot be fetched:
+// leaving that one out would report the deps it affects as clean (no security update, exit
+// code 0) although deps knows an advisory is missing.
 func (s *Source) lookup(ctx context.Context, queries []query) ([][]string, map[string]*vuln, error) {
 	work := make(chan string)
 	var (
@@ -519,12 +520,8 @@ func (s *Source) lookup(ctx context.Context, queries []query) ([][]string, map[s
 		return ids, docs, nil
 	}
 	slices.SortFunc(errs, func(a, b error) int { return strings.Compare(a.Error(), b.Error()) })
-	if len(docs) == 0 || ctx.Err() != nil {
-		return nil, nil, errors.Join(errs...)
-	}
 	slices.Sort(failed)
-	slog.WarnContext(ctx, "osv: advisories not fetched, left out", "ids", failed, "err", errors.Join(errs...))
-	return ids, docs, nil
+	return nil, nil, fmt.Errorf("advisories not fetched (%s): %w", strings.Join(failed, ", "), errors.Join(errs...))
 }
 
 // queryAll runs querybatch over queries in chunks of s.batch, the chunks of one round

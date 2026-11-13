@@ -458,8 +458,9 @@ func TestAdvisoriesErrors(t *testing.T) {
 	}
 }
 
-// TestAdvisoriesPartialFetchFailure checks that one advisory that cannot be fetched only
-// drops that advisory: the deps affected by the others still get theirs.
+// TestAdvisoriesPartialFetchFailure checks that one advisory that cannot be fetched fails the
+// lookup: the deps it affects would otherwise be reported as clean although deps knows an
+// advisory is missing.
 func TestAdvisoriesPartialFetchFailure(t *testing.T) {
 	f := newFake(t)
 	f.results["Go|example.com/a|v1.0.0|"] = result{ids: []string{"GO-A"}}
@@ -471,11 +472,11 @@ func TestAdvisoriesPartialFetchFailure(t *testing.T) {
 	f.status["/v1/vulns/GO-B"] = http.StatusInternalServerError
 	deps := []dep.Dep{goDep("example.com/a", "v1.0.0"), goDep("example.com/b", "v1.0.0"), goDep("example.com/c", "v1.0.0")}
 	got, err := f.start(nil).Advisories(t.Context(), deps)
-	if err != nil {
-		t.Fatal(err)
+	if err == nil || !strings.Contains(err.Error(), "advisories not fetched (GO-B)") || !strings.Contains(err.Error(), "/v1/vulns/GO-B: HTTP 500") {
+		t.Fatalf("err = %v, want the unfetched advisory named", err)
 	}
-	if len(got) != 3 || !slices.Equal(ids(got[0]), []string{"GO-A"}) || got[1] != nil || !slices.Equal(ids(got[2]), []string{"GO-C"}) {
-		t.Errorf("got %+v", got)
+	if got != nil {
+		t.Errorf("got %+v, want no results", got)
 	}
 }
 
