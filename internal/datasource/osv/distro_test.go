@@ -158,6 +158,11 @@ func TestRPMAffected(t *testing.T) {
 		{"1.0-4", []string{`{"introduced":"1.0-2"}`, `{"last_affected":"1.0-3"}`}, false},
 		{"1.0-1", []string{`{"introduced":"0"}`, `{"fixed":"not a version"}`}, true},
 		{"latest", []string{`{"introduced":"0"}`}, false},
+		// OSV records the events of a range in no particular order: they are sorted before
+		// they are applied ("[0, 1.0-2)" and "[1.0-5, ∞)" here).
+		{"1.0-3", []string{`{"introduced":"1.0-5"}`, `{"fixed":"1.0-2"}`, `{"introduced":"0"}`}, false},
+		{"1.0-6", []string{`{"introduced":"1.0-5"}`, `{"fixed":"1.0-2"}`, `{"introduced":"0"}`}, true},
+		{"1.0-1", []string{`{"introduced":"1.0-5"}`, `{"fixed":"1.0-2"}`, `{"introduced":"0"}`}, true},
 	}
 	for _, tt := range tests {
 		tg := newTarget(query{Package: pkg{Name: "p", Ecosystem: ecoRedHat}, Version: tt.version})

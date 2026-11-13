@@ -283,7 +283,8 @@ func TestAdvisoriesActions(t *testing.T) {
 	f.vulns["GHSA-mrrh"] = actionVuln("GHSA-mrrh", "tj-actions/changed-files", eco(`{"fixed":"46.0.1"}`, `{"introduced":"0"}`))
 	f.vulns["GHSA-la"] = actionVuln("GHSA-la", "tj-actions/changed-files", eco(`{"introduced":"30.0.0"}`, `{"last_affected":"35.0.0"}`))
 	f.vulns["GHSA-vers"] = `{"id":"GHSA-vers","affected":[{"package":{"name":"tj-actions/changed-files","ecosystem":"GitHub Actions"},"versions":["35.1.0"]}]}`
-	// Unparsable range versions make the range unusable.
+	// An unparsable event is skipped: the rest of the range still decides (dep 4, 5 and 6 are
+	// affected from "introduced: 0"), and no fix is rendered from it.
 	f.vulns["GHSA-bad"] = actionVuln("GHSA-bad", "tj-actions/changed-files", eco(`{"introduced":"0"}`, `{"fixed":"47.0.0-rc1"}`), `{"type":"GIT","events":[{"introduced":"0"}]}`)
 	f.vulns["GHSA-codeql"] = actionVuln("GHSA-codeql", "github/codeql-action", eco(`{"introduced":"3.0.0"}`, `{"fixed":"3.1.0"}`, `{"limit":"4.0.0"}`))
 	s := f.start(nil)
@@ -311,9 +312,9 @@ func TestAdvisoriesActions(t *testing.T) {
 	}
 	wantIDs := [][]string{
 		{"GHSA-cxww-7g56-2vh6"}, {}, {}, {},
-		{"GHSA-la", "GHSA-mcph", "GHSA-mrrh"},
-		{"GHSA-mcph", "GHSA-mrrh"},
-		{"GHSA-mcph", "GHSA-mrrh", "GHSA-vers"},
+		{"GHSA-bad", "GHSA-la", "GHSA-mcph", "GHSA-mrrh"},
+		{"GHSA-bad", "GHSA-mcph", "GHSA-mrrh"},
+		{"GHSA-bad", "GHSA-mcph", "GHSA-mrrh", "GHSA-vers"},
 		{"GHSA-codeql"},
 		{}, {}, {},
 	}
@@ -337,6 +338,7 @@ func TestAdvisoriesActions(t *testing.T) {
 		{4, "GHSA-mcph", []string{"v41.0.0"}},
 		{4, "GHSA-mrrh", []string{"v46.0.1"}},
 		{4, "GHSA-la", nil},
+		{4, "GHSA-bad", nil},
 		{5, "GHSA-mrrh", []string{"v46"}},
 		{7, "GHSA-codeql", []string{"v3.1.0"}},
 	} {
@@ -659,6 +661,60 @@ func TestAdvisoriesNpm(t *testing.T) {
 	}
 	if len(f.batches) != 1 || len(f.batches[0]) != 1 || f.batches[0][0].Package.Ecosystem != "npm" {
 		t.Errorf("batches = %+v", f.batches)
+	}
+}
+
+// A fixed version another range of the same advisory still covers is no fix for the dep.
+func TestFixedOutsideEveryRange(t *testing.T) {
+	f := newFake(t)
+	npmVuln := func(id, name string, ranges ...string) string {
+		return fmt.Sprintf(`{"id":%q,"summary":"s","affected":[{"package":{"name":%q,"ecosystem":"npm"},"ranges":[%s]}]}`,
+			id, name, strings.Join(ranges, ","))
+	}
+	sem := func(events ...string) string {
+		return `{"type":"SEMVER","events":[` + strings.Join(events, ",") + `]}`
+	}
+	// Overlapping ranges: 1.5.0 fixes the first one but is inside the second, 2.0.0 is out of both.
+	f.results["npm|overlap|1.4.5|"] = result{ids: []string{"GHSA-overlap"}}
+	f.vulns["GHSA-overlap"] = npmVuln("GHSA-overlap", "overlap",
+		sem(`{"introduced":"0"}`, `{"fixed":"1.5.0"}`),
+		sem(`{"introduced":"1.4.0"}`, `{"fixed":"2.0.0"}`))
+	// The second range ends with last_affected, so the advisory names no fix at all.
+	f.results["npm|tail|1.4.5|"] = result{ids: []string{"GHSA-tail"}}
+	f.vulns["GHSA-tail"] = npmVuln("GHSA-tail", "tail",
+		sem(`{"introduced":"0"}`, `{"fixed":"1.5.0"}`),
+		sem(`{"introduced":"1.5.0"}`, `{"last_affected":"1.9.0"}`))
+	// Disjoint ranges keep every fix: neither is inside the other.
+	f.results["npm|lines|1.4.5|"] = result{ids: []string{"GHSA-lines"}}
+	f.vulns["GHSA-lines"] = npmVuln("GHSA-lines", "lines",
+		sem(`{"introduced":"1.0.0"}`, `{"fixed":"1.5.0"}`),
+		sem(`{"introduced":"2.0.0"}`, `{"fixed":"2.1.0"}`))
+	// Hex orders its versions with the "hex" scheme, which has no version "0": the
+	// "introduced: 0" limit is below every version all the same.
+	f.results["Hex|overlap|1.4.5|"] = result{ids: []string{"HEX-overlap"}}
+	f.vulns["HEX-overlap"] = `{"id":"HEX-overlap","summary":"s","affected":[{"package":{"name":"overlap","ecosystem":"Hex"},"ranges":[
+		{"type":"ECOSYSTEM","events":[{"introduced":"0"},{"fixed":"1.5.0"}]},
+		{"type":"ECOSYSTEM","events":[{"introduced":"1.4.0"},{"fixed":"2.0.0"}]}]}]}`
+	s := f.start(nil)
+
+	deps := []dep.Dep{
+		{Manager: "npm", Datasource: "npm", DepType: "dependencies", Name: "overlap", Version: "1.4.5"},
+		{Manager: "npm", Datasource: "npm", DepType: "dependencies", Name: "tail", Version: "1.4.5"},
+		{Manager: "npm", Datasource: "npm", DepType: "dependencies", Name: "lines", Version: "1.4.5"},
+		{Manager: "mix", Datasource: "hex", DepType: "deps", Name: "overlap", Version: "1.4.5"},
+	}
+	got, err := s.Advisories(t.Context(), deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{{"2.0.0"}, nil, {"1.5.0", "2.1.0"}, {"2.0.0"}}
+	for i, w := range want {
+		if len(got[i]) != 1 {
+			t.Fatalf("dep %d: got %+v, want one advisory", i, got[i])
+		}
+		if !reflect.DeepEqual(got[i][0].Fixed, w) {
+			t.Errorf("dep %d %s: Fixed = %q, want %q", i, got[i][0].Advisory.ID, got[i][0].Fixed, w)
+		}
 	}
 }
 

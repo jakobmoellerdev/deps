@@ -74,13 +74,13 @@ func distroTarget(d dep.Dep) *target {
 			var stream string
 			if eco, stream = rpmEcosystem(u); stream != "" {
 				t := newTarget(query{Package: pkg{Name: d.Name, Ecosystem: eco}, Version: v})
-				t.distro, t.stream, t.scheme = true, stream, "rpm"
+				t.distro, t.stream, t.scheme, t.local = true, stream, "rpm", true
 				return t
 			}
 		}
 		if eco != "" {
 			t := newTarget(query{Package: pkg{Name: d.Name, Ecosystem: eco}, Version: v})
-			t.distro = true
+			t.distro, t.scheme = true, d.Datasource // "deb", "apk" and "rpm" are scheme names
 			return t
 		}
 	}
@@ -233,37 +233,23 @@ func sleProduct(seg string) string {
 // "SUSE" query matches every release (so a release stream's ranges are checked here, with RPM
 // ordering), and Julia and SwiftURL queries return every advisory of the package.
 func (t *target) schemeAffected(entries []affected) bool {
-	s, ok := versioning.Get(t.scheme)
+	s, ok := t.rangeScheme()
 	v := t.qs[0].Version
 	if !ok || !s.Valid(v) {
 		return false
 	}
-	at := func(bound string, ok func(int) bool) bool {
-		return s.Valid(bound) && ok(s.Compare(v, bound))
-	}
+	return schemeAffectedAt(entries, v, s)
+}
+
+// schemeAffectedAt reports whether the ECOSYSTEM and SEMVER ranges of entries cover the valid
+// version v, ordered by s.
+func schemeAffectedAt(entries []affected, v string, s versioning.Scheme) bool {
 	for _, a := range entries {
 		for _, r := range a.Ranges {
 			if r.Type != "ECOSYSTEM" && r.Type != "SEMVER" {
 				continue
 			}
-			in := false
-			for _, e := range r.Events {
-				switch {
-				case e.Introduced != "":
-					if e.Introduced == "0" || at(e.Introduced, func(c int) bool { return c >= 0 }) {
-						in = true
-					}
-				case e.Fixed != "":
-					if at(e.Fixed, func(c int) bool { return c >= 0 }) {
-						in = false
-					}
-				case e.LastAffected != "":
-					if at(e.LastAffected, func(c int) bool { return c > 0 }) {
-						in = false
-					}
-				}
-			}
-			if in {
+			if inEvents(r.Events, v, func(b string) (string, bool) { return b, s.Valid(b) }, s.Compare) {
 				return true
 			}
 		}
@@ -273,9 +259,9 @@ func (t *target) schemeAffected(entries []affected) bool {
 
 // distroFixed returns the fixed versions as published, without the zero epoch RPM advisories
 // write ("0:7.76.1-26.el9_3.2" → "7.76.1-26.el9_3.2"), which is the same version.
-func distroFixed(entries []affected) []string {
+func (t *target) distroFixed(entries []affected) []string {
 	var out []string
-	fixedEvents(entries, func(f string) {
+	t.fixedEvents(entries, func(f string) {
 		if f = strings.TrimPrefix(f, "0:"); !slices.Contains(out, f) {
 			out = append(out, f)
 		}

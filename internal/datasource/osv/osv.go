@@ -81,6 +81,10 @@
 //     and only the release's "Red Hat:enterprise_linux:<n>:" streams count, evaluated locally
 //     with RPM ordering. Fixed versions are returned as published, without a "0:" epoch.
 //
+// A fixed version that another range of the same advisory still covers (overlapping or
+// adjacent ranges) is not reported as a fix: only a version outside every range leaves the
+// advisory behind.
+//
 // Withdrawn advisories are skipped. Advisories that alias each other ("GO-2024-2687" and
 // "GHSA-4v7x-pqxf-cx7m") are reported once, preferring the ecosystem's native ID.
 package osv
@@ -177,9 +181,13 @@ type target struct {
 	tag    versioning.Tag // GitHub Actions: the dep version; crates.io, Go toolchains: the precision of fixes
 	cmp    [3]int         // GitHub Actions: tag padded for range evaluation
 	distro bool           // deb, apk, rpm: a distribution release's ecosystem
-	// scheme is the versioning scheme the ranges are evaluated with locally, "" = OSV
-	// matched the version server-side (Julia and SwiftURL: "semver"; Red Hat and SUSE: "rpm").
+	// scheme is the versioning scheme the ecosystem's versions are ordered by, used to drop
+	// fixed versions another range of the same advisory still covers and, where local is
+	// set, to evaluate the ranges. "" = the ecosystem's default scheme (ecoSchemes).
 	scheme string
+	// local is set where OSV does not evaluate the version server-side, so the ranges decide
+	// locally whether the dep is affected (Julia and SwiftURL; Red Hat and SUSE streams).
+	local bool
 	// stream is the ecosystem prefix of a release's streams (Red Hat, SUSE), whose entries
 	// a query naming only the parent ecosystem returns for every release.
 	stream string
@@ -316,7 +324,7 @@ func targetOf(d dep.Dep) *target {
 			return nil
 		}
 		t := newTarget(query{Package: pkg{Name: d.Name, Ecosystem: ecoJulia}})
-		t.scheme = "semver" // OSV does not evaluate Julia ranges server-side
+		t.scheme, t.local = "semver", true // OSV does not evaluate Julia ranges server-side
 		t.qs[0].Version = v
 		return t
 	}
@@ -418,7 +426,7 @@ func swiftTarget(d dep.Dep) *target {
 		return nil
 	}
 	t := newTarget(query{Package: pkg{Name: name, Ecosystem: ecoSwift}, Version: v})
-	t.scheme = "semver"
+	t.scheme, t.local = "semver", true
 	return t
 }
 
@@ -752,12 +760,12 @@ func match(t *target, ids []string, docs map[string]*vuln) []datasource.Vuln {
 				entries = append(entries, v.entries(q.Package)...)
 			}
 		}
-		if t.scheme != "" && !t.schemeAffected(entries) {
+		if t.local && !t.schemeAffected(entries) {
 			continue
 		}
 		var fixed []string
 		if t.distro {
-			fixed = distroFixed(entries)
+			fixed = t.distroFixed(entries)
 		}
 		switch eco {
 		case ecoActions:
@@ -766,19 +774,19 @@ func match(t *target, ids []string, docs map[string]*vuln) []datasource.Vuln {
 			}
 			fixed = t.actionsFixed(entries)
 		case ecoNpm, ecoPyPI:
-			fixed = npmFixed(entries)
+			fixed = t.npmFixed(entries)
 		case ecoCrates:
-			fixed = npmFixed(entries)
+			fixed = t.npmFixed(entries)
 			if len(t.tag.Parts) > 0 {
 				fixed = t.actionsFixed(entries) // partial requirement: at its precision
 			}
 		case ecoMaven, ecoRuby, ecoPHP, ecoNuGet, ecoPub, ecoHex, ecoJulia, ecoSwift:
-			fixed = mavenFixed(entries)
+			fixed = t.mavenFixed(entries)
 		case ecoGo:
 			if len(t.tag.Parts) > 0 {
 				fixed = t.actionsFixed(entries) // toolchain: bare, at the directive's precision
 			} else {
-				fixed = goFixed(entries)
+				fixed = t.goFixed(entries)
 			}
 		}
 		seen[v.ID] = true
@@ -880,15 +888,46 @@ func rating(s string) string {
 	return ""
 }
 
-// fixedEvents calls f for every fixed event of the SEMVER/ECOSYSTEM ranges in entries.
-func fixedEvents(entries []affected, f func(string)) {
+// ecoSchemes maps an OSV ecosystem to the versioning scheme its versions are ordered by, for
+// the ecosystems OSV matches server-side (the others carry the scheme in target.scheme).
+// GitHub Actions is missing: its versions are compared as numeric tags (parts, cmp3).
+var ecoSchemes = map[string]string{
+	ecoGo:     "semver",
+	ecoNpm:    "semver",
+	ecoCrates: "cargo",
+	ecoPyPI:   "pep440",
+	ecoMaven:  "maven",
+	ecoRuby:   "ruby",
+	ecoPHP:    "composer",
+	ecoNuGet:  "nuget",
+	ecoPub:    "pub",
+	ecoHex:    "hex",
+}
+
+// rangeScheme returns the scheme the versions of t's ecosystem are ordered by.
+func (t *target) rangeScheme() (versioning.Scheme, bool) {
+	name := t.scheme
+	if name == "" {
+		name = ecoSchemes[t.qs[0].Package.Ecosystem]
+	}
+	if name == "" {
+		return nil, false
+	}
+	return versioning.Get(name)
+}
+
+// fixedEvents calls f for every fixed event of the SEMVER/ECOSYSTEM ranges in entries that
+// leaves the advisory behind. A fixed version inside another range of the same advisory is no
+// fix: with the overlapping ranges "[0, 1.5.0)" and "[1.4.0, 2.0.0)", upgrading 1.4.5 to the
+// fix 1.5.0 of the first range lands in the second one, and only 2.0.0 is out of both.
+func (t *target) fixedEvents(entries []affected, f func(string)) {
 	for _, a := range entries {
 		for _, r := range a.Ranges {
 			if r.Type != "SEMVER" && r.Type != "ECOSYSTEM" {
 				continue
 			}
 			for _, e := range r.Events {
-				if e.Fixed != "" {
+				if e.Fixed != "" && !affectedAt(entries, e.Fixed, t) {
 					f(e.Fixed)
 				}
 			}
@@ -896,9 +935,35 @@ func fixedEvents(entries []affected, f func(string)) {
 	}
 }
 
-func goFixed(entries []affected) []string {
+// affectedAt reports whether the ranges of entries still cover the candidate fixed version v.
+// It reports false where the versions cannot be ordered (an ecosystem without a scheme, a
+// candidate the scheme does not parse), which keeps the candidate: a fix deps cannot check is
+// better than none.
+func affectedAt(entries []affected, v string, t *target) bool {
+	if t.qs[0].Package.Ecosystem == ecoActions {
+		p, ok := parts(v)
+		if !ok {
+			return false
+		}
+		for _, a := range entries {
+			for _, r := range a.Ranges {
+				if (r.Type == "SEMVER" || r.Type == "ECOSYSTEM") && inEvents(r.Events, p, parts, cmp3) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	s, ok := t.rangeScheme()
+	if !ok || !s.Valid(v) {
+		return false
+	}
+	return schemeAffectedAt(entries, v, s)
+}
+
+func (t *target) goFixed(entries []affected) []string {
 	var out []string
-	fixedEvents(entries, func(f string) {
+	t.fixedEvents(entries, func(f string) {
 		if f = "v" + strings.TrimPrefix(f, "v"); !slices.Contains(out, f) {
 			out = append(out, f)
 		}
@@ -906,9 +971,9 @@ func goFixed(entries []affected) []string {
 	return out
 }
 
-func npmFixed(entries []affected) []string {
+func (t *target) npmFixed(entries []affected) []string {
 	var out []string
-	fixedEvents(entries, func(f string) {
+	t.fixedEvents(entries, func(f string) {
 		if f = strings.TrimPrefix(f, "v"); !slices.Contains(out, f) {
 			out = append(out, f)
 		}
@@ -916,9 +981,9 @@ func npmFixed(entries []affected) []string {
 	return out
 }
 
-func mavenFixed(entries []affected) []string {
+func (t *target) mavenFixed(entries []affected) []string {
 	var out []string
-	fixedEvents(entries, func(f string) {
+	t.fixedEvents(entries, func(f string) {
 		if !slices.Contains(out, f) {
 			out = append(out, f)
 		}
@@ -929,7 +994,7 @@ func mavenFixed(entries []affected) []string {
 // actionsFixed renders the fixed versions in the dep's prefix style and part count.
 func (t *target) actionsFixed(entries []affected) []string {
 	var out []string
-	fixedEvents(entries, func(f string) {
+	t.fixedEvents(entries, func(f string) {
 		ft, ok := versioning.ParseTag(f)
 		if !ok {
 			return
@@ -981,9 +1046,20 @@ func (t *target) affectedBy(entries []affected) bool {
 }
 
 func (t *target) inRange(events []event) bool {
+	return inEvents(events, t.cmp, parts, cmp3)
+}
+
+// inEvents evaluates the events of one OSV range against cur, following the OSV spec's
+// evaluation algorithm: the events are sorted by version (a record may list its ranges in any
+// order) and applied in that order. parse reports whether an event version is one the caller
+// can order; an event it cannot parse is skipped, so a single odd version does not hide the
+// rest of the range. An "introduced: 0" event is the spec's lower limit, below every version,
+// and needs no parsing.
+func inEvents[V any](events []event, cur V, parse func(string) (V, bool), compare func(a, b V) int) bool {
 	type ev struct {
-		v    [3]int
+		v    V
 		kind byte // 'i' introduced, 'f' fixed, 'l' last_affected
+		low  bool // "introduced: 0": below every version
 	}
 	evs := make([]ev, 0, len(events))
 	for _, e := range events {
@@ -996,16 +1072,33 @@ func (t *target) inRange(events []event) bool {
 		case s == "":
 			continue // limit or unknown event
 		}
-		p, ok := parts(s)
-		if !ok {
-			return false
+		if kind == 'i' && s == "0" {
+			evs = append(evs, ev{kind: kind, low: true})
+			continue
 		}
-		evs = append(evs, ev{p, kind})
+		p, ok := parse(s)
+		if !ok {
+			continue
+		}
+		evs = append(evs, ev{v: p, kind: kind})
 	}
-	slices.SortStableFunc(evs, func(a, b ev) int { return cmp3(a.v, b.v) })
+	slices.SortStableFunc(evs, func(a, b ev) int {
+		switch {
+		case a.low && b.low:
+			return 0
+		case a.low:
+			return -1
+		case b.low:
+			return 1
+		}
+		return compare(a.v, b.v)
+	})
 	in := false
 	for _, e := range evs {
-		c := cmp3(t.cmp, e.v)
+		c := 1 // every version is above the "0" limit
+		if !e.low {
+			c = compare(cur, e.v)
+		}
 		switch {
 		case e.kind == 'i' && c >= 0:
 			in = true
