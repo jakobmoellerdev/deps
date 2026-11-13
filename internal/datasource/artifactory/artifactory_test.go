@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -149,6 +150,46 @@ func TestReleasesErrors(t *testing.T) {
 	cancel()
 	if _, err := New(srv.Client(), make(chan struct{}), nil).Releases(ctx, dep.Dep{Name: "p", Source: srv.URL + "/empty"}, ""); err == nil {
 		t.Error("canceled: want error")
+	}
+}
+
+// A registry whose listing could not be read fails the dep: its versions are unknown, so a
+// mirror that answered must not decide the update on its own. Only a 404/410 or a listing
+// without entries falls through to the next registry.
+func TestReleasesRegistryUnreadable(t *testing.T) {
+	const listing = `<pre><a href="1.0.0/">1.0.0/</a>  21-Jul-2021 20:08    -</pre>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/down/p/":
+			http.Error(w, "down", http.StatusServiceUnavailable)
+		case "/mirror/p/":
+			_, _ = w.Write([]byte(listing))
+		case "/empty/p/":
+			_, _ = w.Write([]byte(`<html><a href="../">../</a></html>`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	s := New(srv.Client(), nil, nil)
+	d := dep.Dep{Name: "p", Source: srv.URL + "/down " + srv.URL + "/mirror", Datasource: Name}
+	rels, err := s.Releases(t.Context(), d, "")
+	if err == nil || !strings.Contains(err.Error(), "503") || rels != nil {
+		t.Fatalf("Releases = %v, %v; want the 503", versions(rels), err)
+	}
+	if _, err := s.ReleaseTime(t.Context(), d, "1.0.0"); err == nil {
+		t.Error("ReleaseTime: want error")
+	}
+
+	// A credential in a registry URL stays out of the message.
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u.User = url.UserPassword("user", "s3cret")
+	d = dep.Dep{Name: "p", Source: u.String() + "/missing " + u.String() + "/empty", Datasource: Name}
+	if _, err := s.Releases(t.Context(), d, ""); err == nil || strings.Contains(err.Error(), "s3cret") {
+		t.Errorf("empty registries: err = %v", err)
 	}
 }
 

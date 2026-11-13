@@ -100,7 +100,11 @@ func URLs(d dep.Dep) []string {
 	return out
 }
 
-// lookup lists the folders of d once each and merges them.
+// lookup lists the folders of d once each and merges them. A registry whose listing could not
+// be read fails the dep: its versions are unknown, so a mirror that answered must not decide
+// the update on its own (`registryUrl: "https://a.example/art https://b.example/art"` where a
+// is down and b is a stale mirror). Only a folder the registry does not have (404/410) or one
+// that lists nothing falls through to the next registry, logged at debug level.
 func (s *Source) lookup(ctx context.Context, d dep.Dep) (*folder, error) {
 	urls := URLs(d)
 	if len(urls) == 1 {
@@ -111,6 +115,10 @@ func (s *Source) lookup(ctx context.Context, d dep.Dep) (*folder, error) {
 	for _, u := range urls {
 		f, err := s.list(ctx, u)
 		if err != nil {
+			if !unlisted(err) {
+				return nil, err
+			}
+			slog.DebugContext(ctx, "artifactory registry skipped", "url", httpx.Redact(u), "err", err)
 			errs = append(errs, err)
 			continue
 		}
@@ -123,9 +131,29 @@ func (s *Source) lookup(ctx context.Context, d dep.Dep) (*folder, error) {
 		}
 	}
 	if len(merged.rels) == 0 {
-		return nil, fmt.Errorf("no versions in %s: %w", strings.Join(urls, ", "), joinErrs(errs))
+		return nil, fmt.Errorf("no versions in %s: %w", redactAll(urls), joinErrs(errs))
 	}
 	return merged, nil
+}
+
+// unlisted reports whether err says that the registry has no such folder (404/410) or lists
+// nothing in it (errNoVersions). Any other failure — a transport error, 401/403, a 5xx —
+// leaves it unknown what the registry holds.
+func unlisted(err error) bool {
+	if errors.Is(err, errNoVersions) {
+		return true
+	}
+	se, ok := errors.AsType[*httpx.StatusError](err)
+	return ok && (se.Code == http.StatusNotFound || se.Code == http.StatusGone)
+}
+
+// redactAll joins the URLs for an error, with the password of each masked.
+func redactAll(urls []string) string {
+	out := make([]string, len(urls))
+	for i, u := range urls {
+		out[i] = httpx.Redact(u)
+	}
+	return strings.Join(out, ", ")
 }
 
 // joinErrs reads as the first error, or "empty listings" without errors.
@@ -136,7 +164,12 @@ func joinErrs(errs []error) error {
 	return errs[0]
 }
 
-var errEmpty = errors.New("empty listings")
+// errEmpty is the merge of registries that all listed nothing, errNoVersions one listing
+// the registry answered without an entry.
+var (
+	errEmpty      = errors.New("empty listings")
+	errNoVersions = errors.New("no versions listed")
+)
 
 // list fetches and parses the directory listing at u once per run. The platform token of
 // u's host is sent as Basic auth; after a 401 the git credential helper is asked once.
@@ -170,7 +203,7 @@ func (s *Source) fetch(ctx context.Context, u string) (*folder, error) {
 	}
 	f := parse(body)
 	if len(f.rels) == 0 {
-		return nil, fmt.Errorf("GET %s: no versions listed", u)
+		return nil, fmt.Errorf("GET %s: %w", httpx.Redact(u), errNoVersions)
 	}
 	return f, nil
 }
