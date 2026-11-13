@@ -45,6 +45,15 @@ func (r *registry) key(suffix string) string {
 	return r.index + "\x00" + r.cred + "\x00" + suffix
 }
 
+// label names r in an error: its registry name, or its index URL with the password of a
+// `registry-index = "https://user:token@host/index"` masked.
+func (r *registry) label() string {
+	if strings.Contains(r.name, "://") {
+		return httpx.Redact(r.name)
+	}
+	return r.name
+}
+
 // credID identifies a token without keeping it; "" stands for no token.
 func credID(token string) string {
 	if token == "" {
@@ -449,9 +458,9 @@ func (s *Source) clone(ctx context.Context, index string) (string, error) {
 	s.mu.Unlock()
 	start := time.Now()
 	_, err = git(ctx, "", "clone", "--quiet", "--depth=1", "--filter=blob:none", "--no-checkout", index, dir)
-	slog.DebugContext(ctx, "crate git index cloned", "url", index, "duration", time.Since(start), "err", err)
+	slog.DebugContext(ctx, "crate git index cloned", "url", httpx.Redact(index), "duration", time.Since(start), "err", err)
 	if err != nil {
-		return "", fmt.Errorf("git index %s: %w", index, err)
+		return "", fmt.Errorf("git index %s: %w", httpx.Redact(index), err)
 	}
 	return dir, nil
 }

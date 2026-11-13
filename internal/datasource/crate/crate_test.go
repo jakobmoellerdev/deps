@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -264,6 +265,68 @@ func TestErrors(t *testing.T) {
 	}
 	if d := New(srv.Client(), nil, nil, func(string) string { return "" }); d.index != DefaultIndexURL || d.api != DefaultAPIURL {
 		t.Errorf("defaults = %s, %s", d.index, d.api)
+	}
+}
+
+// Cargo takes "-" and "_" in a dependency key as interchangeable and looks the other
+// spellings up in the index, so `async_trait = "0.1"` resolves to the published async-trait.
+func TestNameSpellings(t *testing.T) {
+	var mu sync.Mutex
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		if r.URL.Path == "/index/as/yn/async-trait" {
+			fmt.Fprintln(w, `{"name":"async-trait","vers":"0.1.89","yanked":false}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	s := newSource(srv)
+	rels, err := s.Releases(t.Context(), dep.Dep{Name: "async_trait", Version: "0.1.80"}, "")
+	if err != nil || versions(rels) != "0.1.89" {
+		t.Fatalf("Releases = %s, %v", versions(rels), err)
+	}
+	want := []string{"/index/as/yn/async_trait", "/index/as/yn/async-trait"}
+	if strings.Join(paths, " ") != strings.Join(want, " ") {
+		t.Errorf("paths = %q, want %q", paths, want)
+	}
+	if _, err := s.Releases(t.Context(), dep.Dep{Name: "async_trait", Version: "0.1.80"}, ""); err != nil {
+		t.Errorf("second lookup = %v", err) // deduped per requested name
+	}
+	if len(paths) != len(want) {
+		t.Errorf("paths after the second lookup = %q", paths)
+	}
+	paths = nil
+	if _, err := s.Releases(t.Context(), dep.Dep{Name: "no_crate", Version: "1.0.0"}, ""); err == nil {
+		t.Error("missing crate: no error")
+	}
+	if n := len(paths); n != 2 { // both spellings, then it is missing
+		t.Errorf("missing crate: %d requests %q", n, paths)
+	}
+}
+
+// A registry-index URL carries credentials; they must not leak into errors or logs.
+func TestRegistryURLRedacted(t *testing.T) {
+	var hits atomic.Int32
+	srv := serve(t, &hits)
+	u, err := url.Parse(srv.URL + "/index")
+	if err != nil {
+		t.Fatal(err)
+	}
+	u.User = url.UserPassword("user", "s3cret")
+	s := newSource(srv)
+	d := dep.Dep{Name: "missing", Version: "1.0.0", Source: "sparse+" + u.String()}
+	_, err = s.Releases(t.Context(), d, "")
+	want := "crate missing not found in registry sparse+" + strings.Replace(u.String(), ":s3cret@", ":xxxxx@", 1)
+	if err == nil || err.Error() != want {
+		t.Errorf("err = %v, want %s", err, want)
+	}
+	d.Name = "failing"
+	if _, err := s.Releases(t.Context(), d, ""); err == nil || strings.Contains(err.Error(), "s3cret") {
+		t.Errorf("500 err = %v", err)
 	}
 }
 

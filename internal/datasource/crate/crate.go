@@ -188,7 +188,7 @@ func (s *Source) apiOf(ctx context.Context, r *registry) (string, error) {
 			API string `json:"api"`
 		}
 		if err := json.UnmarshalRead(body, &cfg); err != nil {
-			return "", fmt.Errorf("%s config.json: %w", r.index, err)
+			return "", fmt.Errorf("%s config.json: %w", httpx.Redact(r.index), err)
 		}
 		return strings.TrimSuffix(cfg.API, "/"), nil
 	})
@@ -204,7 +204,7 @@ func (s *Source) load(ctx context.Context, r *registry, name string) (*entry, er
 		start := time.Now()
 		e := &entry{}
 		err := s.fetch(ctx, r, strings.ToLower(name), e)
-		slog.DebugContext(ctx, "crate index", "registry", r.index, "name", name, "releases", len(e.rels), "duration", time.Since(start), "err", err)
+		slog.DebugContext(ctx, "crate index", "registry", httpx.Redact(r.index), "name", name, "releases", len(e.rels), "duration", time.Since(start), "err", err)
 		if err != nil {
 			return nil, err
 		}
@@ -233,6 +233,51 @@ func IndexPath(name string) (string, bool) {
 		return "3/" + n[:1] + "/" + n, true
 	}
 	return n[:2] + "/" + n[2:4] + "/" + n, true
+}
+
+// maxSpelledSeparators is the number of "-"/"_" of a crate name whose every spelling is
+// looked up; a name with more only gets the all-"-" and all-"_" ones, so that a crate that is
+// simply missing costs few requests.
+const maxSpelledSeparators = 3
+
+// nameVariants returns the spellings of the crate name to look up, name itself first. Cargo
+// takes "-" and "_" in a dependency key as interchangeable and looks the other spellings up
+// in the index (UncanonicalizedIter), so `async_trait = "0.1"` resolves to the published
+// async-trait; crates.io forbids two crates whose names differ only in those characters, so
+// at most one spelling is published.
+func nameVariants(name string) []string {
+	var pos []int
+	for i := range len(name) {
+		if name[i] == '-' || name[i] == '_' {
+			pos = append(pos, i)
+		}
+	}
+	if len(pos) == 0 {
+		return []string{name}
+	}
+	out := make([]string, 1, 1<<min(len(pos), maxSpelledSeparators))
+	out[0] = name
+	b := []byte(name)
+	if len(pos) > maxSpelledSeparators {
+		for _, c := range [2]byte{'-', '_'} {
+			for _, i := range pos {
+				b[i] = c
+			}
+			if v := string(b); v != name {
+				out = append(out, v)
+			}
+		}
+		return out
+	}
+	for mask := range 1 << len(pos) {
+		for k, i := range pos {
+			b[i] = "-_"[mask>>k&1]
+		}
+		if v := string(b); v != name {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // indexLine is the part of an index entry deps reads.
@@ -277,20 +322,31 @@ func decodeIndexLine(dec *jsontext.Decoder, l *indexLine) error {
 }
 
 func (s *Source) fetch(ctx context.Context, r *registry, name string, e *entry) error {
-	p, ok := IndexPath(name)
-	if !ok {
+	if _, ok := IndexPath(name); !ok {
 		return fmt.Errorf("invalid crate name %q", name)
 	}
-	u := r.index + "/" + p
-	body, err := s.open(ctx, r, p)
-	if err != nil {
-		if errors.Is(err, errNotFound) {
-			if r.name != "crates-io" {
-				return fmt.Errorf("crate %s not found in registry %s", name, r.name)
+	var u string
+	var body io.ReadCloser
+	for _, n := range nameVariants(name) {
+		p, _ := IndexPath(n) // only "-" and "_" differ from name, which IndexPath accepted
+		rc, err := s.open(ctx, r, p)
+		if err != nil {
+			if errors.Is(err, errNotFound) {
+				continue
 			}
-			return fmt.Errorf("crate %s not found", name)
+			return err
 		}
-		return err
+		if n != name {
+			slog.DebugContext(ctx, "crate name spelled differently", "name", name, "index", n)
+		}
+		u, body = httpx.Redact(r.index+"/"+p), rc
+		break
+	}
+	if body == nil {
+		if r.name != "crates-io" {
+			return fmt.Errorf("crate %s not found in registry %s", name, r.label())
+		}
+		return fmt.Errorf("crate %s not found", name)
 	}
 	defer body.Close()
 	e.times, e.latest = map[string]time.Time{}, map[string]string{}
@@ -383,7 +439,7 @@ func (s *Source) fetchRepo(ctx context.Context, r *registry, api, name, version 
 		} `json:"version"`
 	}
 	if err := json.UnmarshalRead(body, &doc); err != nil {
-		return "", fmt.Errorf("GET %s: %w", u, err)
+		return "", fmt.Errorf("GET %s: %w", httpx.Redact(u), err)
 	}
 	return doc.Version.Repository, nil
 }
@@ -435,11 +491,11 @@ func (s *Source) get(ctx context.Context, r *registry, u string) (io.ReadCloser,
 					continue
 				}
 			}
-			err = fmt.Errorf("GET %s: HTTP %d", u, resp.StatusCode)
+			err = fmt.Errorf("GET %s: HTTP %d", httpx.Redact(u), resp.StatusCode)
 		case http.StatusNotFound, http.StatusGone:
 			err = errNotFound
 		default:
-			err = fmt.Errorf("GET %s: %w", u, httpx.ResponseError(resp))
+			err = fmt.Errorf("GET %s: %w", httpx.Redact(u), httpx.ResponseError(resp))
 		}
 		closeBody(resp)
 		release()
