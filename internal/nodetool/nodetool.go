@@ -52,8 +52,10 @@ var toolOf = map[string]string{NpmShrinkwrap: "npm", PackageLock: "npm", PnpmLoc
 
 // Locker is the npm post-processor (engine.PostProcessor): it regenerates the lockfile of a
 // lock root (a project or workspace root) after deps patched package.json files in it, with
-// the lockfile's package manager in a temporary directory.
-type Locker struct{}
+// the lockfile's package manager in a temporary directory. Scopes memoizes the lock root
+// lookups of Scope, which the engine repeats for every patched file of every build of a run
+// (nil: none).
+type Locker struct{ Scopes *Scopes }
 
 // Siblings lists the lockfiles and the (read-only) package manager configuration of a lock
 // root.

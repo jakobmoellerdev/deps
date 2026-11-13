@@ -64,6 +64,13 @@ func TestScope(t *testing.T) {
 		if ok != c.ok || ok && dir != c.dir {
 			t.Errorf("Scope(%s) = %q, %v; want %q, %v", c.manifest, dir, ok, c.dir, c.ok)
 		}
+		// A cached Locker answers the same, also when it answers twice from its cache.
+		l := Locker{Scopes: NewScopeCache()}
+		for range 2 {
+			if dir, ok := l.Scope(t.Context(), root, c.manifest); ok != c.ok || ok && dir != c.dir {
+				t.Errorf("cached Scope(%s) = %q, %v; want %q, %v", c.manifest, dir, ok, c.dir, c.ok)
+			}
+		}
 	}
 	// Outside any lock.
 	if _, ok := (Locker{}).Scope(t.Context(), t.TempDir(), "a/pyproject.toml"); ok {

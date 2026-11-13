@@ -86,10 +86,13 @@ func applyCmd(ctx context.Context, cmd *cli.Command, o *rootOpts, into string) e
 // regenerated, other hashes from the session's pypi datasource), for apply and run.
 func postProcessors(s *session) map[string]engine.PostProcessor {
 	hashes, _ := s.sources[pypi.Name].(pytool.Hasher)
+	// One lock root lookup cache per run: the engine asks for the scope of every patched file
+	// of every build, and a workspace member's lookup reads its root's manifests.
+	py := pytool.Locker{Scopes: pytool.NewScopeCache()}
 	return map[string]engine.PostProcessor{
-		gomod.Name: gotool.Tidier{Imports: gotool.NewImportCache()}, npm.Name: nodetool.Locker{}, helm.Name: helm.Locker{}, cargo.Name: cargo.Locker{}, bundler.Name: bundler.Locker{}, composer.Name: composer.Locker{IgnorePlatformReqs: s.env.ComposerIgnorePlatformReqs},
+		gomod.Name: gotool.Tidier{Imports: gotool.NewImportCache()}, npm.Name: nodetool.Locker{Scopes: nodetool.NewScopes()}, helm.Name: helm.Locker{}, cargo.Name: cargo.Locker{}, bundler.Name: bundler.Locker{}, composer.Name: composer.Locker{IgnorePlatformReqs: s.env.ComposerIgnorePlatformReqs},
 		terraform.Name: terraform.Locker{}, terraform.TerragruntName: terraform.TerragruntLocker{}, bazel.Name: bazel.Locker{}, bazel.BazeliskName: bazel.Locker{},
-		pep621.Name: pytool.Locker{}, poetry.Name: pytool.Locker{}, pipenv.Name: pytool.Locker{},
+		pep621.Name: py, poetry.Name: py, pipenv.Name: py,
 		piprequirements.Name: pytool.Compiler{Hashes: hashes, Outputs: piprequirements.NewOutputCache()},
 		gradle.Name:          jvmtool.GradleLocker{Scopes: jvmtool.NewScopeCache()}, gradlewrapper.Name: jvmtool.GradleWrapper{}, mavenwrapper.Name: jvmtool.MavenWrapper{},
 		swift.Name: swiftLocker(s), julia.Name: julia.Locker{}, pub.Name: pub.Locker{}, beam.NameMix: beam.MixLocker{}, beam.NameGleam: beam.GleamLocker{},

@@ -45,7 +45,9 @@ const maxCopy = 4 << 20
 
 // Locker is the post-processor (engine.PostProcessor) of the pep621, poetry and pipenv
 // managers: it regenerates the lockfile of a project with its tool in a temporary copy.
-type Locker struct{}
+// Scopes memoizes the uv workspace lookups of Scope, which the engine repeats for every
+// patched file of every build of a run (nil: none).
+type Locker struct{ Scopes *ScopeCache }
 
 // Siblings lists the lockfiles.
 func (Locker) Siblings() []string { return []string{UVLock, PoetryLock, PDMLock, PipfileLock} }
@@ -53,9 +55,33 @@ func (Locker) Siblings() []string { return []string{UVLock, PoetryLock, PDMLock,
 // Scope returns the lock directory of manifest: a Pipfile's own directory when it holds
 // Pipfile.lock; a pyproject.toml's own directory when it holds uv.lock, poetry.lock or
 // pdm.lock, else the nearest directory above (within root) with uv.lock whose
-// `[tool.uv.workspace]` members match the manifest's directory.
-func (Locker) Scope(ctx context.Context, root, manifest string) (string, bool) {
-	return scope(ctx, root, manifest, nil)
+// `[tool.uv.workspace]` members match the manifest's directory. The lookups of the Locker's
+// Scopes are cached (none without one).
+func (l Locker) Scope(ctx context.Context, root, manifest string) (string, bool) {
+	return l.Scopes.Scope(ctx, root, manifest)
+}
+
+// ScopeCache holds the `[tool.uv.workspace]` globs the Scope calls of one run read, so the
+// members of a workspace read and parse its pyproject.toml once. It holds what it read, so a
+// ScopeCache must not outlive the run that built it; the zero value is not usable, use
+// NewScopeCache. It is safe for concurrent use (engine.Build post-processes scopes in
+// parallel).
+type ScopeCache struct {
+	mu sync.Mutex
+	ws workspaces
+}
+
+// NewScopeCache returns an empty ScopeCache.
+func NewScopeCache() *ScopeCache { return &ScopeCache{ws: workspaces{}} }
+
+// Scope is Locker.Scope with the workspaces cached, uncached when c is nil.
+func (c *ScopeCache) Scope(ctx context.Context, root, manifest string) (string, bool) {
+	if c == nil {
+		return scope(ctx, root, manifest, nil)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return scope(ctx, root, manifest, c.ws)
 }
 
 // scope is Scope with the uv workspaces read so far (nil: none kept).

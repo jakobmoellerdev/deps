@@ -190,23 +190,32 @@ func (w workspaces) members(dir string) ([]string, error) {
 // nearest directory at or above the manifest's, within root, that holds a package-lock.json,
 // pnpm-lock.yaml or yarn.lock. It is accepted when it is the manifest's own directory or when
 // its package.json `workspaces` or pnpm-workspace.yaml `packages` globs match the manifest's
-// directory; otherwise the manifest has no lockfile.
-func (Locker) Scope(ctx context.Context, root, manifest string) (string, bool) {
-	return lockScope(ctx, root, manifest, nil)
+// directory; otherwise the manifest has no lockfile. The lookups of the Locker's Scopes are
+// cached (none without one).
+func (l Locker) Scope(ctx context.Context, root, manifest string) (string, bool) {
+	return l.Scopes.Scope(ctx, root, manifest)
 }
 
-// Scopes answers Locker.Scope for the manifests of one pass over a tree with the lockfile and
-// workspace lookups of each directory done once: the members of a monorepo share the stat of
-// their lock root and the read and parse of its package.json and pnpm-workspace.yaml. It
-// holds what it read, so a Scopes must not outlive one pass; it is not safe for concurrent
-// use.
-type Scopes struct{ c *scopeCache }
+// Scopes answers Locker.Scope for the manifests of one run with the lockfile and workspace
+// lookups of each directory done once: the members of a monorepo share the stat of their lock
+// root and the read and parse of its package.json and pnpm-workspace.yaml. It holds what it
+// read, so a Scopes must not outlive the run that built it; the zero value is not usable, use
+// NewScopes. It is safe for concurrent use (engine.Build post-processes scopes in parallel).
+type Scopes struct {
+	mu sync.Mutex
+	c  *scopeCache
+}
 
 // NewScopes returns a Scopes with an empty cache.
 func NewScopes() *Scopes { return &Scopes{c: newScopeCache()} }
 
-// Scope is Locker.Scope with the lookups of this pass cached.
+// Scope is Locker.Scope with the lookups cached, uncached when s is nil.
 func (s *Scopes) Scope(ctx context.Context, root, manifest string) (string, bool) {
+	if s == nil {
+		return lockScope(ctx, root, manifest, nil)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return lockScope(ctx, root, manifest, s.c)
 }
 
