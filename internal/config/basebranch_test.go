@@ -94,6 +94,10 @@ func TestBaseBranchesValidation(t *testing.T) {
 		{"baseBranches: ['a b']", `baseBranches[0]: must be a branch name, $default or a regex /<RE2>/, got "a b"`},
 		{"baseBranches: ['!main']", `baseBranches[0]: must be a branch name, $default or a regex /<RE2>/, got "!main"`},
 		{"baseBranches: ['']", `baseBranches[0]: must be a branch name, $default or a regex /<RE2>/, got ""`},
+		// $default names no branch of its own: a rule entry would match nothing (Renovate
+		// unfolds it only in baseBranches), so it is a config error, not a silent no-match.
+		{"rules: [{baseBranches: [$default], group: g}]", `rules[0].baseBranches[0]: $default is only a baseBranches entry; here name the branch or use a regex /<RE2>/, got "$default"`},
+		{"rules: [{baseBranches: ['!$default'], group: g}]", `rules[0].baseBranches[0]: $default is only a baseBranches entry; here name the branch or use a regex /<RE2>/, got "!$default"`},
 		{"rules: [{baseBranches: ['!'], group: g}]", `rules[0].baseBranches[0]: must be a branch name or a regex /<RE2>/, got "!"`},
 		{"rules: [{baseBranches: ['!/(/'], group: g}]", `rules[0].baseBranches[0]: invalid regex "!/(/"`},
 	} {

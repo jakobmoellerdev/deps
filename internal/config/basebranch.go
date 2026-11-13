@@ -22,7 +22,8 @@ type branchPattern struct {
 }
 
 // parseBranchPattern parses a baseBranches entry; exclude allows a leading '!', builtin the
-// entry $default.
+// entry $default. Without builtin, $default is an error: it names no branch of its own, so
+// the entry would match nothing (as it does in Renovate's matchBaseBranches).
 func parseBranchPattern(s string, exclude, builtin bool) (branchPattern, error) {
 	var p branchPattern
 	body := s
@@ -42,9 +43,12 @@ func parseBranchPattern(s string, exclude, builtin bool) (branchPattern, error) 
 		p.re = re
 		return p, nil
 	}
-	if builtin && body == DefaultBaseBranch {
-		p.name = body
-		return p, nil
+	if body == DefaultBaseBranch {
+		if builtin {
+			p.name = body
+			return p, nil
+		}
+		return p, fmt.Errorf("%s is only a baseBranches entry; here name the branch or use a regex /<RE2>/, got %q", DefaultBaseBranch, s)
 	}
 	if checkBranchPrefix(body+"/") != "" || !exclude && strings.HasPrefix(body, "!") {
 		if builtin {

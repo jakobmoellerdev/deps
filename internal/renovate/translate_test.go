@@ -1326,6 +1326,36 @@ func TestLoadBaseBranches(t *testing.T) {
 	}
 }
 
+// $default in matchBaseBranches matches nothing in Renovate (only baseBranchPatterns unfolds
+// it), so it is dropped instead of being written as a rule entry deps would reject.
+func TestLoadMatchBaseBranchesDefault(t *testing.T) {
+	res, err := load(t, `{baseBranchPatterns: ['$default', '/^release\\//'], packageRules: [
+		{matchBaseBranches: ['$default'], enabled: false},
+		{matchBaseBranches: ['$default', 'main'], automerge: true}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	y := string(res.YAML)
+	if !strings.Contains(y, "\nbaseBranches: [$default, /^release\\//]\n") {
+		t.Errorf("baseBranches lost $default:\n%s", y)
+	}
+	if !strings.Contains(y, "\n  - # packageRules[1]\n    baseBranches: [main]\n    automerge: true\n") {
+		t.Errorf("packageRules[1] not translated without $default:\n%s", y)
+	}
+	if _, body, _ := strings.Cut(y, "\nrules:"); strings.Contains(body, "$default") {
+		t.Errorf("rule keeps $default:\n%s", y)
+	}
+	notes := noteLines(res)
+	for _, want := range []string{
+		`warn packageRules[0].matchBaseBranches: "$default" matches no branch in Renovate either (only baseBranches unfolds it); dropped`,
+		"warn packageRules[0]: matches no base branch deps supports; rule dropped",
+	} {
+		if !slices.Contains(notes, want) {
+			t.Errorf("notes %q lack %q", notes, want)
+		}
+	}
+}
+
 // useBaseBranchConfig keeps its modes; none is deps' default and is not written.
 func TestLoadUseBaseBranchConfig(t *testing.T) {
 	for _, tt := range []struct {

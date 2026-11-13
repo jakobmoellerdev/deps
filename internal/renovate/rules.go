@@ -204,13 +204,19 @@ func isBlock(k string) bool {
 }
 
 // baseBranches keeps the base branch entries deps supports (names, $default and
-// /regex/); Renovate's globs are dropped with a note.
-func (t *translator) baseBranches(path string, l []string) []string {
+// /regex/); Renovate's globs are dropped with a note. Without builtin (matchBaseBranches,
+// which Renovate matches against the resolved branch name, never unfolding $default)
+// $default is dropped too.
+func (t *translator) baseBranches(path string, l []string, builtin bool) []string {
 	var out []string
 	for _, b := range l {
 		name := strings.TrimPrefix(b, "!")
 		if !(len(name) > 1 && name[0] == '/' && strings.LastIndexByte(name, '/') > 0) && strings.ContainsAny(name, "*?[]{}") {
 			t.n.warn(path, "glob %q has no deps equivalent (names and /regex/ only); dropped", b)
+			continue
+		}
+		if !builtin && name == config.DefaultBaseBranch {
+			t.n.warn(path, "%q matches no branch in Renovate either (only baseBranches unfolds it); dropped", b)
 			continue
 		}
 		out = append(out, b)
@@ -353,7 +359,7 @@ func (t *translator) rule(origin string, r map[string]any) {
 		case "matchCategories":
 			hasCats, cats = true, l
 		case "matchBaseBranches":
-			if bases = t.baseBranches(origin+".matchBaseBranches", l); len(bases) == 0 {
+			if bases = t.baseBranches(origin+".matchBaseBranches", l, false); len(bases) == 0 {
 				t.n.warn(origin, "matches no base branch deps supports; rule dropped")
 				return
 			}

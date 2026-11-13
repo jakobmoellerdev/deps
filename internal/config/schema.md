@@ -854,7 +854,7 @@ Renovate's `!pattern` works: `['actions/*', '!actions/cache']` matches every `ac
 
 ## Rule.baseBranches
 
-Renovate's `matchBaseBranches`. The base branch is the one `deps run` resolves: each of [`baseBranches`](#basebranches), the `--base` branch, else the default branch. Entries are exact names or RE2 regexes `/<RE2>/` (flag `i` allowed); a leading `!` excludes (`'!main'`, `'!/^release\//'`), exclusions win regardless of their position, and a list of only exclusions matches every other base. `explain --base <branch>` and `preview --base <branch>` (default: the pull request's target from the CI environment) resolve that base; `plan`, `apply`, and `explain` and `preview` without one resolve without a base branch, so a rule with `baseBranches` matches nothing there.
+Renovate's `matchBaseBranches`. The base branch is the one `deps run` resolves: each of [`baseBranches`](#basebranches), the `--base` branch, else the default branch. Entries are exact names or RE2 regexes `/<RE2>/` (flag `i` allowed); a leading `!` excludes (`'!main'`, `'!/^release\//'`), exclusions win regardless of their position, and a list of only exclusions matches every other base. `$default` is no entry here (it is one in [`baseBranches`](#basebranches)): it names no branch of its own, so the rule would match nothing, and it is a config error. `explain --base <branch>` and `preview --base <branch>` (default: the pull request's target from the CI environment) resolve that base; `plan`, `apply`, and `explain` and `preview` without one resolve without a base branch, so a rule with `baseBranches` matches nothing there.
 
 ## Rule.depTypes
 

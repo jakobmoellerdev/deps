@@ -590,7 +590,7 @@ func (t *translator) translate(cfg map[string]any) omap {
 				t.n.warn(k, "must be a list of strings; ignored")
 				continue
 			}
-			if l = t.baseBranches(k, l); len(l) > 0 {
+			if l = t.baseBranches(k, l, true); len(l) > 0 {
 				emit("baseBranches", l)
 			}
 			break
