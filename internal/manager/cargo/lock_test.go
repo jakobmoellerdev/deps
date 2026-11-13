@@ -77,6 +77,43 @@ func TestScope(t *testing.T) {
 	}
 }
 
+// TestScopeImplicitMember covers the path dependencies cargo makes workspace members without
+// a `members` list, and the plain package manifest that is no workspace root at all.
+func TestScopeImplicitMember(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, map[string]string{
+		"Cargo.toml": "[package]\nname = \"app\"\n\n[workspace]\n\n[dependencies]\n" +
+			"foo = { path = \"crates/foo\" }\nbar = { path = \"./crates/bar\" }\n" +
+			"gone = { path = \"crates/gone\" }\n\n[workspace.dependencies]\n" +
+			"ws = { path = \"crates/ws\" }\n",
+		"Cargo.lock":             "version = 4\n",
+		"crates/foo/Cargo.toml":  "",
+		"crates/bar/Cargo.toml":  "",
+		"crates/ws/Cargo.toml":   "",
+		"crates/nope/Cargo.toml": "",
+	})
+	plain := t.TempDir()
+	write(t, plain, map[string]string{
+		"Cargo.toml":            "[package]\nname = \"app\"\n\n[dependencies]\nfoo = { path = \"crates/foo\" }\n",
+		"Cargo.lock":            "version = 4\n",
+		"crates/foo/Cargo.toml": "",
+	})
+	for manifest, want := range map[string]string{
+		"crates/foo/Cargo.toml":  ".",
+		"crates/bar/Cargo.toml":  ".",
+		"crates/ws/Cargo.toml":   ".",
+		"crates/nope/Cargo.toml": "",
+	} {
+		dir, ok := Locker{}.Scope(t.Context(), root, manifest)
+		if dir != want || ok != (want != "") {
+			t.Errorf("Scope(%s) = %q, %v, want %q", manifest, dir, ok, want)
+		}
+	}
+	if dir, ok := (Locker{}).Scope(t.Context(), plain, "crates/foo/Cargo.toml"); ok {
+		t.Errorf("Scope without a [workspace] table = %q", dir)
+	}
+}
+
 func TestCompatible(t *testing.T) {
 	for _, tc := range []struct {
 		a, b string

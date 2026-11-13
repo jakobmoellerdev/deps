@@ -91,6 +91,11 @@ func pathDeps(src []byte) []string {
 	if err != nil {
 		return nil
 	}
+	return pathDepsOf(doc)
+}
+
+// pathDepsOf returns the `path` values of the dependency entries of a parsed Cargo.toml.
+func pathDepsOf(doc *tomlspan.Value) []string {
 	var out []string
 	for _, t := range depTables(doc) {
 		for _, k := range t.Keys {

@@ -40,9 +40,8 @@ func (Locker) Siblings() []string { return []string{lockFile} }
 
 // Scope returns the workspace root of the Cargo.toml manifest (slash paths relative to root):
 // the nearest directory at or above the manifest's, within root, that holds a Cargo.lock. It is
-// accepted when it is the manifest's own directory or when its Cargo.toml `[workspace]`
-// `members` globs include the manifest's directory and `exclude` does not; otherwise the
-// manifest has no lockfile.
+// accepted when it is the manifest's own directory or when its Cargo.toml makes that directory
+// a workspace member (isMember); otherwise the manifest has no lockfile.
 func (Locker) Scope(ctx context.Context, root, manifest string) (string, bool) {
 	member := path.Dir(manifest)
 	for dir := member; ; dir = path.Dir(dir) {
@@ -67,7 +66,11 @@ func (Locker) Scope(ctx context.Context, root, manifest string) (string, bool) {
 	}
 }
 
-// isMember reports whether the workspace manifest at file includes the member directory rel.
+// isMember reports whether the workspace manifest at file includes the member directory rel:
+// its `[workspace]` `members` globs match rel, or one of its path dependencies resolves to
+// rel, which cargo makes a member of the workspace too (a root `[package]` with an empty
+// `[workspace]` and `foo = { path = "crates/foo" }` has no `members` list at all). A
+// directory `exclude` matches is never a member.
 func isMember(ctx context.Context, file, rel string) bool {
 	src, err := os.ReadFile(file)
 	if err != nil {
@@ -78,6 +81,9 @@ func isMember(ctx context.Context, file, rel string) bool {
 		slog.DebugContext(ctx, "cargo workspace manifest unreadable", "file", file, "err", err)
 		return false
 	}
+	if root.Get("workspace") == nil {
+		return false // not a workspace root: the manifest only describes its own package
+	}
 	strs := func(k string) []string {
 		items := root.Get("workspace", k).Strings()
 		out := make([]string, 0, len(items))
@@ -86,7 +92,18 @@ func isMember(ctx context.Context, file, rel string) bool {
 		}
 		return out
 	}
-	return matchAny(strs("members"), rel) && !matchAny(strs("exclude"), rel)
+	if matchAny(strs("exclude"), rel) {
+		return false
+	}
+	if matchAny(strs("members"), rel) {
+		return true
+	}
+	for _, p := range pathDepsOf(root) {
+		if path.Clean(p) == rel {
+			return true
+		}
+	}
+	return false
 }
 
 func matchAny(globs []string, rel string) bool {
