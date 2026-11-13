@@ -2002,7 +2002,7 @@ Not allowed with `format: plain` (`not allowed with format plain`). **Selector g
 - Steps:
   - `.` (identity);
   - `.field`, where field is `[A-Za-z_][A-Za-z0-9_-]*`;
-  - `[]` or `.[]` (array elements or object values). A path may also start with `[]`.
+  - `[]` or `.[]` (array elements, or the values of an object by sorted key). A path may also start with `[]`.
 - As in jq:
   - a missing field, or a field of null, is null; nulls are dropped;
   - iterating null, or indexing or iterating the wrong type, is an error.

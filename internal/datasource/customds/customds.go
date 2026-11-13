@@ -93,8 +93,9 @@ func New(client *http.Client, sem chan struct{}, name string, spec Spec) (*Sourc
 	return s, nil
 }
 
-// Releases returns the selected versions, in document order without duplicates; d and dir
-// are ignored, every dep of this datasource shares the one list.
+// Releases returns the selected versions in selector order (arrays in document order, the
+// values of an object by sorted key) without duplicates; d and dir are ignored, every dep of
+// this datasource shares the one list.
 func (s *Source) Releases(ctx context.Context, _ dep.Dep, _ string) ([]datasource.Release, error) {
 	return s.releases.Do(ctx, func() ([]datasource.Release, error) {
 		start := time.Now()

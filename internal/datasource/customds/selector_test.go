@@ -49,6 +49,28 @@ func TestSelect(t *testing.T) {
 	}
 }
 
+// TestSelectObjectOrder pins that iterating an object yields its values by sorted key:
+// Releases documents a stable order, and a Go map (the json and yaml decoding of an object)
+// has none, so iterating it would give a different list on every run.
+func TestSelectObjectOrder(t *testing.T) {
+	doc := map[string]any{"releases": map[string]any{}}
+	rels := doc["releases"].(map[string]any)
+	for _, k := range []string{"3.0", "1.0", "20.0", "2.0", "10.0", "0.9", "4.0", "5.0", "6.0", "7.0"} {
+		rels[k] = map[string]any{"version": k}
+	}
+	s, err := ParseSelector(".releases[].version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"0.9", "1.0", "10.0", "2.0", "20.0", "3.0", "4.0", "5.0", "6.0", "7.0"}
+	for range 20 {
+		got, err := s.Select(doc)
+		if err != nil || !slices.Equal(got, want) {
+			t.Fatalf("Select = %v, %v; want %v", got, err, want)
+		}
+	}
+}
+
 func TestParseSelectorErrors(t *testing.T) {
 	for sel, want := range map[string]string{
 		"":            "empty stage",

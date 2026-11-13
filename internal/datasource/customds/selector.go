@@ -4,6 +4,7 @@ import (
 	"encoding/json/jsontext"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -11,10 +12,10 @@ import (
 
 // Selector is a compiled `versions` expression: a tiny jq subset of pipeline stages separated
 // by `|`. A stage is `keys` (the sorted keys of an object) or a path of steps: `.` (identity),
-// `.name` (object field) and `[]` (array elements or object values); a path may start with
-// `[]` (`[].tag_name`). As in jq, a missing field is null, a field of null is null, and
-// iterating null or indexing or iterating a value of the wrong type is an error; nulls in the
-// result are dropped.
+// `.name` (object field) and `[]` (array elements, or the values of an object by sorted key);
+// a path may start with `[]` (`[].tag_name`). As in jq, a missing field is null, a field of
+// null is null, and iterating null or indexing or iterating a value of the wrong type is an
+// error; nulls in the result are dropped.
 type Selector struct {
 	src    string
 	stages []stage
@@ -144,8 +145,11 @@ func (st stage) eval(v any) ([]any, error) {
 			switch c := v.(type) {
 			case map[string]any:
 				if sp.field == "" {
-					for _, e := range c {
-						next = append(next, e)
+					// Values by sorted key, as `keys` sorts them: Go maps (and the YAML
+					// decoder) do not keep the order of the document, and iterating one
+					// would make the result depend on the run.
+					for _, k := range slices.Sorted(maps.Keys(c)) {
+						next = append(next, c[k])
 					}
 				} else {
 					next = append(next, c[sp.field]) // a missing field is null
