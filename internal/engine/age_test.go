@@ -18,11 +18,13 @@ var ageNow = time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
 
 func daysAgo(n int) time.Time { return ageNow.Add(-time.Duration(n) * 24 * time.Hour) }
 
-// timedReleases lists versions released at times (zero = unknown; missing = lookup error)
-// and counts ReleaseTime calls per version. Digests are "sha256:<version>".
+// timedReleases lists versions released at times (zero or missing = unknown) and counts
+// ReleaseTime calls per version. A version in fails answers with a lookup error instead.
+// Digests are "sha256:<version>".
 type timedReleases struct {
 	versions []string
 	times    map[string]time.Time
+	fails    map[string]bool
 
 	mu    sync.Mutex
 	asked map[string]int
@@ -47,11 +49,10 @@ func (f *timedReleases) ReleaseTime(_ context.Context, _ dep.Dep, v string) (tim
 		f.asked = map[string]int{}
 	}
 	f.asked[v]++
-	t, ok := f.times[v]
-	if !ok {
-		return time.Time{}, errors.New("no time for " + v)
+	if f.fails[v] {
+		return time.Time{}, errors.New("upstream unavailable for " + v)
 	}
-	return t, nil
+	return f.times[v], nil
 }
 
 func goTimed() *timedReleases {
@@ -156,7 +157,8 @@ func TestMinimumReleaseAge(t *testing.T) {
 }
 
 // TestMinimumReleaseAgeBehaviour checks both minimumReleaseAgeBehaviour modes for versions
-// whose release time is unknown: a zero time, a failed lookup, or a datasource without times.
+// whose release time is unknown: a zero time or a datasource without times. A failed lookup
+// is no unknown time, see TestMinimumReleaseAgeLookupError.
 func TestMinimumReleaseAgeBehaviour(t *testing.T) {
 	d := []dep.Dep{{Datasource: "go", Versioning: "go", Name: "example.com/a", Version: "v1.0.0", Line: 1}}
 	const held = "release time unknown (minimum 28 days, timestamp-required)"
@@ -164,7 +166,6 @@ func TestMinimumReleaseAgeBehaviour(t *testing.T) {
 		return &timedReleases{versions: []string{"v1.0.0", "v1.0.1", "v1.1.0"}, times: times}
 	}
 	zero := map[string]time.Time{"v1.0.1": daysAgo(40), "v1.1.0": {}}
-	failed := map[string]time.Time{"v1.0.1": daysAgo(40)} // v1.1.0: lookup error
 	tests := []struct {
 		name, cfg string
 		ds        Datasource
@@ -172,11 +173,9 @@ func TestMinimumReleaseAgeBehaviour(t *testing.T) {
 		pending   string // held-back version; its reason is held
 	}{
 		{"optional zero time", "", timed(zero), "v1.1.0", ""},
-		{"optional lookup error", "", timed(failed), "v1.1.0", ""},
 		{"optional explicit", "minimumReleaseAgeBehaviour: timestamp-optional\n", timed(zero), "v1.1.0", ""},
 		{"optional without timer", "", goVersions, "v1.2.0", ""},
 		{"required zero time falls back", "minimumReleaseAgeBehaviour: timestamp-required\n", timed(zero), "v1.0.1", "v1.1.0"},
-		{"required lookup error falls back", "minimumReleaseAgeBehaviour: timestamp-required\n", timed(failed), "v1.0.1", "v1.1.0"},
 		{"required without timer", "minimumReleaseAgeBehaviour: timestamp-required\n", goVersions, "", "v1.2.0"},
 		{"required by rule", "rules: [{names: [example.com/a], minimumReleaseAgeBehaviour: timestamp-required}]\n", timed(zero), "v1.0.1", "v1.1.0"},
 		{"required for minors only", "rules: [{updateTypes: [minor], minimumReleaseAgeBehaviour: timestamp-required}]\n", timed(zero), "v1.0.1", "v1.1.0"},
@@ -206,6 +205,50 @@ func TestMinimumReleaseAgeBehaviour(t *testing.T) {
 	res, _ := resolveStub(t, "minimumReleaseAgeBehaviour: timestamp-required\n", "gomod", d, timed(zero), nil)
 	if len(res.Updates) != 1 || res.Updates[0].NewVersion != "v1.1.0" || len(res.Pending) != 0 {
 		t.Errorf("no age: updates = %+v, pending = %+v; want v1.1.0", res.Updates, res.Pending)
+	}
+}
+
+// resolveFailing is resolveStub for a run whose deps may fail: it returns the Result with its
+// errors instead of failing the test.
+func resolveFailing(t *testing.T, cfgYAML, mgr string, deps []dep.Dep, ds Datasource) *Result {
+	t.Helper()
+	root, cfg := setup(t, cfgYAML, map[string]string{"stub.txt": "x\n"})
+	res, err := Resolve(t.Context(), root, cfg, env, Options{
+		Managers:    []manager.Manager{stubManager{name: mgr, deps: deps}},
+		Datasources: map[string]Datasource{deps[0].Datasource: ds},
+		Now:         ageNow,
+	})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	return res
+}
+
+// A release time the datasource cannot answer is no unknown age: datasource.Timer reserves
+// the zero time with a nil error for "unknown", so a 5xx, an exhausted rate limit or a
+// timeout must not let a release minutes old through the minimumReleaseAge. The dep fails
+// instead, in both minimumReleaseAgeBehaviour modes, which keeps its open PRs.
+func TestMinimumReleaseAgeLookupError(t *testing.T) {
+	d := []dep.Dep{{Datasource: "go", Versioning: "go", Name: "example.com/a", Version: "v1.0.0", Line: 1}}
+	for _, cfg := range []string{"", "minimumReleaseAgeBehaviour: timestamp-required\n"} {
+		ds := &timedReleases{
+			versions: []string{"v1.0.0", "v1.0.1", "v1.1.0"},
+			times:    map[string]time.Time{"v1.0.1": daysAgo(40)},
+			fails:    map[string]bool{"v1.1.0": true},
+		}
+		res := resolveFailing(t, "minimumReleaseAge: 28 days\n"+cfg, "gomod", d, ds)
+		if len(res.Updates) != 0 || len(res.Pending) != 0 {
+			t.Errorf("%q: updates = %+v, pending = %+v; want none", cfg, res.Updates, res.Pending)
+		}
+		var de *DepError
+		switch {
+		case len(res.Errors) != 1:
+			t.Fatalf("%q: errors = %v, want the dep whose release time failed", cfg, res.Errors)
+		case !errors.As(res.Errors[0], &de) || de.Name != "example.com/a" || de.File != "stub.txt" || de.Line != 1:
+			t.Errorf("%q: error = %v, want a DepError at stub.txt:1 of example.com/a", cfg, res.Errors[0])
+		case !strings.Contains(de.Error(), "release time of v1.1.0"):
+			t.Errorf("%q: error = %v, want the failed lookup named", cfg, de)
+		}
 	}
 }
 

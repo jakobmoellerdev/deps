@@ -109,7 +109,10 @@ func (r *resolver) majorPathUpdates(t *Trace, ups []dep.Update, scheme versionin
 	timer, _ := r.ds.(datasource.Timer)
 	for _, mp := range paths {
 		t.Candidates += len(mp.Releases)
-		v, ok := r.bestOfPath(mp, scheme, timer, accept, reject)
+		v, ok, err := r.bestOfPath(mp, scheme, timer, accept, reject)
+		if err != nil {
+			return nil, err
+		}
 		if !ok {
 			continue
 		}
@@ -126,8 +129,9 @@ func (r *resolver) majorPathUpdates(t *Trace, ups []dep.Update, scheme versionin
 
 // bestOfPath returns the newest release of the module path mp that is a stable version,
 // accepted as a major update, under the major minimumReleaseAge (and
-// minimumReleaseAgeBehaviour) old enough, and declares mp.Name as its module path.
-func (r *resolver) bestOfPath(mp datasource.ModulePath, scheme versioning.Scheme, timer datasource.Timer, accept func(string, dep.UpdateType) (bool, string), reject func(v, reason string)) (string, bool) {
+// minimumReleaseAgeBehaviour) old enough, and declares mp.Name as its module path. A failed
+// release-time lookup fails the dep (see lookupTime).
+func (r *resolver) bestOfPath(mp datasource.ModulePath, scheme versioning.Scheme, timer datasource.Timer, accept func(string, dep.UpdateType) (bool, string), reject func(v, reason string)) (string, bool, error) {
 	cands := make([]string, 0, len(mp.Releases))
 	for _, rel := range mp.Releases {
 		v := rel.Version
@@ -158,7 +162,10 @@ func (r *resolver) bestOfPath(mp datasource.ModulePath, scheme versioning.Scheme
 		if p.MinAge > 0 {
 			var tb time.Time
 			if timer != nil {
-				tb = r.lookupTime(timer, nd, v)
+				var err error
+				if tb, err = r.lookupTime(timer, nd, v); err != nil {
+					return "", false, err
+				}
 			}
 			if reason := r.ageReason(p, mp.Name+"@"+v, tb); reason != "" {
 				if reject != nil {
@@ -184,7 +191,7 @@ func (r *resolver) bestOfPath(mp datasource.ModulePath, scheme versioning.Scheme
 			}
 			continue
 		}
-		return v, true
+		return v, true, nil
 	}
-	return "", false
+	return "", false, nil
 }

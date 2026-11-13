@@ -1331,10 +1331,10 @@ type resolver struct {
 	base Datasource
 
 	rels     []Release
-	names    *releaseNames        // shared with the other resolvers of the run
-	times    map[string]time.Time // release times asked so far; zero = unknown
-	pending  Pending              // newest candidate held back by minimumReleaseAge
-	warnings []Warning            // checkLifecycle's findings
+	names    *releaseNames    // shared with the other resolvers of the run
+	times    map[string]timed // release times asked so far, by version (see lookupTime)
+	pending  Pending          // newest candidate held back by minimumReleaseAge
+	warnings []Warning        // checkLifecycle's findings
 	// declared looks up the module path a Go module version declares (nil = no check);
 	// renamed is the reason of the first candidate pathChange rejected.
 	declared datasource.DeclaredPathSource
@@ -1698,7 +1698,11 @@ func (r *resolver) usual(t *Trace, scheme versioning.Scheme, vulns func() []Vuln
 	case !scheme.Valid(r.d.Version):
 		// Resolve only lets non-version docker tags through (tagOnly): their digest is kept
 		// current; there are no releases to compare and no advisories to look up.
-		if reason := r.applyAge(t); reason != "" {
+		reason, err := r.applyAge(t)
+		switch {
+		case err != nil:
+			return nil, err
+		case reason != "":
 			return nil, &dep.SkipError{Reason: reason}
 		}
 		return r.digestUpdate()
@@ -1724,7 +1728,11 @@ func (r *resolver) versionUpdates(t *Trace, scheme versioning.Scheme, vulns func
 	}
 	r.rels = rels
 	// After Releases: with extractVersion, the current version maps back to its release name.
-	if reason := r.applyAge(t); reason != "" {
+	reason, err := r.applyAge(t)
+	switch {
+	case err != nil:
+		return nil, err
+	case reason != "":
 		return nil, &dep.SkipError{Reason: reason}
 	}
 	r.checkLifecycle(scheme)
@@ -1768,7 +1776,10 @@ func (r *resolver) versionUpdates(t *Trace, scheme versioning.Scheme, vulns func
 	digests := digestCapable(*d)
 	wantDigest := digests && (d.Digest != "" || r.pol.pre.Pin == config.PinDigest)
 
-	ups := r.picks(scheme, names, accept, reject)
+	ups, err := r.picks(scheme, names, accept, reject)
+	if err != nil {
+		return nil, err
+	}
 	if r.strategy == config.RangePin {
 		ups = r.pinUpdate(ups)
 	}
@@ -1937,10 +1948,11 @@ const (
 //     dep (see pathChange).
 //
 // Release times are only asked when a guard applies and the datasource has them, at most
-// once per version; unknown times (zero or an error) only reject under timestamp-required.
+// once per version; unknown times only reject under timestamp-required, while a failed
+// lookup (see lookupTime) fails the dep.
 // Declared module paths are only asked for a candidate that passed the time guards.
 // The updates are returned lowest version first.
-func (r *resolver) picks(scheme versioning.Scheme, names []string, accept func(string, dep.UpdateType) (bool, string), reject func(v, reason string)) []dep.Update {
+func (r *resolver) picks(scheme versioning.Scheme, names []string, accept func(string, dep.UpdateType) (bool, string), reject func(v, reason string)) ([]dep.Update, error) {
 	cur := r.cur
 	timer, _ := r.ds.(datasource.Timer)
 	above := r.aboveLatest(scheme)
@@ -1949,9 +1961,9 @@ func (r *resolver) picks(scheme versioning.Scheme, names []string, accept func(s
 		// No guard can apply and there is one bucket: one O(n) pass without ranking.
 		best, ok := scheme.Best(cur, names, accept, reject)
 		if !ok {
-			return nil
+			return nil, nil
 		}
-		return []dep.Update{{Dep: r.d, Type: scheme.Kind(cur, best), NewVersion: best}}
+		return []dep.Update{{Dep: r.d, Type: scheme.Kind(cur, best), NewVersion: best}}, nil
 	}
 	ranked := scheme.Rank(cur, names, accept, reject) // parsed and filtered once
 	type state struct {
@@ -1995,7 +2007,10 @@ func (r *resolver) picks(scheme versioning.Scheme, names []string, accept func(s
 			continue
 		}
 		st.tries++
-		reason := r.guard(timer, above == nil, c)
+		reason, err := r.guard(timer, above == nil, c)
+		if err != nil {
+			return nil, err
+		}
 		if reason == "" {
 			if why := r.pathChange(r.d.Name, c.Version); why != "" {
 				if reject != nil {
@@ -2046,7 +2061,7 @@ func (r *resolver) picks(scheme versioning.Scheme, names []string, accept func(s
 		}
 	}
 	slices.Reverse(out)
-	return out
+	return out, nil
 }
 
 // reasonOlder rejects a major candidate released before the current version.
@@ -2098,21 +2113,31 @@ func (r *resolver) aboveLatest(scheme versioning.Scheme) func(string) bool {
 
 // guard returns why candidate c fails a release-time guard, or "". timer is nil when the
 // datasource has no release times; byTimes is false when aboveLatest already decided which
-// majors are legacy.
-func (r *resolver) guard(timer datasource.Timer, byTimes bool, c versioning.Candidate) string {
-	if byTimes && timer != nil && c.Kind == dep.Major && !movingTimes(r.d.Datasource) && r.olderThanCurrent(timer, c.Version) {
-		slog.DebugContext(r.ctx, "major candidate older than current", "name", r.d.Name, "current", r.d.Version, "candidate", c.Version)
-		return reasonOlder
+// majors are legacy. A failed release-time lookup is returned as an error: it says nothing
+// about the candidate's age, so the dep fails rather than update past its minimum release age.
+func (r *resolver) guard(timer datasource.Timer, byTimes bool, c versioning.Candidate) (string, error) {
+	if byTimes && timer != nil && c.Kind == dep.Major && !movingTimes(r.d.Datasource) {
+		older, err := r.olderThanCurrent(timer, c.Version)
+		if err != nil {
+			return "", err
+		}
+		if older {
+			slog.DebugContext(r.ctx, "major candidate older than current", "name", r.d.Name, "current", r.d.Version, "candidate", c.Version)
+			return reasonOlder, nil
+		}
 	}
 	p := r.pol.of(c.Kind)
 	if p.MinAge <= 0 || timer != nil && r.releasedBefore(timer, r.now.Add(-p.MinAge)) {
-		return ""
+		return "", nil
 	}
 	var tb time.Time
 	if timer != nil {
-		tb = r.releaseTime(timer, c.Version)
+		var err error
+		if tb, err = r.releaseTime(timer, c.Version); err != nil {
+			return "", err
+		}
 	}
-	return r.ageReason(p, c.Version, tb)
+	return r.ageReason(p, c.Version, tb), nil
 }
 
 // ageReason returns why version, released at t (zero = unknown), fails the minimum release
@@ -2143,21 +2168,23 @@ func (r *resolver) ageReason(p *config.Policy, version string, t time.Time) stri
 // bucket was rejected; the datasource's request pool still bounds the requests.
 const prefetchWindow = 8
 
-// prefetchTimes fills the release-time cache for versions concurrently.
+// prefetchTimes fills the release-time cache for versions concurrently. A failed lookup is
+// cached like a time and surfaces when the candidate it belongs to is judged.
 func (r *resolver) prefetchTimes(timer datasource.Timer, versions []string) {
-	times := make([]time.Time, len(versions))
+	times := make([]timed, len(versions))
 	var wg sync.WaitGroup
 	for i, v := range versions {
 		if _, ok := r.times[v]; ok {
 			continue
 		}
 		wg.Go(func() {
-			times[i] = r.lookupTime(timer, r.d, r.upstream(v))
+			t, err := r.lookupTime(timer, r.d, r.upstream(v))
+			times[i] = timed{t: t, err: err}
 		})
 	}
 	wg.Wait()
 	if r.times == nil {
-		r.times = make(map[string]time.Time, len(versions))
+		r.times = make(map[string]timed, len(versions))
 	}
 	for i, v := range versions {
 		if _, ok := r.times[v]; !ok {
@@ -2204,14 +2231,18 @@ func (r *resolver) prefetchPaths(name string, versions []string) {
 // olderThanCurrent reports whether candidate was released before the version installed (the
 // locked one when known, as applyAge uses it): a range dep's Version is the range's bare
 // version ("1.0" of cargo's `serde = "^1.0"`), which no release carries, so its time would be
-// unknown and the guard would never fire. False when either time is unknown.
-func (r *resolver) olderThanCurrent(timer datasource.Timer, candidate string) bool {
-	tb := r.releaseTime(timer, candidate)
-	if tb.IsZero() {
-		return false
+// unknown and the guard would never fire. False when either time is unknown; a failed lookup
+// is returned as an error, not as "unknown".
+func (r *resolver) olderThanCurrent(timer datasource.Timer, candidate string) (bool, error) {
+	tb, err := r.releaseTime(timer, candidate)
+	if err != nil || tb.IsZero() {
+		return false, err
 	}
-	tc := r.releaseTime(timer, cmp.Or(r.d.Locked, r.d.Version))
-	return !tc.IsZero() && tb.Before(tc)
+	tc, err := r.releaseTime(timer, cmp.Or(r.d.Locked, r.d.Version))
+	if err != nil {
+		return false, err
+	}
+	return !tc.IsZero() && tb.Before(tc), nil
 }
 
 // releasedBefore reports whether the datasource bounds every release of the dep at or before
@@ -2229,45 +2260,63 @@ func (r *resolver) releasedBefore(timer datasource.Timer, t time.Time) bool {
 // version (policies.aged): it looks up the release time of the version installed (the locked
 // one when known) and re-evaluates them with its age, unknown when the datasource has no
 // time. The trace gets the new pre-policy. It returns why the new policy skips the dep, "" if
-// it does not. Other deps are left alone.
-func (r *resolver) applyAge(t *Trace) string {
+// it does not, and the error of a failed lookup: an age that decides which rules apply must
+// not be guessed. Other deps are left alone.
+func (r *resolver) applyAge(t *Trace) (string, error) {
 	if !r.pol.aged {
-		return ""
+		return "", nil
 	}
 	age := config.UnknownAge
 	if timer, ok := r.ds.(datasource.Timer); ok {
-		if rt := r.releaseTime(timer, cmp.Or(r.d.Locked, r.d.Version)); !rt.IsZero() {
+		rt, err := r.releaseTime(timer, cmp.Or(r.d.Locked, r.d.Version))
+		if err != nil {
+			return "", err
+		}
+		if !rt.IsZero() {
 			age, t.Released = max(r.now.Sub(rt), 0), rt
 		}
 	}
 	r.pol.setAge(age)
 	t.AgeLookup, t.Rules, t.Policy = true, r.pol.pre.Rules, r.pol.pre
-	return r.pol.skip(r.d)
+	return r.pol.skip(r.d), nil
 }
 
-// releaseTime returns when version was released, asking the datasource once per version;
-// zero when unknown (errors are logged and treated as unknown).
-func (r *resolver) releaseTime(timer datasource.Timer, version string) time.Time {
+// timed is one answer of a datasource.Timer: the release time, zero when it is unknown, or the
+// error of the lookup. Both are cached, so each version is asked for once per resolve.
+type timed struct {
+	t   time.Time
+	err error
+}
+
+// releaseTime returns when version was released, asking the datasource once per version; the
+// zero time means the datasource does not know it.
+func (r *resolver) releaseTime(timer datasource.Timer, version string) (time.Time, error) {
 	if t, ok := r.times[version]; ok {
-		return t
+		return t.t, t.err
 	}
-	t := r.lookupTime(timer, r.d, r.upstream(version))
+	t, err := r.lookupTime(timer, r.d, r.upstream(version))
 	if r.times == nil {
-		r.times = make(map[string]time.Time, 2)
+		r.times = make(map[string]timed, 2)
 	}
-	r.times[version] = t
-	return t
+	r.times[version] = timed{t: t, err: err}
+	return t, err
 }
 
-// lookupTime asks timer for the release time of d at version; a failed lookup is logged
-// and reported as zero (unknown).
-func (r *resolver) lookupTime(timer datasource.Timer, d dep.Dep, version string) time.Time {
+// lookupTime asks timer for the release time of d at version. A version the upstream does not
+// have is unknown (the zero time), as is the zero time the datasource reports itself; every
+// other failure is returned, since datasource.Timer reserves the zero time with a nil error
+// for "unknown": a 5xx, an exhausted rate limit or a timeout must not pass for an unknown age
+// and let a release minutes old through a minimumReleaseAge.
+func (r *resolver) lookupTime(timer datasource.Timer, d dep.Dep, version string) (time.Time, error) {
 	t, err := timer.ReleaseTime(r.ctx, d, version)
-	if err != nil {
-		slog.DebugContext(r.ctx, "release time lookup failed", "name", d.Name, "version", version, "err", err)
-		return time.Time{}
+	switch {
+	case err == nil:
+		return t, nil
+	case errors.Is(err, httpx.ErrNotFound), errors.Is(err, datasource.ErrVersionNotFound):
+		slog.DebugContext(r.ctx, "release time unknown upstream", "name", d.Name, "version", version, "err", err)
+		return time.Time{}, nil
 	}
-	return t
+	return time.Time{}, fmt.Errorf("release time of %s: %w", version, err)
 }
 
 // holdBack records d at version as the held-back candidate unless one is recorded already.

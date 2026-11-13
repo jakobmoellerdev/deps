@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -16,12 +17,14 @@ import (
 )
 
 // fakeRepo is a git-tags datasource of one repository: tags (name -> commit), the commit of
-// HEAD and commit times (missing = unknown), counting CommitTime calls.
+// HEAD and commit times (missing = unknown, commitTimeErr = failed lookup), counting
+// CommitTime calls.
 type fakeRepo struct {
-	tags        map[string]string
-	head        string
-	commitTimes map[string]time.Time
-	timeCalls   atomic.Int32
+	tags          map[string]string
+	head          string
+	commitTimes   map[string]time.Time
+	commitTimeErr error
+	timeCalls     atomic.Int32
 }
 
 func (f *fakeRepo) Releases(context.Context, dep.Dep, string) ([]Release, error) {
@@ -49,7 +52,37 @@ func (f *fakeRepo) Head(context.Context, dep.Dep, string) (datasource.Revision, 
 
 func (f *fakeRepo) CommitTime(_ context.Context, _ dep.Dep, commit string) (time.Time, error) {
 	f.timeCalls.Add(1)
+	if f.commitTimeErr != nil {
+		return time.Time{}, f.commitTimeErr
+	}
 	return f.commitTimes[commit], nil
+}
+
+// A commit time the forge cannot answer is no unknown time: the commit pin fails instead of
+// refreshing its digest to a head that may be minutes old under a minimumReleaseAge.
+func TestCommitPinCommitTimeError(t *testing.T) {
+	const wf = ".github/workflows/ci.yml"
+	c := func(s string) string { return sha("useblacksmith/begin-testbox@" + s) }
+	src := "jobs:\n  testbox:\n    steps:\n      - name: Begin Testbox\n        uses: useblacksmith/begin-testbox@" + c("main~3") + "\n"
+	ds := &fakeRepo{tags: map[string]string{"v1.0.0": c("v1.0.0")}, head: c("main"), commitTimeErr: errors.New("upstream unavailable")}
+	cfg := "minimumReleaseAge: 30 days\nrules:\n  - names: [useblacksmith/begin-testbox]\n    ignore: false\n"
+	root, conf := setup(t, cfg, map[string]string{wf: src})
+	res, err := Resolve(t.Context(), root, conf, env, Options{Managers: managers, Datasources: map[string]Datasource{"git-tags": ds}, Now: ageNow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Updates) != 0 || len(res.Pending) != 0 {
+		t.Errorf("updates = %+v, pending = %+v; want none", res.Updates, res.Pending)
+	}
+	var de *DepError
+	switch {
+	case len(res.Errors) != 1:
+		t.Fatalf("errors = %v, want the pin whose commit time failed", res.Errors)
+	case !errors.As(res.Errors[0], &de) || de.Name != "useblacksmith/begin-testbox":
+		t.Errorf("error = %v, want a DepError of the action", res.Errors[0])
+	case !strings.Contains(de.Error(), "commit time of "+dep.ShortDigest(c("main"))):
+		t.Errorf("error = %v, want the failed lookup named", de)
+	}
 }
 
 // TestCommitPins resolves bare SHA pins in openclaw's shape: a SHA a tag points at is that

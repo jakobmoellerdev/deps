@@ -2,6 +2,7 @@ package engine
 
 import (
 	"cmp"
+	"log/slog"
 	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
@@ -31,7 +32,9 @@ type Warning struct {
 // as deprecated for the installed version (no request), and, with an abandonmentThreshold,
 // whether the newest release is older than it. The latter is decided from the datasource's
 // release bound when that suffices (npm `modified`, no request), else from the release time
-// of the newest version (one lookup, shared with minimumReleaseAge).
+// of the newest version (one lookup, shared with minimumReleaseAge). The abandonment warning
+// is advisory: a failed lookup only loses it (it is cached, so a guard that needs the same
+// version still fails the dep) instead of failing a dep that has updates to propose.
 func (r *resolver) checkLifecycle(scheme versioning.Scheme) {
 	if ds, ok := r.base.(datasource.DeprecationSource); ok {
 		// The base datasource knows release names, not versions extracted from them.
@@ -61,7 +64,12 @@ func (r *resolver) checkLifecycle(scheme versioning.Scheme) {
 	if newest == "" {
 		return
 	}
-	if t := r.releaseTime(timer, newest); !t.IsZero() && t.Before(cutoff) {
+	t, err := r.releaseTime(timer, newest)
+	if err != nil {
+		slog.DebugContext(r.ctx, "abandonment check without a release time", "name", r.d.Name, "version", newest, "err", err)
+		return
+	}
+	if !t.IsZero() && t.Before(cutoff) {
 		r.abandoned("newest release "+newest+" published "+day(t), threshold)
 	}
 }

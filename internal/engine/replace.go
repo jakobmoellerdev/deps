@@ -30,7 +30,11 @@ func (r *resolver) updates(t *Trace, scheme versioning.Scheme, vulns func() []Vu
 		return r.usual(t, scheme, vulns)
 	}
 	if r.pol.aged {
-		if reason := r.applyAge(t); reason != "" {
+		reason, err := r.applyAge(t)
+		switch {
+		case err != nil:
+			return nil, err
+		case reason != "":
 			return nil, &dep.SkipError{Reason: reason}
 		}
 		// Asked before the releases are known, so maybe under another release name; the usual

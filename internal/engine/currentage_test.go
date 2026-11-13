@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -51,6 +53,28 @@ func TestCurrentAgeRules(t *testing.T) {
 				t.Errorf("trace age lookup %v released %v, want %v %v", tr.AgeLookup, tr.Released, tc.asked > 0, tc.released)
 			}
 		})
+	}
+}
+
+// A currentAge rule decides whether a dep is ignored or grouped: when the release time of the
+// current version cannot be read, the dep fails rather than silently matching no rule.
+func TestCurrentAgeLookupError(t *testing.T) {
+	ds := goTimed()
+	ds.versions = ds.versions[:4] // no major: olderThanCurrent would ask the current time too
+	ds.fails = map[string]bool{"v1.0.0": true}
+	d := []dep.Dep{{Datasource: "go", Versioning: "semver", Name: "example.com/a", Version: "v1.0.0", Line: 1}}
+	res := resolveFailing(t, "separate: none\nrules: [{currentAge: '> 60 days', ignore: true}]\n", "gomod", d, ds)
+	if len(res.Updates) != 0 {
+		t.Errorf("updates = %+v, want none", res.Updates)
+	}
+	var de *DepError
+	switch {
+	case len(res.Errors) != 1:
+		t.Fatalf("errors = %v, want the dep whose current release time failed", res.Errors)
+	case !errors.As(res.Errors[0], &de) || de.Name != "example.com/a":
+		t.Errorf("error = %v, want a DepError of example.com/a", res.Errors[0])
+	case !strings.Contains(de.Error(), "release time of v1.0.0"):
+		t.Errorf("error = %v, want the failed lookup named", de)
 	}
 }
 

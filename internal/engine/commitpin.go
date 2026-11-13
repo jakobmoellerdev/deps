@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"path"
@@ -10,6 +11,7 @@ import (
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
@@ -92,7 +94,10 @@ func (r *resolver) headDigest(t *Trace, dir string) ([]dep.Update, error) {
 	p := r.pol.of(dep.Digest)
 	if p.MinAge > 0 && rev.Time.IsZero() {
 		if ct, ok := r.base.(datasource.CommitTimer); ok {
-			rev.Time = r.commitTime(ct, rev.Digest)
+			var err error
+			if rev.Time, err = r.commitTime(ct, rev.Digest); err != nil {
+				return nil, err
+			}
 		}
 	}
 	short := dep.ShortDigest(rev.Digest)
@@ -106,12 +111,17 @@ func (r *resolver) headDigest(t *Trace, dir string) ([]dep.Update, error) {
 	return []dep.Update{{Dep: d, Type: dep.Digest, NewDigest: rev.Digest}}, nil
 }
 
-// commitTime asks ct when commit was made; a failed lookup is logged and reported as zero.
-func (r *resolver) commitTime(ct datasource.CommitTimer, commit string) time.Time {
+// commitTime asks ct when commit was made. A commit the upstream does not have is unknown
+// (the zero time); every other failure is returned, since it says nothing about the commit's
+// age and must not let a minimum release age pass (see resolver.lookupTime).
+func (r *resolver) commitTime(ct datasource.CommitTimer, commit string) (time.Time, error) {
 	t, err := ct.CommitTime(r.ctx, r.d, commit)
-	if err != nil {
-		slog.DebugContext(r.ctx, "commit time lookup failed", "name", r.d.Name, "commit", commit, "err", err)
-		return time.Time{}
+	switch {
+	case err == nil:
+		return t, nil
+	case errors.Is(err, httpx.ErrNotFound), errors.Is(err, datasource.ErrVersionNotFound):
+		slog.DebugContext(r.ctx, "commit time unknown upstream", "name", r.d.Name, "commit", commit, "err", err)
+		return time.Time{}, nil
 	}
-	return t
+	return time.Time{}, fmt.Errorf("commit time of %s: %w", dep.ShortDigest(commit), err)
 }

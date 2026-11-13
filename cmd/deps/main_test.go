@@ -11,9 +11,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
@@ -114,6 +116,24 @@ func newFakeNet(t *testing.T) *fakeNet {
 	})
 	f.mux.HandleFunc("GET proxy.test/example.com/vuln/@v/list", func(w http.ResponseWriter, _ *http.Request) {
 		io.WriteString(w, "v1.0.0\nv1.1.0\nv1.2.0\n")
+	})
+	// A proxy serves the .info of every version it lists; the engine asks for it when a
+	// release-time guard applies (a major candidate under semver versioning). The times are
+	// years old and rise with the version, so no guard changes an outcome.
+	f.mux.HandleFunc("GET proxy.test/example.com/{mod}/@v/{file}", func(w http.ResponseWriter, r *http.Request) {
+		version, ok := strings.CutSuffix(r.PathValue("file"), ".info")
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		// The day grows with the version (v1.0.0 → 100, v2.0.0 → 200, normalized into 2020),
+		// so no release is dated before an earlier one and every one is years old.
+		day := 0
+		for _, part := range strings.SplitN(strings.TrimPrefix(version, "v"), ".", 3) {
+			n, _ := strconv.Atoi(part)
+			day = day*10 + n
+		}
+		fmt.Fprintf(w, `{"Version":%q,"Time":%q}`, version, time.Date(2020, 1, day, 0, 0, 0, 0, time.UTC).Format(time.RFC3339))
 	})
 	f.mux.HandleFunc("GET registry.npmjs.org/@s%2fpad", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Accept") != "application/vnd.npm.install-v1+json" {
