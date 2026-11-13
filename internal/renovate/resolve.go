@@ -234,6 +234,21 @@ func (r *resolver) resolve(m map[string]any, chain, ignore []string) (map[string
 
 var groupMonorepoRe = regexp.MustCompile(`^group:.+Monorepo$`)
 
+// prBodyPreset reports whether the internal preset named repo:name only affects Renovate's PR
+// body, in a way deps already does on its own: digest changelogs are deps' commit-to-commit
+// compare link for digest updates, the golang.org/x and renovate changelog links are deps'
+// release notes for those repositories, and merge-confidence badges are a Renovate service.
+// They carry no setting to translate, so they are dropped silently.
+func prBodyPreset(repo, name string) bool {
+	if repo == "mergeConfidence" {
+		return true
+	}
+	return repo == "helpers" && (strings.HasSuffix(name, "DigestChangelogs") ||
+		name == "helpers:goXPackagesChangelogLink" ||
+		name == "helpers:goXPackagesNameLink" ||
+		name == "helpers:renovateChangelog")
+}
+
 // preset loads the fragment of extends entry e (index i of its list); nil means skipped.
 func (r *resolver) preset(e string, i int) (map[string]any, error) {
 	ref, err := parsePreset(e)
@@ -254,7 +269,9 @@ func (r *resolver) preset(e string, i int) (map[string]any, error) {
 		case ref.repo == "replacements":
 			r.replacements.add(e, ref.name)
 			return nil, nil
-		case slices.Contains([]string{"workarounds", "mergeConfidence", "helpers"}, ref.repo),
+		case prBodyPreset(ref.repo, name):
+			return nil, nil
+		case slices.Contains([]string{"workarounds", "helpers"}, ref.repo),
 			name == "security:openssf-scorecard", name == "security:php2shell":
 			r.notes.info(e, "no deps equivalent")
 			return nil, nil

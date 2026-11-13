@@ -657,6 +657,29 @@ func TestSectionNoCompareWithoutTags(t *testing.T) {
 	}
 }
 
+// A digest-pinned dep whose version stays put gets a commit-to-commit compare link
+// (Renovate's helpers:*DigestChangelogs), without listing releases.
+func TestSectionDigestOnly(t *testing.T) {
+	f := newForge(t)
+	n := f.newNotes(nil, nil, nil)
+	d := dep.Dep{Datasource: dsGitTags, Name: "o/r", Source: "https://github.com/o/r", Version: "v4.1.0", Digest: strings.Repeat("a", 40)}
+	u := dep.Update{Dep: d, NewVersion: "v4.1.0", NewDigest: strings.Repeat("b", 40)}
+	got := n.Section(t.Context(), []dep.Update{u})
+	want := "https://github.com/o/r/compare/" + strings.Repeat("a", 40) + "..." + strings.Repeat("b", 40)
+	if !strings.Contains(got, want) {
+		t.Errorf("section = %q, want compare link %q", got, want)
+	}
+	if len(f.reqs) != 0 {
+		t.Errorf("requests = %q, want none (no releases in between)", f.reqs)
+	}
+	// An OCI digest is no commit: no compare link.
+	d.Datasource, d.Digest = dsDocker, "sha256:"+strings.Repeat("a", 64)
+	u = dep.Update{Dep: d, NewVersion: "v4.1.0", NewDigest: "sha256:" + strings.Repeat("b", 64)}
+	if got := n.Section(t.Context(), []dep.Update{u}); got != "" {
+		t.Errorf("docker digest section = %q, want none", got)
+	}
+}
+
 // A gitea-tags registry served over plain http is asked over http, not https.
 func TestSectionGiteaHTTPRegistry(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -15,6 +15,7 @@ import (
 // Datasource names (see dep.Dep.Datasource).
 const (
 	dsGitTags        = "git-tags"
+	dsGitRefs        = "git-refs"
 	dsGitHubReleases = "github-releases"
 	dsGo             = "go"
 	dsNpm            = "npm"
@@ -119,7 +120,7 @@ var goVanity = map[string]string{
 // resolve returns the source repository of d's release notes, or ok=false when unknown.
 func (n *Notes) resolve(ctx context.Context, d dep.Dep, version string) (repoRef, bool) {
 	switch d.Datasource {
-	case dsGitTags:
+	case dsGitTags, dsGitRefs:
 		return parseRepo(d.Source, false, n.gitlab)
 	case dsGitHubReleases:
 		src := d.Source

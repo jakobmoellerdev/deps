@@ -83,6 +83,20 @@ func TestMerge(t *testing.T) {
 	}
 }
 
+func TestResolvePresentationOnlyPresetsAreSilent(t *testing.T) {
+	_, n := resolveWith(t, nil, `{extends: ['config:recommended']}`)
+	for _, note := range n.list {
+		if prBodyPreset(strings.SplitN(note.Path, ":", 2)[0], note.Path) {
+			t.Errorf("note for presentation-only preset: %s %s", note.Path, note.Msg)
+		}
+	}
+	if !prBodyPreset("helpers", "helpers:githubDigestChangelogs") ||
+		!prBodyPreset("mergeConfidence", "mergeConfidence:age-confidence-badges") ||
+		prBodyPreset("helpers", "helpers:disableTypesNodeMajor") {
+		t.Error("prBodyPreset classification wrong")
+	}
+}
+
 // resolveWith resolves cfg with extra built-in presets.
 func resolveWith(t *testing.T, presets map[string]string, cfg string) (map[string]any, *notes) {
 	t.Helper()

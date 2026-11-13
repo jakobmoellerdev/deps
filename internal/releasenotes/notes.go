@@ -100,10 +100,13 @@ func (n *Notes) Age(ctx context.Context, u dep.Update) string {
 }
 
 // item is one dependency of a Section: the lowest current and the highest new version over
-// its updates.
+// its updates. A digest-only item (from == to) carries the digests instead: it has no
+// releases, only a commit-to-commit compare link.
 type item struct {
 	d        dep.Dep
 	from, to string
+
+	fromDigest, toDigest string
 }
 
 // block is the rendered notes of one item.
@@ -132,25 +135,42 @@ func (n *Notes) Section(ctx context.Context, ups []dep.Update) string {
 	return render(blocks)
 }
 
-// collect merges ups per dependency, skipping updates that keep the version (digest, pin) and
-// replacements (the versions are of different packages). A lockfile-only update starts at the
-// locked version.
+// collect merges ups per dependency, skipping replacements (the versions are of different
+// packages). A lockfile-only update starts at the locked version. An update that keeps the
+// version but moves the digest (a digest-pinned action, image or submodule) becomes a
+// digest-only item, which yields a commit-to-commit compare link.
 func collect(ups []dep.Update) []item {
 	var items []item
 	idx := map[string]int{}
 	for _, u := range ups {
+		if u.Type == dep.Replacement {
+			continue
+		}
 		from := u.Dep.Version
 		if u.Lockfile {
 			from = u.Dep.Locked
 		}
-		if from == u.NewVersion || u.Type == dep.Replacement {
+		digestOnly := from == u.NewVersion
+		if digestOnly && !(gitDigest(u.Dep.Datasource) && u.Dep.Digest != "" && u.NewDigest != "" &&
+			u.Dep.Digest != u.NewDigest) {
 			continue
 		}
 		key := u.Dep.Datasource + "\x00" + u.Dep.Name + "\x00" + u.Dep.Source
 		i, ok := idx[key]
 		if !ok {
 			idx[key] = len(items)
-			items = append(items, item{d: u.Dep, from: from, to: u.NewVersion})
+			it := item{d: u.Dep, from: from, to: u.NewVersion}
+			if digestOnly {
+				it.fromDigest, it.toDigest = u.Dep.Digest, u.NewDigest
+			}
+			items = append(items, it)
+			continue
+		}
+		if digestOnly {
+			continue // a version update of the same dep is the better block
+		}
+		if items[i].fromDigest != "" { // the version update supersedes the digest-only item
+			items[i] = item{d: u.Dep, from: from, to: u.NewVersion}
 			continue
 		}
 		if less(from, items[i].from) {
@@ -163,6 +183,19 @@ func collect(ups []dep.Update) []item {
 	return items
 }
 
+// gitDigest reports whether a digest of the datasource is a git commit, so that a
+// commit-to-commit compare link of the source repository is meaningful. OCI digests
+// (docker) name a manifest, not a commit.
+func gitDigest(ds string) bool {
+	switch ds {
+	case dsGitTags, dsGitRefs, dsGitHubReleases,
+		forgeds.GiteaReleases, forgeds.GiteaTags, forgeds.ForgejoReleases, forgeds.ForgejoTags,
+		forgeds.GitLabReleases, forgeds.GitLabTags:
+		return true
+	}
+	return false
+}
+
 func less(a, b string) bool {
 	va, oka := parseVersion(a)
 	vb, okb := parseVersion(b)
@@ -171,9 +204,19 @@ func less(a, b string) bool {
 
 func (n *Notes) block(ctx context.Context, it item) block {
 	b := block{title: it.d.Name + " " + it.from + " → " + it.to}
+	if it.fromDigest != "" {
+		b.title = strings.TrimSpace(it.d.Name+" "+it.from) + " " +
+			dep.ShortDigest(it.fromDigest) + " → " + dep.ShortDigest(it.toDigest)
+	}
 	r, ok := n.resolve(ctx, it.d, it.to)
 	if !ok {
 		slog.DebugContext(ctx, "release notes: no source repository", "name", it.d.Name, "datasource", it.d.Datasource)
+		return b
+	}
+	if it.fromDigest != "" {
+		// The version is unchanged, so there are no releases in between; the commit-to-commit
+		// diff is what the update changed (Renovate's helpers:*DigestChangelogs).
+		b.compare = r.compare(it.fromDigest, it.toDigest)
 		return b
 	}
 	rels, err := n.releases(ctx, r)
