@@ -232,6 +232,44 @@ func TestReleasesPackagePath(t *testing.T) {
 	}
 }
 
+// A proxy that answers a prefix with a 5xx must fail the dep instead of resolving it to a
+// shorter module: the failure says nothing about whether the prefix is a module, and a package
+// of `…/golangci-lint/v2` used to end up at `…/golangci-lint`, the v1 module, for the run.
+func TestReleasesPackagePathProxyFailure(t *testing.T) {
+	var lists []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		lists = append(lists, r.URL.Path)
+		switch r.URL.Path {
+		case "/p/github.com/golangci/golangci-lint/v2/@v/list":
+			w.WriteHeader(http.StatusInternalServerError)
+		case "/p/github.com/golangci/golangci-lint/@v/list":
+			io.WriteString(w, "v1.64.0\n")
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	s := NewForProxy(srv.Client(), srv.URL+"/p", 0)
+	d := dep.Dep{Manager: "mise", Name: "github.com/golangci/golangci-lint/v2/cmd/golangci-lint"}
+	for range 2 { // the failed resolution is shared, as a successful one is
+		rels, err := s.Releases(t.Context(), d, ".")
+		if err == nil || !strings.Contains(err.Error(), "500") || rels != nil {
+			t.Fatalf("Releases = %+v, %v; want a 500", rels, err)
+		}
+	}
+	want := []string{
+		"/p/github.com/golangci/golangci-lint/v2/cmd/golangci-lint/@v/list",
+		"/p/github.com/golangci/golangci-lint/v2/cmd/@v/list",
+		"/p/github.com/golangci/golangci-lint/v2/@v/list",
+	}
+	if !reflect.DeepEqual(lists, want) {
+		t.Errorf("lists = %q, want %q", lists, want)
+	}
+	if got := s.resolved(d); got != d.Name {
+		t.Errorf("resolved = %q, want %q", got, d.Name)
+	}
+}
+
 // The prefixes of a package path whose lookups end at the go command (a GONOPROXY module, or
 // `direct`) are listed by one `go list` run, where every prefix used to start one of its own,
 // each fetching from the module's repository. A `|` behind `direct` keeps them apart: it

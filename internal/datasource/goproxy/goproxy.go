@@ -80,7 +80,11 @@ func (s *Source) Versions(ctx context.Context, modPath, dir string) ([]string, e
 // package, as `go install` does: it resolves to the longest prefix of d.Name that lists
 // versions (see module).
 func (s *Source) Releases(ctx context.Context, d dep.Dep, dir string) ([]datasource.Release, error) {
-	e, err := s.get(ctx, s.module(ctx, d, dir), dir)
+	mod, err := s.module(ctx, d, dir)
+	if err != nil {
+		return nil, err
+	}
+	e, err := s.get(ctx, mod, dir)
 	return e.rels, err
 }
 
@@ -93,24 +97,34 @@ const gomodManager = "gomod"
 // (`github.com/golangci/golangci-lint/v2/cmd/golangci-lint` → `…/golangci-lint/v2`). When no
 // prefix lists any, d.Name's own lookup decides. Deduped per name; dir is the directory of
 // the first lookup.
-func (s *Source) module(ctx context.Context, d dep.Dep, dir string) string {
+//
+// A prefix whose proxy lookup failed (errProxyFailed) ends the resolution instead: the proxy
+// neither listed the prefix nor reported it missing, so whether it is the module is unknown
+// and a shorter prefix must not win. A 5xx on `…/golangci-lint/v2` would otherwise resolve
+// the package to `…/golangci-lint`, the v1 module, for the rest of the run. A go command that
+// rejects a path does answer it: `go list -m -versions <package path>` fails for every path
+// that is no module, so those failures still fall through.
+func (s *Source) module(ctx context.Context, d dep.Dep, dir string) (string, error) {
 	if d.Manager == gomodManager {
-		return d.Name
+		return d.Name, nil
 	}
-	mod, _ := s.modules.Do(ctx, d.Name, func() (string, error) {
+	return s.modules.Do(ctx, d.Name, func() (string, error) {
 		prefixes := pathPrefixes(d.Name)
 		s.prime(ctx, prefixes, dir)
 		for _, p := range prefixes {
-			if e, err := s.get(ctx, p, dir); err == nil && len(e.versions) > 0 {
+			e, err := s.get(ctx, p, dir)
+			switch {
+			case err == nil && len(e.versions) > 0:
 				if p != d.Name {
 					slog.DebugContext(ctx, "package resolved to module", "package", d.Name, "module", p)
 				}
 				return p, nil
+			case errors.Is(err, errProxyFailed):
+				return "", fmt.Errorf("%s: resolving the module of %s: %w", p, d.Name, err)
 			}
 		}
 		return d.Name, nil
 	})
-	return mod
 }
 
 // pathPrefixes returns pkg and the prefixes of it that can be module paths, longest first:
@@ -181,10 +195,11 @@ func usesGoCommand(env gotool.GoEnv, modPath string) bool {
 }
 
 // resolved returns the module an earlier Releases resolved d's package path to (see module),
-// else d.Name; it looks nothing up.
+// else d.Name; it looks nothing up. A resolution that failed is shared as "" and means d.Name
+// as well.
 func (s *Source) resolved(d dep.Dep) string {
 	if d.Manager != gomodManager {
-		if mod, ok := s.modules.Peek(d.Name); ok {
+		if mod, ok := s.modules.Peek(d.Name); ok && mod != "" {
 			return mod
 		}
 	}
@@ -517,6 +532,9 @@ func (s *Source) resolve(ctx context.Context, modPath, dir string) (vs []string,
 			vs, err = s.direct(ctx, dir, modPath)
 		} else {
 			vs, notFound, err = s.fetch(ctx, base+"/"+escaped+"/@v/list")
+			if err != nil && !notFound {
+				err = proxyFailure{err}
+			}
 		}
 		proxied = base != ""
 		slog.DebugContext(ctx, "module versions", "module", modPath, "source", cmp.Or(base, "direct"), "versions", len(vs), "err", err)
@@ -524,6 +542,20 @@ func (s *Source) resolve(ctx context.Context, modPath, dir string) (vs []string,
 	})
 	return vs, proxied, err
 }
+
+// errProxyFailed marks a GOPROXY URL that neither listed a module's versions nor reported the
+// module missing: a 5xx, a timeout, a refused connection, an unreadable `file://` entry. Such
+// a lookup says nothing about whether the path is a module (see module).
+var errProxyFailed = errors.New("proxy lookup failed")
+
+// proxyFailure is one such failure. It reads as the failure itself and wraps it alone, so the
+// errors a lookup reports and the chain they are read from (cmd/deps's limitReason walks the
+// single-wrap chain of a rate limit) are unchanged; only errProxyFailed matches on top.
+type proxyFailure struct{ err error }
+
+func (e proxyFailure) Error() string        { return e.err.Error() }
+func (e proxyFailure) Unwrap() error        { return e.err }
+func (e proxyFailure) Is(target error) bool { return target == errProxyFailed }
 
 // walk runs step for modPath along GOPROXY until one succeeds. step gets a proxy base URL and
 // the escaped module path, or base "" when the go command must be used (a `direct` entry, or a
