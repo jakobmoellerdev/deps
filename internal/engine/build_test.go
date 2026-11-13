@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -23,7 +24,7 @@ import (
 
 // pkgUpdate writes a package.json depending on a@1.0.0 at file under root and returns the
 // update of a to 1.1.0.
-func pkgUpdate(t *testing.T, root, file string) dep.Update {
+func pkgUpdate(t testing.TB, root, file string) dep.Update {
 	t.Helper()
 	const pkg = `{"dependencies": {"a": "^1.0.0"}}` + "\n"
 	writeFile(t, root, file, pkg)
@@ -34,7 +35,7 @@ func pkgUpdate(t *testing.T, root, file string) dep.Update {
 	}
 }
 
-func writeFile(t *testing.T, root, file, content string) {
+func writeFile(t testing.TB, root, file, content string) {
 	t.Helper()
 	abs := filepath.Join(root, filepath.FromSlash(file))
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
@@ -179,6 +180,66 @@ func TestBuildScopeFailureDropsAllManifests(t *testing.T) {
 	}
 	if len(r.calls) != 2 {
 		t.Errorf("calls = %+v, want one per scope", r.calls)
+	}
+}
+
+// A scope reads its siblings only once it holds a post-processing slot: the lockfiles of the
+// scopes still waiting are not read, so what a scope post-processes is the state of the
+// working tree at the time it runs, not at the time Build started.
+func TestBuildReadsSiblingsUnderPostSem(t *testing.T) {
+	root := t.TempDir()
+	scopes := 2 * cap(postSem)
+	ups := make([]dep.Update, scopes)
+	for i := range ups {
+		ups[i] = pkgUpdate(t, root, fmt.Sprintf("s%d/package.json", i))
+		writeFile(t, root, fmt.Sprintf("s%d/lock", i), "old\n")
+	}
+	var mu sync.Mutex
+	running, seen := map[string]bool{}, map[string]string{}
+	started := make(chan struct{}, scopes)
+	release := make(chan struct{})
+	post := map[string]PostProcessor{npm.Name: postFunc{siblings: []string{"lock"}, f: func(_ context.Context, dir string, _, files map[string][]byte) (map[string][]byte, error) {
+		name := filepath.Base(dir)
+		mu.Lock()
+		seen[name] = string(files["lock"])
+		// Only cap(postSem) scopes run at once, so these are the ones holding a slot.
+		first := len(running) < cap(postSem)
+		if first {
+			running[name] = true
+		}
+		mu.Unlock()
+		if first {
+			started <- struct{}{}
+			<-release
+		}
+		return nil, nil
+	}}}
+	done := make(chan []error, 1)
+	go func() {
+		_, errs := Build(t.Context(), root, []manager.Manager{npm.New()}, ups, post)
+		done <- errs
+	}()
+	for range cap(postSem) {
+		<-started
+	}
+	for i := range scopes {
+		if name := fmt.Sprintf("s%d", i); !running[name] {
+			writeFile(t, root, name+"/lock", "new\n")
+		}
+	}
+	close(release)
+	if errs := <-done; len(errs) != 0 {
+		t.Fatal(errs)
+	}
+	for i := range scopes {
+		name := fmt.Sprintf("s%d", i)
+		want := "new\n"
+		if running[name] {
+			want = "old\n"
+		}
+		if seen[name] != want {
+			t.Errorf("scope %s post-processed lock %q, want %q", name, seen[name], want)
+		}
 	}
 }
 

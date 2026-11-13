@@ -432,6 +432,31 @@ type sibling struct {
 	content []byte // nil when the file does not exist
 }
 
+// readSiblings reads the current state of the siblings named relative to dir, a slash path
+// relative to root, in that order; a file that does not exist has nil content and mode 0644.
+// contents holds the content of those that do exist, by name, as the post-processor takes it.
+func readSiblings(root, dir string, names []string) ([]sibling, map[string][]byte, error) {
+	sibs := make([]sibling, len(names))
+	contents := make(map[string][]byte, len(names))
+	for j, n := range names {
+		sb := sibling{path: path.Join(dir, n), mode: 0o644}
+		abs := filepath.Join(root, filepath.FromSlash(sb.path))
+		b, err := os.ReadFile(abs)
+		switch {
+		case err == nil:
+			sb.content = b
+			contents[n] = b
+			if st, err := os.Stat(abs); err == nil {
+				sb.mode = st.Mode().Perm()
+			}
+		case !errors.Is(err, fs.ErrNotExist):
+			return nil, nil, err
+		}
+		sibs[j] = sb
+	}
+	return sibs, contents, nil
+}
+
 // run post-processes the scope with p: patched manifests are replaced by their results and a
 // change is recorded for every sibling whose content changed (mode 0644 when it is new). On
 // failure every file of the scope is dropped.
@@ -490,44 +515,30 @@ func (s *postScope) process(ctx context.Context, root string, files []string, bu
 	if l, ok := p.(ScopeSiblingLister); ok {
 		names = l.ScopeSiblings(abs)
 	}
-	sibs := make([]sibling, len(names))
-	contents := make(map[string][]byte, len(names))
-	for j, n := range names {
-		sb := sibling{path: path.Join(s.dir, n), mode: 0o644}
-		abs := filepath.Join(root, filepath.FromSlash(sb.path))
-		b, err := os.ReadFile(abs)
-		switch {
-		case err == nil:
-			sb.content = b
-			contents[n] = b
-			if st, err := os.Stat(abs); err == nil {
-				sb.mode = st.Mode().Perm()
-			}
-		case !errors.Is(err, fs.ErrNotExist):
-			return nil, err
-		}
-		sibs[j] = sb
-	}
-
+	// A scope's siblings are whole lockfiles, megabytes each in a monorepo. Build runs a
+	// goroutine per scope but postSem lets only a few post-process at once, so they are read
+	// inside the slot: a scope waiting for its turn holds none of them.
 	select {
 	case postSem <- struct{}{}:
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+	sibs, contents, err := readSiblings(root, s.dir, names)
 	start := time.Now()
 	var out map[string][]byte
-	var err error
-	switch {
-	case maintain && mm != nil:
-		out, err = mm.MaintainManifests(ctx, abs, manifests, contents)
-	case maintain:
-		out, err = lm.Maintain(ctx, abs, contents)
-	case up != nil:
-		out, err = up.ProcessUpdates(ctx, abs, manifests, contents, ups, locks)
-	case locks != nil:
-		out, err = lu.ProcessLocked(ctx, abs, manifests, contents, locks)
-	default:
-		out, err = p.Process(ctx, abs, manifests, contents)
+	if err == nil {
+		switch {
+		case maintain && mm != nil:
+			out, err = mm.MaintainManifests(ctx, abs, manifests, contents)
+		case maintain:
+			out, err = lm.Maintain(ctx, abs, contents)
+		case up != nil:
+			out, err = up.ProcessUpdates(ctx, abs, manifests, contents, ups, locks)
+		case locks != nil:
+			out, err = lu.ProcessLocked(ctx, abs, manifests, contents, locks)
+		default:
+			out, err = p.Process(ctx, abs, manifests, contents)
+		}
 	}
 	<-postSem
 	if err != nil {

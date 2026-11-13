@@ -6,8 +6,10 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/actions"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/gomod"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/npm"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
@@ -277,5 +280,56 @@ func BenchmarkBuildApplicable(b *testing.B) {
 		if len(errs) != 0 || len(skipped) != 1 {
 			b.Fatalf("skipped = %d, errs = %v", len(skipped), errs)
 		}
+	}
+}
+
+// BenchmarkBuildScopeSiblings builds one update in each scope of a monorepo of npm
+// workspaces, every scope holding a lockfile sibling. postSem lets four post-processors run
+// at once, so the siblings the waiting scopes hold decide the live heap: peak-B is the
+// largest heap a post-processor saw while it ran. The 1 ms shape is the cost of reading the
+// siblings on its own, the 25 ms one a post-processor still orders of magnitude cheaper than
+// a real `npm install`.
+func BenchmarkBuildScopeSiblings(b *testing.B) {
+	for _, bb := range []struct {
+		name          string
+		scopes, sibKB int
+		work          time.Duration
+	}{
+		{"256-scopes-256KiB-1ms", 256, 256, time.Millisecond},
+		{"64-scopes-1MiB-25ms", 64, 1024, 25 * time.Millisecond},
+	} {
+		b.Run(bb.name, func(b *testing.B) {
+			root := b.TempDir()
+			lock := strings.Repeat("x", bb.sibKB<<10)
+			ups := make([]dep.Update, bb.scopes)
+			for i := range ups {
+				dir := fmt.Sprintf("s%d", i)
+				ups[i] = pkgUpdate(b, root, dir+"/package.json")
+				writeFile(b, root, dir+"/lock", lock)
+			}
+			var peak atomic.Uint64
+			post := map[string]PostProcessor{npm.Name: postFunc{siblings: []string{"lock"}, f: func(_ context.Context, _ string, _, files map[string][]byte) (map[string][]byte, error) {
+				// Let the scopes that are not running reach their wait, then record the heap.
+				time.Sleep(bb.work)
+				var ms runtime.MemStats
+				runtime.ReadMemStats(&ms)
+				for {
+					old := peak.Load()
+					if ms.HeapAlloc <= old || peak.CompareAndSwap(old, ms.HeapAlloc) {
+						break
+					}
+				}
+				return map[string][]byte{"lock": files["lock"]}, nil
+			}}}
+			ms := []manager.Manager{npm.New()}
+			b.ReportAllocs()
+			for b.Loop() {
+				_, errs := Build(b.Context(), root, ms, ups, post)
+				if len(errs) != 0 {
+					b.Fatal(errs)
+				}
+			}
+			b.ReportMetric(float64(peak.Load()), "peak-B")
+		})
 	}
 }
