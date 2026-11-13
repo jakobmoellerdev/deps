@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,26 +30,45 @@ func giteaHeaders(token string) func(http.Header) {
 	}
 }
 
+// giteaPR converts a pull request of Gitea or Forgejo. A draft is marked by a WIP prefix in
+// the title there; the prefix is the forge's mark, not part of the title deps wrote, so it is
+// cut off again and reported as Draft. Callers compare the title with the one they would
+// write (closedFor), which a leading "WIP: " would never match.
 func giteaPR(p *apiPR) PR {
 	pr := p.pr()
 	pr.Merged = p.Merged
 	m := p.Mergeable != nil && *p.Mergeable
 	pr.Mergeable = &m
-	pr.Draft = pr.Draft || hasPrefixFold(p.Title, wipPrefixes) // older forges report no draft field
+	title, wip := cutPrefixFold(p.Title, wipPrefixes)
+	pr.Title = title
+	pr.Draft = pr.Draft || wip // older forges report no draft field
 	return pr
 }
 
 // wipPrefix marks a draft PR on Gitea and Forgejo; their default WORK_IN_PROGRESS_PREFIXES
-// are wipPrefixes, compared case-insensitively.
+// are wipPrefixes, compared case-insensitively. Their API exposes neither the configured
+// prefixes nor the title without them, so deps assumes the defaults; a forge configured with
+// other prefixes keeps them in the title it reports.
 const wipPrefix = "WIP: "
 
 var wipPrefixes = []string{"WIP:", "[WIP]"}
 
+// cutPrefixFold cuts the first of the upper-case prefixes title starts with, compared
+// case-insensitively, and the blanks following it; ok reports whether one matched.
+func cutPrefixFold(title string, prefixes []string) (rest string, ok bool) {
+	for _, p := range prefixes {
+		if len(title) >= len(p) && strings.EqualFold(title[:len(p)], p) {
+			return strings.TrimLeft(title[len(p):], " \t"), true
+		}
+	}
+	return title, false
+}
+
 // hasPrefixFold reports whether title starts with one of the upper-case prefixes, compared
 // case-insensitively.
 func hasPrefixFold(title string, prefixes []string) bool {
-	up := strings.ToUpper(title)
-	return slices.ContainsFunc(prefixes, func(p string) bool { return strings.HasPrefix(up, p) })
+	_, ok := cutPrefixFold(title, prefixes)
+	return ok
 }
 
 // draftTitle returns title with prefix when draft and it starts with none of the marks yet.

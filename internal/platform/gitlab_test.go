@@ -240,14 +240,14 @@ func TestGitLabWrites(t *testing.T) {
 }
 
 // Draft merge requests: the Draft: title prefix, added once and kept on updates of a draft;
-// GitLab reports the draft state.
+// GitLab reports the draft state, and deps the title without GitLab's prefix.
 func TestGitLabDraft(t *testing.T) {
 	c, calls := gitlabTestClient(t, map[string]route{
 		"POST " + glAPI + "/merge_requests":  {code: http.StatusCreated, body: `{"iid":7,"state":"opened","title":"Draft: chore: x","draft":true}`},
 		"PUT " + glAPI + "/merge_requests/7": {body: `{}`},
 	})
 	pr, err := c.CreatePR(t.Context(), "deps/a", "main", "chore: x", "b", true)
-	if err != nil || !pr.Draft {
+	if err != nil || !pr.Draft || pr.Title != "chore: x" {
 		t.Fatalf("CreatePR = %+v %v", pr, err)
 	}
 	for _, title := range []string{"chore: x", "(draft) chore: x"} {

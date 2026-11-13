@@ -529,7 +529,8 @@ func TestClientErrors(t *testing.T) {
 }
 
 // Draft PRs: GitHub sends the draft flag and keeps titles; Gitea and Forgejo mark drafts by
-// the WIP: title prefix, added once and kept on updates of a draft. Both report Draft.
+// the WIP: title prefix, added once and kept on updates of a draft. Both report Draft, and
+// the title without the forge's mark: deps compares it with the title it would write.
 func TestDraftPRs(t *testing.T) {
 	for _, tc := range []struct {
 		kind                  Kind
@@ -589,7 +590,10 @@ func TestDraftPRs(t *testing.T) {
 			}
 			prs, err := c.ListPRs(ctx, "open", 1)
 			if err != nil || len(prs) != 1 || prs[0].Draft != tc.draft {
-				t.Errorf("ListPRs %+v %v, want draft %v", prs, err, tc.draft)
+				t.Fatalf("ListPRs %+v %v, want draft %v", prs, err, tc.draft)
+			}
+			if prs[0].Title != "chore: x" {
+				t.Errorf("listed title %q, want %q", prs[0].Title, "chore: x")
 			}
 		})
 	}

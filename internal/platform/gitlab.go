@@ -136,11 +136,14 @@ func (m *gitlabMR) fromFork() bool {
 // cancels (PushCancelsAutoMerge). Mergeable is false for conflicts and when a fast-forward
 // project needs a rebase (deps rebuilds the branch), true when GitLab reports it mergeable,
 // and nil while GitLab checks it or the MR waits for something else (pipeline, approvals, …).
+// GitLab derives the draft state from a prefix of the title, which is its mark and not part
+// of the title deps wrote: it is cut off again and reported as Draft.
 func (m *gitlabMR) pr() PR {
+	title, draft := cutPrefixFold(m.Title, gitlabDraftPrefixes)
 	pr := PR{
-		Number: m.IID, Title: m.Title, Body: m.Description, Head: m.SourceBranch, HeadSHA: m.SHA,
+		Number: m.IID, Title: title, Body: m.Description, Head: m.SourceBranch, HeadSHA: m.SHA,
 		Base: m.TargetBranch,
-		URL:  m.WebURL, CreatedAt: m.CreatedAt, Merged: m.State == "merged", Draft: m.Draft,
+		URL:  m.WebURL, CreatedAt: m.CreatedAt, Merged: m.State == "merged", Draft: m.Draft || draft,
 		State: "open", AutoMerge: m.MergeWhenPipelineSucceeds, PushCancelsAutoMerge: true,
 	}
 	if m.State == "closed" || m.State == "merged" {
