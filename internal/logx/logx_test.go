@@ -249,3 +249,23 @@ func TestActionsHandler(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+// A message is written raw, spaces and all, but a control rune in it must not break the
+// record across lines: a continuation line reaches an Actions runner as a workflow command
+// when it starts with "::".
+func TestPrettyHandlerMessageEscaped(t *testing.T) {
+	var b bytes.Buffer
+	start := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	h := NewPrettyHandler(NewWriter(&b), Options{Start: start})
+	record(t, h, start, time.Second, slog.LevelWarn, "tag name\n::error::spoofed", "n", 1)
+	record(t, h, start, time.Second, slog.LevelInfo, "plain message with spaces")
+	want := "" +
+		"  1.00s WRN \"tag name\\n::error::spoofed\"  n=1\n" +
+		"  1.00s INF plain message with spaces\n"
+	if got := b.String(); got != want {
+		t.Errorf("got  %q\nwant %q", got, want)
+	}
+	if lines := strings.Count(b.String(), "\n"); lines != 2 {
+		t.Errorf("%d lines for 2 records", lines)
+	}
+}

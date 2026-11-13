@@ -65,7 +65,7 @@ func (h *PrettyHandler) Handle(_ context.Context, r slog.Record) error {
 	lvl, sgr := levelLabel(r.Level)
 	b = appendPaint(b, h.color, sgr, lvl)
 	b = append(b, ' ')
-	b = append(b, r.Message...)
+	b = appendMessage(b, r.Message)
 	mark := len(b)
 	b = append(b, h.pre...)
 	r.Attrs(func(a slog.Attr) bool {
@@ -210,4 +210,17 @@ func needsQuoting(s string) bool {
 		}
 	}
 	return false
+}
+
+// appendMessage appends the message of a record, which may hold spaces, quoted when it holds
+// a control or other unprintable rune: a newline would break the record across lines, and a
+// continuation line starting with "::" would reach a GitHub Actions runner as a workflow
+// command.
+func appendMessage(b []byte, s string) []byte {
+	for _, r := range s {
+		if r == utf8.RuneError || !unicode.IsPrint(r) {
+			return strconv.AppendQuote(b, s)
+		}
+	}
+	return append(b, s...)
 }
