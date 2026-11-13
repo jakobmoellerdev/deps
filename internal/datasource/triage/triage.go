@@ -3,7 +3,9 @@
 //
 //   - the CVSS v3 base score of deps.dev (https://api.deps.dev/v3/advisories/<GHSA id>), which
 //     publishes the score itself, so no CVSS vector has to be parsed; its aliases also name
-//     CVE IDs that the advisory itself may not list;
+//     CVE IDs that the advisory itself may not list. It is asked only for an advisory that
+//     needs one of the two: one the record did not score, or one without a CVE alias (see
+//     scoreAll);
 //   - the EPSS probability that the vulnerability is exploited within 30 days
 //     (https://api.first.org/data/v1/epss), queried for all CVE aliases at once;
 //   - whether CISA lists the vulnerability in its Known Exploited Vulnerabilities catalog
@@ -103,12 +105,22 @@ func (s *Source) Advisories(ctx context.Context, deps []dep.Dep) ([][]datasource
 	return vulns, nil
 }
 
-// scoreAll fills CVSS (and adds the aliases deps.dev knows) for every advisory, one request
-// per advisory ID, bounded by the request pool.
+// scoreAll fills CVSS (and adds the aliases deps.dev knows) for the advisories that need it,
+// one request per advisory ID, bounded by the request pool.
+//
+// An advisory that is already scored by its own CVSS vector and already names a CVE alias has
+// nothing left for deps.dev to fill: its score stands and its CVE IDs are the keys of the EPSS
+// and KEV lookups. Those are the common case of a GHSA record, so they are not asked about —
+// the request would only cost a round trip and a slot of the OSV pool, which the advisories
+// that do need a score share.
 func (s *Source) scoreAll(ctx context.Context, ids []string, index map[string][]*dep.Advisory) {
 	var wg sync.WaitGroup
 	for _, id := range ids {
-		key := ghsaID(id, index[id][0].Aliases)
+		first := index[id][0]
+		if first.CVSS != 0 && len(cveIDs(first)) > 0 {
+			continue
+		}
+		key := ghsaID(id, first.Aliases)
 		if key == "" { // deps.dev keys its advisories by GHSA ID only
 			continue
 		}
