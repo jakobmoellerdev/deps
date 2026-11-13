@@ -100,17 +100,20 @@ func (Locker) Maintain(ctx context.Context, dir string, files map[string][]byte)
 var skipDirs = []string{".git", ".paket", "packages", "paket-files", "node_modules"}
 
 // run runs each `paket <args>` in a mirror of dir holding src as paket.dependencies and lock as
-// paket.lock, and returns paket.lock when it changed.
+// paket.lock, and returns paket.lock when it changed. The other entries of dir are symlinked
+// whole (toolrun.Mirror's default), skipDirs left out: `paket update --no-install` writes
+// paket.dependencies and paket.lock, which the mirror holds as real files, so recreating the
+// directories of the scope to symlink the checkout's files one by one only cost a walk of the
+// whole tree per scope.
 func run(ctx context.Context, dir string, src, lock []byte, cmds [][]string) (map[string][]byte, error) {
 	bin, err := exec.LookPath("paket")
 	if err != nil {
 		return nil, fmt.Errorf("paket not found (needed to update %s)", lockFile)
 	}
 	tmp, base, err := toolrun.Mirror(dir, toolrun.MirrorOptions{
-		Pattern:  "deps-paket-*",
-		Files:    map[string][]byte{manifestFile: src, lockFile: lock},
-		Skip:     func(rel string, d fs.DirEntry) bool { return d.IsDir() && slices.Contains(skipDirs, rel) },
-		Recreate: func(string, fs.DirEntry) bool { return true },
+		Pattern: "deps-paket-*",
+		Files:   map[string][]byte{manifestFile: src, lockFile: lock},
+		Skip:    func(rel string, d fs.DirEntry) bool { return d.IsDir() && slices.Contains(skipDirs, rel) },
 	})
 	if err != nil {
 		return nil, err
