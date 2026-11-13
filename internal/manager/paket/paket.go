@@ -206,7 +206,7 @@ func parseLock(src []byte) map[string]map[string]string {
 			nuget = line == "NUGET"
 			continue
 		}
-		if !nuget || !strings.HasPrefix(line, "    ") || line[4] == ' ' {
+		if !nuget || !strings.HasPrefix(line, "    ") || len(line) == 4 || line[4] == ' ' {
 			continue
 		}
 		id, rest, ok := strings.Cut(line[4:], " (")

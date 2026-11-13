@@ -454,3 +454,16 @@ func TestLocker(t *testing.T) {
 		t.Errorf("no paket: %v", err)
 	}
 }
+
+// TestParseLockBlankLine covers a line of exactly four spaces inside a NUGET block, which
+// paket writes between the packages of two remotes.
+func TestParseLockBlankLine(t *testing.T) {
+	src := "NUGET\n  remote: https://api.nuget.org/v3/index.json\n    Newtonsoft.Json (13.0.3)\n    \n    Serilog (3.1.1)\n"
+	got := parseLock([]byte(src))
+	want := map[string]string{"newtonsoft.json": "13.0.3", "serilog": "3.1.1"}
+	for id, v := range want {
+		if got[strings.ToLower(mainGroup)][id] != v {
+			t.Errorf("parseLock()[%q] = %q, want %q", id, got[strings.ToLower(mainGroup)][id], v)
+		}
+	}
+}
