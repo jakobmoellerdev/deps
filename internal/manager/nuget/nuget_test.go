@@ -460,3 +460,34 @@ func TestFloatAnchor(t *testing.T) {
 	}
 	_ = path.Base
 }
+
+// TestJSONBOM covers global.json and dotnet-tools.json written with a UTF-8 byte order mark,
+// as Visual Studio does: the mark is read as blanks, so the file parses and spans stay exact.
+func TestJSONBOM(t *testing.T) {
+	m := New()
+	global := "\xEF\xBB\xBF{ \"sdk\": { \"version\": \"8.0.100\" } }\n"
+	deps, err := m.Extract("global.json", []byte(global), manager.Env{})
+	if err != nil {
+		t.Fatalf("global.json: %v", err)
+	}
+	sdk := find(t, deps, DepTypeDotnetSDK, "dotnet-sdk")
+	if sdk.Version != "8.0.100" {
+		t.Errorf("sdk = %+v", sdk)
+	}
+	if got := global[sdk.RefSpan.Start:sdk.RefSpan.End]; got != "8.0.100" {
+		t.Errorf("sdk span = %q", got)
+	}
+
+	tools := "\xEF\xBB\xBF{\n  \"version\": 1,\n  \"tools\": { \"dotnet-ef\": { \"version\": \"9.0.0\", \"commands\": [\"dotnet-ef\"] } }\n}\n"
+	deps, err = m.Extract(".config/dotnet-tools.json", []byte(tools), manager.Env{})
+	if err != nil {
+		t.Fatalf("dotnet-tools.json: %v", err)
+	}
+	tool := find(t, deps, DepTypeNuGet, "dotnet-ef")
+	if tool.Version != "9.0.0" {
+		t.Errorf("tool = %+v", tool)
+	}
+	if got := tools[tool.RefSpan.Start:tool.RefSpan.End]; got != "9.0.0" {
+		t.Errorf("tool span = %q", got)
+	}
+}

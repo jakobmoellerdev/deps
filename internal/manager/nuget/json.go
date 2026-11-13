@@ -41,9 +41,9 @@ func dotnetTools(src []byte) ([]item, error) {
 
 // jsonStrings calls visit with the member path (object keys; "[]" for array elements) and
 // value of every string in the JSON document src. `//` and `/* */` comments, which the .NET
-// SDK accepts in global.json, are read as blanks.
+// SDK accepts in global.json, are read as blanks, as is a leading byte order mark.
 func jsonStrings(src []byte, visit func(path []string, v value)) error {
-	buf := blankComments(src)
+	buf := blankComments(blankBOM(src))
 	dec := jsontext.NewDecoder(bytes.NewReader(buf), jsontext.AllowDuplicateNames(true))
 	ln := newLines(src)
 	var walk func(path []string) error
@@ -128,6 +128,24 @@ func blankComments(src []byte) []byte {
 			}
 			i += stop - 1
 		}
+	}
+	return out
+}
+
+// bom is the UTF-8 byte order mark, which Visual Studio writes before a global.json's first
+// byte; the .NET SDK's JSON reader skips it.
+var bom = []byte("\ufeff")
+
+// blankBOM returns src with a leading byte order mark replaced by blanks, which the decoder
+// reads as the whitespace before the document. Blanking rather than trimming keeps every byte
+// offset, and so every span, that of src.
+func blankBOM(src []byte) []byte {
+	if !bytes.HasPrefix(src, bom) {
+		return src
+	}
+	out := bytes.Clone(src)
+	for i := range bom {
+		out[i] = ' '
 	}
 	return out
 }
