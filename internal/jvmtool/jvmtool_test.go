@@ -149,3 +149,34 @@ func TestCopyBuild(t *testing.T) {
 		t.Error("working tree touched")
 	}
 }
+
+// The copy leaves out node_modules and the dot directories of tools at any depth, which hold
+// no build input; .mvn (the Maven wrapper's configuration) and the build's own files stay.
+func TestCopyBuildToolDirs(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, map[string]string{
+		"pom.xml":                               "<project/>",
+		"sub/pom.xml":                           "<project/>",
+		"sub/src/App.java":                      "class App {}",
+		"sub/node_modules/pkg/index.js":         "x",
+		"sub/target/classes/App.class":          "c",
+		".idea/workspace.xml":                   "<x/>",
+		".mvn/jvm.config":                       "-Xmx1g",
+		".mvn/wrapper/maven-wrapper.properties": "distributionUrl=x",
+	})
+	root, tmp, err := copyBuild(dir, nil, mavenSkip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+	for _, p := range []string{"pom.xml", "sub/pom.xml", "sub/src/App.java", ".mvn/jvm.config", ".mvn/wrapper/maven-wrapper.properties"} {
+		if _, err := os.Stat(filepath.Join(tmp, filepath.FromSlash(p))); err != nil {
+			t.Errorf("%s not copied: %v", p, err)
+		}
+	}
+	for _, p := range []string{"sub/node_modules", "sub/target", ".idea"} {
+		if _, err := os.Stat(filepath.Join(tmp, filepath.FromSlash(p))); err == nil {
+			t.Errorf("%s copied", p)
+		}
+	}
+}

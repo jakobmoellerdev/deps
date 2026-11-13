@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/toolrun"
@@ -57,8 +58,8 @@ func toolPath(dir, wrapper, tool string) (string, error) {
 // first (toolrun.MirrorAncestors), so builds reaching outside dir (includeBuild("../shared"),
 // includeFlat, Maven <module>../x</module>) resolve as in the checkout; outside a repository
 // or at its top the copy is named like dir, so Gradle's default root project name stays the
-// same. Directories for which skip reports true are left out; file modes and symlinks are
-// kept. It returns root, which the caller removes, and the copy of dir.
+// same. Directories for which skip or toolDirSkip reports true are left out; file modes and
+// symlinks are kept. It returns root, which the caller removes, and the copy of dir.
 func copyBuild(dir string, overlay map[string][]byte, skip func(path string, d fs.DirEntry) bool) (root, tmp string, err error) {
 	if root, err = os.MkdirTemp("", "deps-jvm-*"); err != nil {
 		return "", "", err
@@ -68,7 +69,9 @@ func copyBuild(dir string, overlay map[string][]byte, skip func(path string, d f
 		tmp = filepath.Join(root, filepath.Base(dir))
 	}
 	if err == nil {
-		err = toolrun.CopyTree(dir, tmp, skip)
+		err = toolrun.CopyTree(dir, tmp, func(p string, d fs.DirEntry) bool {
+			return d.IsDir() && (toolDirSkip(d.Name()) || skip(p, d))
+		})
 	}
 	if err == nil {
 		err = toolrun.WriteFiles(tmp, overlay)
@@ -78,6 +81,16 @@ func copyBuild(dir string, overlay map[string][]byte, skip func(path string, d f
 		return "", "", err
 	}
 	return root, tmp, nil
+}
+
+// toolDirSkip reports the directories no copy of a build needs, whatever the tool: the
+// packages npm installs and the dot directories of tools (.git, .gradle, .idea, .github,
+// .venv), which hold no build input but, on a built checkout, nearly all of its files.
+// scanSkip, the same list for the lockfile scan, also leaves out buildSrc, which a Gradle
+// build does need; and .mvn, which carries the Maven wrapper's properties, jvm.config and
+// extensions.xml, stays for the same reason.
+func toolDirSkip(name string) bool {
+	return name == "node_modules" || strings.HasPrefix(name, ".") && name != ".mvn"
 }
 
 // hasAny reports whether dir contains one of names.
