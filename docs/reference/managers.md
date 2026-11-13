@@ -356,7 +356,7 @@ Updates container image references in Dockerfiles, Compose files, workflows, act
 
 **Files:**
 
-- `Dockerfile`, `Containerfile`, `Dockerfile.<x>`, `<x>.Dockerfile` (DepType `dockerfile`)
+- `Dockerfile`, `Containerfile` and the lowercase spellings, with any suffix (`Dockerfile.<x>`, `Dockerfile-<x>`, `dockerfile_<x>`) or with any prefix ending in a dot (`<x>.Dockerfile`), as Renovate matches them (DepType `dockerfile`)
 - Compose files (DepType `compose`): `compose.y(a)ml`, `docker-compose.y(a)ml`, overrides and variants (`compose.override.yml`, `compose.<env>.yaml`, `docker-compose.<env>.yml`, `<x>.compose.y(a)ml`), and any other YAML shaped like one (see Compose details)
 - workflow YAML, as for github-actions (DepType `workflow`)
 - `action.y(a)ml` (DepType `action`)

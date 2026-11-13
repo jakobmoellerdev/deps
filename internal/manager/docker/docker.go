@@ -51,20 +51,20 @@ func (dockerManager) Match(p string) bool {
 	return isDockerfile(p) || strings.HasSuffix(p, ".yaml") || strings.HasSuffix(p, ".yml")
 }
 
-// isDockerfile reports whether the base name is Dockerfile/Containerfile, with or without an
-// extension (`Dockerfile.dev`, `dev.Dockerfile`). `Dockerfile.dockerignore` is an ignore
-// file, not a Dockerfile. Matching the name directly keeps the walk off the regexp engine.
+// isDockerfile reports whether the base name is a Dockerfile/Containerfile name, matching
+// Renovate's dockerfile managerFilePatterns: the name with any suffix (`Dockerfile`,
+// `Dockerfile.dev`, `Dockerfile-prod`, `dockerfile_ci`) or with any prefix ending in a dot
+// (`dev.Dockerfile`), in both the capitalized and the lowercase spelling.
+// `Dockerfile.dockerignore` is an ignore file, not a Dockerfile. Matching the name directly
+// keeps the walk off the regexp engine.
 func isDockerfile(p string) bool {
-	if strings.HasSuffix(p, "/") || !strings.Contains(p, "Dockerfile") && !strings.Contains(p, "Containerfile") {
+	if strings.HasSuffix(p, "/") {
 		return false
 	}
 	b := path.Base(p)
-	for _, name := range [...]string{"Dockerfile", "Containerfile"} {
-		if rest, ok := strings.CutPrefix(b, name); ok && (rest == "" || rest[0] == '.') {
+	for _, name := range [...]string{"Dockerfile", "dockerfile", "Containerfile", "containerfile"} {
+		if strings.HasPrefix(b, name) || strings.HasSuffix(b, "."+name) {
 			return !strings.HasSuffix(b, ".dockerignore")
-		}
-		if strings.HasSuffix(b, "."+name) {
-			return true
 		}
 	}
 	return false

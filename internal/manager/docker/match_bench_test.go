@@ -42,10 +42,11 @@ func BenchmarkMatch(b *testing.B) {
 	}
 }
 
-// The regexps Match replaced with name checks; TestMatchParity and FuzzMatch pin Match to them.
+// Renovate's dockerfile managerFilePatterns, which Match implements with name checks;
+// TestMatchParity and FuzzMatch pin Match to them.
 var (
-	dockerfileRe    = regexp.MustCompile(`(^|/)(Dockerfile|Containerfile)(\.[^/]*)?$`)
-	dockerfileExtRe = regexp.MustCompile(`(^|/)[^/]*\.(Dockerfile|Containerfile)$`)
+	dockerfileRe    = regexp.MustCompile(`(^|/|\.)([Dd]ocker|[Cc]ontainer)file$`)
+	dockerfileExtRe = regexp.MustCompile(`(^|/)([Dd]ocker|[Cc]ontainer)file[^/]*$`)
 	yamlRe          = regexp.MustCompile(`\.ya?ml$`)
 )
 
@@ -57,7 +58,7 @@ func regexpMatch(p string) bool {
 
 func TestMatchParity(t *testing.T) {
 	m := New()
-	for _, p := range append(repoPaths(t), "Dockerfile", "a/Dockerfile.dev", "x.Containerfile", "Dockerfile.dockerignore", "a/b.yaml", "c.yml", "NotDockerfileX/y", "Dockerfile/x") {
+	for _, p := range append(repoPaths(t), "Dockerfile", "a/Dockerfile.dev", "x.Containerfile", "Dockerfile.dockerignore", "a/b.yaml", "c.yml", "NotDockerfileX/y", "Dockerfile/x", "Dockerfile-prod", "dockerfile", "docker/Dockerfile-arm64", "Containerfile-arm") {
 		if got, want := m.Match(p), regexpMatch(p); got != want {
 			t.Errorf("Match(%q) = %v, regexps say %v", p, got, want)
 		}
