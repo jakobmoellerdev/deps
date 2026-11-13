@@ -2,6 +2,7 @@ package gomod
 
 import (
 	"bytes"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -269,8 +270,10 @@ func TestMajorPathEdits(t *testing.T) {
 	}
 }
 
+// TestFileEdits checks the import path rewrites of a module, for the manager that scans the
+// module per update and for the one answering from the memoized import index: both must
+// produce the same edits and the same errors.
 func TestFileEdits(t *testing.T) {
-	root := t.TempDir()
 	files := map[string]string{
 		"mod/go.mod": "module example.com/x\n\nrequire github.com/google/go-github/v92 v92.0.0\n",
 		"mod/a.go": "package a\n\nimport (\n\t\"fmt\"\n\tgh \"github.com/google/go-github/v92/github\"\n\t`github.com/google/go-github/v92`\n\t\"github.com/google/go-github/v921\"\n)\n\n" +
@@ -286,52 +289,67 @@ func TestFileEdits(t *testing.T) {
 		"other/o.go":               "package o\n\nimport \"github.com/google/go-github/v92/github\"\n",
 		"mod/broken/syntax_err.go": "package\n",
 	}
-	for p, c := range files {
-		abs := filepath.Join(root, filepath.FromSlash(p))
-		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(abs, []byte(c), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	fe := New().(manager.FileEditor)
-	d := dep.Dep{Manager: Name, File: "mod/go.mod", Name: "github.com/google/go-github/v92", Version: "v92.0.0"}
-	if got, err := fe.FileEdits(root, dep.Update{Dep: d, NewVersion: "v92.1.0"}); got != nil || err != nil {
-		t.Errorf("same path: %v %v", got, err)
-	}
-	u := dep.Update{Dep: d, Type: dep.Major, NewVersion: "v93.0.0", NewName: "github.com/google/go-github/v93"}
-	got, err := fe.FileEdits(root, u)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := map[string]string{
-		"mod/a.go": "package a\n\nimport (\n\t\"fmt\"\n\tgh \"github.com/google/go-github/v93/github\"\n\t`github.com/google/go-github/v93`\n\t\"github.com/google/go-github/v921\"\n)\n\n" +
-			"// github.com/google/go-github/v92 in a comment stays\nvar _ = fmt.Sprint(gh.Client{})\n",
-		"mod/sub/b_test.go": "package sub\n\nimport \"github.com/google/go-github/v93/github\"\n",
-	}
-	if len(got) != len(want) {
-		t.Fatalf("files %v", got)
-	}
-	for p, w := range want {
-		out, err := patch.Apply([]byte(files[p]), got[p])
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(out) != w {
-			t.Errorf("%s: got %q", p, out)
-		}
-	}
+	for _, tt := range []struct {
+		name string
+		mgr  manager.Manager
+	}{
+		{"uncached", New()},
+		{"indexed", NewCached(NewScanCache())},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			for p, c := range files {
+				abs := filepath.Join(root, filepath.FromSlash(p))
+				if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(abs, []byte(c), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			fe := tt.mgr.(manager.FileEditor)
+			d := dep.Dep{Manager: Name, File: "mod/go.mod", Name: "github.com/google/go-github/v92", Version: "v92.0.0"}
+			if got, err := fe.FileEdits(root, dep.Update{Dep: d, NewVersion: "v92.1.0"}); got != nil || err != nil {
+				t.Errorf("same path: %v %v", got, err)
+			}
+			u := dep.Update{Dep: d, Type: dep.Major, NewVersion: "v93.0.0", NewName: "github.com/google/go-github/v93"}
+			got, err := fe.FileEdits(root, u)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := map[string]string{
+				"mod/a.go": "package a\n\nimport (\n\t\"fmt\"\n\tgh \"github.com/google/go-github/v93/github\"\n\t`github.com/google/go-github/v93`\n\t\"github.com/google/go-github/v921\"\n)\n\n" +
+					"// github.com/google/go-github/v92 in a comment stays\nvar _ = fmt.Sprint(gh.Client{})\n",
+				"mod/sub/b_test.go": "package sub\n\nimport \"github.com/google/go-github/v93/github\"\n",
+			}
+			if len(got) != len(want) {
+				t.Fatalf("files %v", got)
+			}
+			for p, w := range want {
+				out, err := patch.Apply([]byte(files[p]), got[p])
+				if err != nil {
+					t.Fatal(err)
+				}
+				if string(out) != w {
+					t.Errorf("%s: got %q", p, out)
+				}
+			}
+			// A second call answers from the index with the same edits.
+			if again, err := fe.FileEdits(root, u); err != nil || !maps.EqualFunc(again, got, slices.Equal) {
+				t.Errorf("second call = %v, %v", again, err)
+			}
 
-	// A file that mentions the path but does not parse is an error.
-	if err := os.WriteFile(filepath.Join(root, "mod", "broken", "syntax_err.go"), []byte("package\nimport \"github.com/google/go-github/v92\"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fe.FileEdits(root, u); err == nil || !strings.Contains(err.Error(), "syntax_err.go") {
-		t.Errorf("want parse error, got %v", err)
-	}
-	if _, err := fe.FileEdits(filepath.Join(root, "missing"), u); err == nil {
-		t.Error("want walk error")
+			// A file that mentions the path but does not parse is an error.
+			if err := os.WriteFile(filepath.Join(root, "mod", "broken", "syntax_err.go"), []byte("package\nimport \"github.com/google/go-github/v92\"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := fe.FileEdits(root, u); err == nil || !strings.Contains(err.Error(), "syntax_err.go") {
+				t.Errorf("want parse error, got %v", err)
+			}
+			if _, err := fe.FileEdits(filepath.Join(root, "missing"), u); err == nil {
+				t.Error("want walk error")
+			}
+		})
 	}
 }
 

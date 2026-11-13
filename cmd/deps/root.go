@@ -596,10 +596,10 @@ func (s *session) forCheckout(ctx context.Context, dir, configPath string, info 
 	return s.withConfig(ctx, root, cfg, info)
 }
 
-// sessionManagers are the managers cfg enables, with the gomod manager memoizing the module
-// scans of the session's checkout: Build and Inputs ask it for the .go files of a module once
-// per update that rewrites import paths, and a session reads a checkout that does not change
-// under it.
+// sessionManagers are the managers cfg enables, with the gomod manager memoizing the import
+// index of the session's checkout: Build and Inputs ask it for the .go files importing a
+// module once per update that rewrites import paths, and a session reads a checkout that
+// does not change under it.
 func sessionManagers(cfg *config.Config) ([]manager.Manager, error) {
 	ms, err := engine.Managers(cfg)
 	if err != nil {

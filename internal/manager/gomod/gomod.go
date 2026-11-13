@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"golang.org/x/mod/modfile"
 	"golang.org/x/mod/module"
@@ -186,10 +187,34 @@ func (m gomodManager) FileEdits(root string, u dep.Update) (map[string][]patch.E
 		return nil, nil
 	}
 	base := filepath.Join(root, filepath.FromSlash(path.Dir(u.Dep.File)))
-	files, err := m.scans.files(base)
+	if m.scans == nil {
+		// Without a cache the module is scanned again for every update, so looking for
+		// the one module path is cheaper than indexing every import of every file.
+		files, err := goFiles(base)
+		if err != nil {
+			return nil, err
+		}
+		return fileEdits(root, files, u)
+	}
+	e := m.scans.entry(base)
+	if !e.first.Swap(true) {
+		// The first update of a module reads its files either way, and reading them for
+		// the one module path is cheaper than indexing every import.
+		files, err := e.goFiles(base)
+		if err != nil {
+			return nil, err
+		}
+		return fileEdits(root, files, u)
+	}
+	ix, err := e.imports(base)
 	if err != nil {
 		return nil, err
 	}
+	return fileEdits(root, ix.importers(u.Dep.Name), u)
+}
+
+// fileEdits returns the import path edits of files (absolute paths).
+func fileEdits(root string, files []string, u dep.Update) (map[string][]patch.Edit, error) {
 	old := []byte(u.Dep.Name)
 	var out map[string][]patch.Edit
 	var buf []byte // reused: most .go files do not mention the module
@@ -221,39 +246,61 @@ func (m gomodManager) FileEdits(root string, u dep.Update) (map[string][]patch.E
 	return out, nil
 }
 
-// ScanCache memoizes the .go files of a module directory (goFiles) by absolute path: a group
-// can carry several major path updates or replacements of the same module, and each of them
-// would otherwise walk the module again. The files must not change while it is in use, so
-// only a run that reads one checkout once uses one (NewCached); the zero value is not
-// usable, use NewScanCache.
+// ScanCache memoizes the scans of a module directory by absolute path: its .go files, and
+// from the second update of the same module on an index of their import paths, so that the
+// further major path updates and replacements of a group do not read the module again. The
+// files must not change while it is in use, so only a run that reads one checkout once uses
+// one (NewCached); the zero value is not usable, use NewScanCache.
 type ScanCache struct {
 	mu sync.Mutex
 	m  map[string]*scanEntry
 }
 
+// scanEntry is the memoized scan of one module directory.
 type scanEntry struct {
-	once  sync.Once
+	first atomic.Bool // an update of this module has been answered
+
+	walk  sync.Once
 	files []string
 	err   error
+
+	build sync.Once
+	ix    *importIndex
+	ixErr error
 }
 
 // NewScanCache returns an empty ScanCache.
 func NewScanCache() *ScanCache { return &ScanCache{m: map[string]*scanEntry{}} }
 
-// files is goFiles of dir, memoized when c is not nil.
-func (c *ScanCache) files(dir string) ([]string, error) {
-	if c == nil {
-		return goFiles(dir)
-	}
+// entry is the scan of dir, shared by every update of that module.
+func (c *ScanCache) entry(dir string) *scanEntry {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	e := c.m[dir]
 	if e == nil {
 		e = &scanEntry{}
 		c.m[dir] = e
 	}
-	c.mu.Unlock()
-	e.once.Do(func() { e.files, e.err = goFiles(dir) })
+	return e
+}
+
+// goFiles is the module's .go files, walked once.
+func (e *scanEntry) goFiles(dir string) ([]string, error) {
+	e.walk.Do(func() { e.files, e.err = goFiles(dir) })
 	return e.files, e.err
+}
+
+// imports is the import index of the module's .go files, built once.
+func (e *scanEntry) imports(dir string) (*importIndex, error) {
+	e.build.Do(func() {
+		files, err := e.goFiles(dir)
+		if err != nil {
+			e.ixErr = err
+			return
+		}
+		e.ix, e.ixErr = buildIndex(files)
+	})
+	return e.ix, e.ixErr
 }
 
 // goFiles returns the absolute paths of the .go files of the module in the absolute directory

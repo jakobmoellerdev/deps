@@ -57,3 +57,23 @@ func BenchmarkFileEdits(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkFileEditsFirst is the first call on a module, which scans it: the cost a group
+// with a single major path update or replacement pays.
+func BenchmarkFileEditsFirst(b *testing.B) {
+	root := moduleTree(b, 200, 8)
+	u := dep.Update{
+		Dep:        dep.Dep{Manager: Name, File: "mod/go.mod", Name: "github.com/google/go-github/v92", Version: "v92.0.0"},
+		Type:       dep.Major,
+		NewVersion: "v93.0.0",
+		NewName:    "github.com/google/go-github/v93",
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		fe := NewCached(NewScanCache()).(manager.FileEditor)
+		out, err := fe.FileEdits(root, u)
+		if err != nil || len(out) != 1 {
+			b.Fatalf("FileEdits = %v, %v", out, err)
+		}
+	}
+}
