@@ -146,10 +146,20 @@ func lockOf(pkgs ...string) string {
 	return b.String()
 }
 
+// parsed is the registry packages of a lockfile written by lockOf.
+func parsed(t *testing.T, lock string) []lockedPackage {
+	t.Helper()
+	pkgs, err := registryPackages([]byte(lock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pkgs
+}
+
 func TestPrecise(t *testing.T) {
 	before := lockOf("anyhow@1.0.80", "serde@1.0.228", "rand@0.8.5", "git:gitcrate@1.0.0", "dup@1.0.0")
 	after := lockOf("anyhow@1.0.104", "serde@1.0.228", "rand@0.8.5", "rand@0.9.2", "git:gitcrate@2.0.0", "dup@1.5.0", "local@1.0.0")
-	pins, err := precise([]byte(before), []byte(after), []crateUpdate{
+	pins := precise(parsed(t, before), parsed(t, after), []crateUpdate{
 		{"anyhow", "1.0.102"}, // cargo resolved a newer, not yet locked version: pinned down
 		{"serde", "1.0.200"},  // 1.0.228 was locked before: never downgraded
 		{"rand", "0.9.2"},     // exact match
@@ -159,17 +169,11 @@ func TestPrecise(t *testing.T) {
 		{"dup", "1.2.0"},      // pinned once,
 		{"dup", "1.3.0"},      // a second target for the same entry is dropped
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	if got := fmt.Sprint(pins); got != "[{anyhow 1.0.104 1.0.102} {dup 1.5.0 1.2.0}]" {
 		t.Errorf("pins = %s", got)
 	}
-	if _, err := precise([]byte("[[package\n"), []byte(after), nil); err == nil {
-		t.Error("broken old lock accepted")
-	}
-	if _, err := precise([]byte(before), []byte("x = \"\n"), nil); err == nil {
-		t.Error("broken new lock accepted")
+	if _, err := registryPackages([]byte("[[package\n")); err == nil {
+		t.Error("broken lock accepted")
 	}
 }
 
@@ -353,8 +357,8 @@ fi
 	if out, err := (Locker{}).ProcessUpdates(t.Context(), dir, nil, map[string][]byte{}, ups, nil); out != nil || err != nil {
 		t.Errorf("without a lockfile: %v, %v", out, err)
 	}
-	if _, err := stale([]byte("[[package]\n"), nil, ups); err == nil {
-		t.Error("broken lock accepted")
+	if _, err := (Locker{}).ProcessUpdates(t.Context(), dir, nil, map[string][]byte{"Cargo.lock": []byte("[[package]\n")}, ups, nil); err == nil || !strings.HasPrefix(err.Error(), "Cargo.lock: ") {
+		t.Errorf("broken lock accepted: %v", err)
 	}
 	if err := pinStale(t.Context(), dir, dir, "", map[string][]byte{"Cargo.toml": []byte("[dependencies\n")}, ups); err == nil {
 		t.Error("unparsable manifest accepted")

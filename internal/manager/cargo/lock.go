@@ -179,14 +179,16 @@ func process(ctx context.Context, dir string, manifests, files map[string][]byte
 	if err != nil {
 		return nil, err
 	}
-	pins, err := precise(lock, out, updated)
+	old, err := registryPackages(lock)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", lockFile, err)
 	}
-	st, err := stale(lock, out, ups)
+	pkgs, err := registryPackages(out)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", lockFile, err)
 	}
+	pins := precise(old, pkgs, updated)
+	st := stale(old, pkgs, ups)
 	if len(st) > 0 {
 		if err := pinStale(ctx, base, dir, tc, manifests, st); err != nil {
 			return nil, err
@@ -204,12 +206,17 @@ func process(ctx context.Context, dir string, manifests, files map[string][]byte
 			continue
 		}
 		done = append(done, p)
-		if out, err = os.ReadFile(lockPath); err != nil {
+		// The commands before moved other crates too, so the lockfile is read again; it is
+		// parsed again only when they changed it.
+		next, err := os.ReadFile(lockPath)
+		if err != nil {
 			return nil, err
 		}
-		pkgs, err := registryPackages(out)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", lockFile, err)
+		if !bytes.Equal(next, out) {
+			out = next
+			if pkgs, err = registryPackages(out); err != nil {
+				return nil, fmt.Errorf("%s: %w", lockFile, err)
+			}
 		}
 		from, ok := lockedNow(pkgs, p)
 		if !ok {
@@ -370,16 +377,9 @@ func packagesOf(lock []byte, keep func(src string) bool) ([]lockedPackage, error
 // requirement is a full version: when no registry entry of the crate has that version and the
 // one in the same compatibility range (Cargo locks at most one) is newer and was not in the
 // lock before (cargo just resolved it), it is pinned down. A version that was already locked is
-// never downgraded.
-func precise(before, after []byte, updates []crateUpdate) ([]pin, error) {
-	old, err := registryPackages(before)
-	if err != nil {
-		return nil, err
-	}
-	pkgs, err := registryPackages(after)
-	if err != nil {
-		return nil, err
-	}
+// never downgraded. old and pkgs are the registry packages of the lockfile before and after
+// `cargo update --workspace`.
+func precise(old, pkgs []lockedPackage, updates []crateUpdate) []pin {
 	var pins []pin
 	for _, u := range updates {
 		want, err := semver.StrictNewVersion(u.version)
@@ -406,24 +406,17 @@ func precise(before, after []byte, updates []crateUpdate) ([]pin, error) {
 			pins = append(pins, pin{name: u.name, locked: newer, version: u.version})
 		}
 	}
-	return pins, nil
+	return pins
 }
 
 // stale returns the manifest updates cargo left alone, by manifest: the crate's registry
 // entries are the same before and after `cargo update --workspace`, its locked version is
 // still among them and older than NewVersion, and NewVersion is not locked. That happens when
-// the rewritten requirement still admits the locked version (`<0.10` → `<2.0`).
-func stale(before, after []byte, ups map[string][]dep.Update) (map[string][]dep.Update, error) {
+// the rewritten requirement still admits the locked version (`<0.10` → `<2.0`). old and pkgs
+// are the registry packages of the lockfile before and after the command.
+func stale(old, pkgs []lockedPackage, ups map[string][]dep.Update) map[string][]dep.Update {
 	if len(ups) == 0 {
-		return nil, nil
-	}
-	old, err := registryPackages(before)
-	if err != nil {
-		return nil, err
-	}
-	pkgs, err := registryPackages(after)
-	if err != nil {
-		return nil, err
+		return nil
 	}
 	of := func(pkgs []lockedPackage, name string) []lockedPackage {
 		return slices.DeleteFunc(slices.Clone(pkgs), func(p lockedPackage) bool { return p.name != name })
@@ -449,7 +442,7 @@ func stale(before, after []byte, ups map[string][]dep.Update) (map[string][]dep.
 			}
 		}
 	}
-	return out, nil
+	return out
 }
 
 // pinStale resolves the stale updates to their NewVersion: their requirements are written as
