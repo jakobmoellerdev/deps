@@ -17,7 +17,7 @@ var Doc = refdoc.Datasource{
 var RefsDoc = refdoc.Datasource{
 	Name:         RefsName,
 	NameForm:     "repository URL (`https://host/path`); the version is a branch, `HEAD` for the default branch, and the digest its commit (a version that is no branch is looked up as a tag: an action ref such as `@stable`)",
-	Endpoints:    "as `git-tags`, with `ref-prefix HEAD` and `ref-prefix refs/heads/` for the branch commits (the tag listing only when the version is no branch); releases are the tags, or under `nixpkgs` versioning the branches (the nix manager's NixOS/nixpkgs release branches and channels: `nixos-24.05` → `nixos-24.11`), from the same branch listing; no other dep lists branches for its releases",
+	Endpoints:    "as `git-tags`, with `ref-prefix refs/heads/<ref>` and `ref-prefix refs/tags/<ref>` for the commit of one ref (`ref-prefix HEAD` for the default branch), once per (repository, ref): a branch is resolved without listing every branch of the repository, and a branch wins over a tag of the same name. Releases are the tags, or under `nixpkgs` versioning the branches (the nix manager's NixOS/nixpkgs release branches and channels: `nixos-24.05` → `nixos-24.11`), listed with `ref-prefix HEAD` and `ref-prefix refs/heads/`; that listing then answers the refs on it without a request. No other dep lists branches for its releases",
 	Auth:         "as `git-tags`",
 	ReleaseTimes: "none: branch commits are not dated, so `minimumReleaseAge` never holds a digest update back",
 }

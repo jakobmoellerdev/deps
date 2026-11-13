@@ -49,6 +49,7 @@ type Lister struct {
 	times    datasource.Memo[string, time.Time]  // repository URL + "@" + tag, for tags not in the release lists
 	tags     datasource.Memo[string, *entry]     // repository URL -> tags
 	heads    datasource.Memo[string, *entry]     // repository URL -> branches and HEAD
+	refs     datasource.Memo[string, string]     // repository URL + "\x00" + ref -> its commit (see refCommit)
 	lists    datasource.Memo[string, *listEntry] // Gitea/Forgejo repository URL -> first page of releases
 	archived datasource.Memo[string, bool]       // repository URL -> archived (see Archived)
 
@@ -261,21 +262,81 @@ func (r Refs) Plan(deps []dep.Dep) { r.l.Plan(deps) }
 
 // Digest returns the commit of branch ref in d.Source (HEAD is the default branch), else of
 // the tag named ref (an action ref such as `@stable` may be either, as for GitHub's
-// commits/<ref>); neither is datasource.ErrVersionNotFound. The tags are listed only when ref
-// is no branch.
+// commits/<ref>); neither is datasource.ErrVersionNotFound.
+//
+// One ls-refs asks for `refs/heads/<ref>` and `refs/tags/<ref>` alone (see refCommit), instead
+// of downloading every branch of the repository — thousands of refs where bots or pull
+// requests leave branches behind — to find one of them. A branch listing another dep already
+// shared (a nixpkgs dep's releases, another ref of the same repository) answers without a
+// request instead, and so does a ref that cannot be a ref-prefix of its own; both keep the
+// branch-before-tag order the full listings had.
 func (r Refs) Digest(ctx context.Context, d dep.Dep, ref string) (string, error) {
+	repoURL := strings.TrimSuffix(d.Source, "/")
+	if _, listed := r.l.heads.Peek(repoURL); listed || !plainRef(ref) {
+		return r.digestOfListed(ctx, repoURL, ref)
+	}
+	commit, err := r.l.refCommit(ctx, repoURL, ref)
+	if err != nil {
+		return "", err
+	}
+	if commit == "" {
+		return "", fmt.Errorf("branch or tag %s %w", ref, datasource.ErrVersionNotFound)
+	}
+	return commit, nil
+}
+
+// digestOfListed answers from the branch listing of the repository, then from its tags.
+func (r Refs) digestOfListed(ctx context.Context, repoURL, ref string) (string, error) {
 	for _, heads := range [...]bool{true, false} {
-		e, err := r.l.get(ctx, d.Source, heads)
+		e, err := r.l.get(ctx, repoURL, heads)
 		if err != nil {
 			return "", err
 		}
-		for _, h := range e.tags {
-			if h.Name == ref {
-				return h.Commit, nil
-			}
+		if c := commitOf(e.tags, ref); c != "" {
+			return c, nil
 		}
 	}
 	return "", fmt.Errorf("branch or tag %s %w", ref, datasource.ErrVersionNotFound)
+}
+
+// plainRef reports whether ref can be asked for as a ref-prefix of its own: a ref name without
+// the characters git forbids in one, so that `refs/heads/<ref>` names at most that branch and
+// the request stays a well-formed pkt-line.
+func plainRef(ref string) bool {
+	if ref == "" || strings.HasPrefix(ref, "/") || strings.HasSuffix(ref, "/") || strings.Contains(ref, "//") || strings.Contains(ref, "..") {
+		return false
+	}
+	for i := range len(ref) {
+		switch c := ref[i]; {
+		case c <= ' ', c == 0x7f, c == '~', c == '^', c == ':', c == '?', c == '*', c == '[', c == '\\':
+			return false
+		}
+	}
+	return true
+}
+
+// refCommit returns the commit of the branch named ref in repoURL, else of the tag named ref
+// (peeled for an annotated tag), "" when the repository has neither; HEAD is the default
+// branch. One ls-refs restricted to those two refs answers it, once per repository and ref. A
+// server without protocol v2 advertises every ref whatever is asked for, so there it costs the
+// same as a listing.
+func (l *Lister) refCommit(ctx context.Context, repoURL, ref string) (string, error) {
+	return l.refs.Do(ctx, repoURL+"\x00"+ref, func() (string, error) {
+		refs, head, err := l.fetchRef(ctx, repoURL, ref)
+		if err != nil {
+			return "", err
+		}
+		if ref == "HEAD" {
+			return head, nil
+		}
+		// A branch wins over a tag of the same name, as the listings of Digest did.
+		for _, want := range [...]string{"refs/heads/" + ref, "refs/tags/" + ref} {
+			if c := commitOf(refs, want); c != "" {
+				return c, nil
+			}
+		}
+		return "", nil
+	})
 }
 
 // CommitTime implements datasource.CommitTimer: the committer date of commit in d.Source, via
@@ -697,38 +758,80 @@ type session struct {
 	triedHelper bool
 	head        string // commit of HEAD, set while parsing the refs
 	heads       bool   // list HEAD and branches (as Tags) instead of tags
+	ref         string // one ref: its branch and its tag, named in full (see refCommit)
+	protocol    string // "v0" or "v2", for the log
+}
+
+// newSession prepares a fetch of repoURL with the credentials of its host.
+func (l *Lister) newSession(repoURL string) (*session, error) {
+	u, err := url.Parse(repoURL)
+	if err != nil {
+		return nil, fmt.Errorf("ls-refs %s: %w", repoURL, err)
+	}
+	s := &session{l: l, url: repoURL, host: u.Host, protocol: "v0"}
+	s.user, s.pass, s.hasCreds = l.auth.Static(u.Hostname())
+	return s, nil
+}
+
+// run asks the server for the session's refs: ls-refs on a protocol v2 server, else the refs
+// its v0 advertisement carries anyway.
+func (s *session) run(ctx context.Context) ([]Tag, error) {
+	tags, caps, err := s.advertisement(ctx)
+	if err != nil || caps == nil {
+		return tags, err
+	}
+	s.protocol = "v2"
+	return s.lsRefs(ctx, caps)
 }
 
 func (l *Lister) fetch(ctx context.Context, repoURL string, heads bool) (tags []Tag, head string, err error) {
-	u, err := url.Parse(repoURL)
+	s, err := l.newSession(repoURL)
 	if err != nil {
-		return nil, "", fmt.Errorf("ls-refs %s: %w", repoURL, err)
+		return nil, "", err
 	}
-	start, protocol := time.Now(), "v0"
-	s := &session{l: l, url: repoURL, host: u.Host, heads: heads}
+	s.heads = heads
+	start := time.Now()
 	defer func() {
 		if heads {
-			slog.DebugContext(ctx, "branches listed", "repo", repoURL, "protocol", protocol, "refs", len(tags), "duration", time.Since(start), "err", err)
+			slog.DebugContext(ctx, "branches listed", "repo", repoURL, "protocol", s.protocol, "refs", len(tags), "duration", time.Since(start), "err", err)
 			return
 		}
-		slog.DebugContext(ctx, "tags listed", "repo", repoURL, "protocol", protocol, "tags", len(tags), "head", s.head, "duration", time.Since(start), "err", err)
+		slog.DebugContext(ctx, "tags listed", "repo", repoURL, "protocol", s.protocol, "tags", len(tags), "head", s.head, "duration", time.Since(start), "err", err)
 	}()
-	s.user, s.pass, s.hasCreds = l.auth.Static(u.Hostname())
-
-	tags, caps, err := s.advertisement(ctx)
-	if err == nil && caps != nil {
-		protocol = "v2"
-		tags, err = s.lsRefs(ctx, caps)
-	}
+	tags, err = s.run(ctx)
 	if err != nil {
 		s.head = ""
 	}
 	return tags, s.head, err
 }
 
+// fetchRef asks for the branch and the tag named ref alone (HEAD for the default branch); the
+// refs come back under their full names.
+func (l *Lister) fetchRef(ctx context.Context, repoURL, ref string) (refs []Tag, head string, err error) {
+	s, err := l.newSession(repoURL)
+	if err != nil {
+		return nil, "", err
+	}
+	s.ref = ref
+	start := time.Now()
+	defer func() {
+		slog.DebugContext(ctx, "ref resolved", "repo", repoURL, "ref", ref, "protocol", s.protocol, "refs", len(refs), "duration", time.Since(start), "err", err)
+	}()
+	refs, err = s.run(ctx)
+	if err != nil {
+		s.head = ""
+	}
+	return refs, s.head, err
+}
+
 // refName returns the offset of the name in ref when the session lists it: after refs/tags/,
-// or with heads after refs/heads/, and HEAD whole.
+// or with heads after refs/heads/, and HEAD whole. A session for one ref keeps the full names
+// of its branch and its tag, which tell the two apart (a peeled `^{}` line included).
 func (s *session) refName(ref string) (int, bool) {
+	if s.ref != "" {
+		name := strings.TrimSuffix(ref, "^{}")
+		return 0, name == "refs/heads/"+s.ref || name == "refs/tags/"+s.ref
+	}
 	prefix := "refs/tags/"
 	if s.heads {
 		if ref == "HEAD" {
@@ -850,7 +953,8 @@ func setCommit(tags []Tag, name []byte, commit string) {
 }
 
 // lsRefs runs the protocol v2 ls-refs command restricted to tags and HEAD (HEAD's commit is
-// recorded in s.head), or with heads to HEAD and branches.
+// recorded in s.head), with heads to HEAD and branches, or for one ref (s.ref) to its branch
+// and its tag alone.
 func (s *session) lsRefs(ctx context.Context, caps *v2caps) ([]Tag, error) {
 	body := make([]byte, 0, 128)
 	body = appendPkt(body, "command=ls-refs\n")
@@ -862,10 +966,16 @@ func (s *session) lsRefs(ctx context.Context, caps *v2caps) ([]Tag, error) {
 	}
 	body = append(body, "0001"...)
 	body = appendPkt(body, "peel\n")
-	if s.heads {
+	switch {
+	case s.ref == "HEAD":
+		body = appendPkt(body, "ref-prefix HEAD\n")
+	case s.ref != "":
+		body = appendPkt(body, "ref-prefix refs/heads/"+s.ref+"\n")
+		body = appendPkt(body, "ref-prefix refs/tags/"+s.ref+"\n")
+	case s.heads:
 		body = appendPkt(body, "ref-prefix HEAD\n")
 		body = appendPkt(body, "ref-prefix refs/heads/\n")
-	} else {
+	default:
 		body = appendPkt(body, "ref-prefix refs/tags/\n")
 		body = appendPkt(body, "ref-prefix HEAD\n")
 	}

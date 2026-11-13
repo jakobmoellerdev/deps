@@ -525,6 +525,32 @@ func TestTagsCanceledWaitingForSlot(t *testing.T) {
 	})
 }
 
+// refTable is a repository's refs, as a server honoring ref-prefix answers them.
+var refTable = []string{
+	"1111111111111111111111111111111111111111 HEAD\n",
+	"1111111111111111111111111111111111111111 refs/heads/main\n",
+	"2222222222222222222222222222222222222222 refs/heads/release/1.x\n",
+	"3333333333333333333333333333333333333333 refs/tags/main\n",
+	"4444444444444444444444444444444444444444 refs/tags/stable\n",
+}
+
+// lsRefsOf answers an ls-refs body with the refs of refTable its ref-prefix lines cover, as
+// a server does: a prefix matches by string prefix.
+func lsRefsOf(body string) string {
+	var out []string
+	for _, line := range refTable {
+		_, ref, _ := strings.Cut(strings.TrimSuffix(line, "\n"), " ")
+		for _, p := range strings.Split(body, "ref-prefix ")[1:] {
+			prefix, _, _ := strings.Cut(p, "\n")
+			if strings.HasPrefix(ref, prefix) {
+				out = append(out, line)
+				break
+			}
+		}
+	}
+	return pkts(append(out, "0000")...)
+}
+
 func TestRefsDigestV2(t *testing.T) {
 	var bodies []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -534,43 +560,39 @@ func TestRefsDigestV2(t *testing.T) {
 		}
 		body, _ := io.ReadAll(r.Body)
 		bodies = append(bodies, string(body))
-		if strings.Contains(string(body), "ref-prefix refs/tags/") {
-			io.WriteString(w, pkts("3333333333333333333333333333333333333333 refs/tags/main\n", "4444444444444444444444444444444444444444 refs/tags/stable\n", "0000"))
-			return
-		}
-		io.WriteString(w, pkts(
-			"1111111111111111111111111111111111111111 HEAD\n",
-			"1111111111111111111111111111111111111111 refs/heads/main\n",
-			"2222222222222222222222222222222222222222 refs/heads/release/1.x\n",
-			"0000"))
+		io.WriteString(w, lsRefsOf(string(body)))
 	}))
 	defer srv.Close()
 	refs := newLister(t, srv, nil).Refs()
 	d := dep.Dep{Source: srv.URL + "/a/b"}
-	for ref, want := range map[string]string{
-		"HEAD":        "1111111111111111111111111111111111111111",
-		"release/1.x": "2222222222222222222222222222222222222222",
+	for _, tt := range []struct{ ref, want string }{
+		{"HEAD", "1111111111111111111111111111111111111111"},
+		{"release/1.x", "2222222222222222222222222222222222222222"},
+		// A ref that is no branch is answered by its tag.
+		{"stable", "4444444444444444444444444444444444444444"},
+		// A ref that is both keeps the branch, as a branch listing before a tag listing did.
+		{"main", "1111111111111111111111111111111111111111"},
 	} {
-		if got, err := refs.Digest(t.Context(), d, ref); err != nil || got != want {
-			t.Errorf("Digest(%s) = %q, %v; want %q", ref, got, err, want)
+		if got, err := refs.Digest(t.Context(), d, tt.ref); err != nil || got != tt.want {
+			t.Errorf("Digest(%s) = %q, %v; want %q", tt.ref, got, err, tt.want)
 		}
 	}
 	if _, err := refs.Digest(t.Context(), d, "gone"); !errors.Is(err, datasource.ErrVersionNotFound) || err.Error() != "branch or tag gone not found upstream" {
 		t.Errorf("Digest(gone) err = %v", err)
 	}
-	// A ref that is no branch is looked up among the tags.
-	if got, err := refs.Digest(t.Context(), d, "stable"); err != nil || got != "4444444444444444444444444444444444444444" {
-		t.Errorf("Digest(stable) = %q, %v; want the tag", got, err)
-	}
-	// Branches and tags are separate listings; the branches were listed once.
 	if got, err := refs.Digest(t.Context(), d, "main"); err != nil || got != "1111111111111111111111111111111111111111" {
-		t.Errorf("Digest(main) = %q, %v; want the branch, not the tag", got, err)
+		t.Errorf("Digest(main) again = %q, %v; want the shared answer", got, err)
 	}
 	if rels, err := refs.Releases(t.Context(), d, ""); err != nil || len(rels) != 2 || rels[0].Version != "main" {
 		t.Errorf("Releases = %+v, %v; want the tags", rels, err)
 	}
+	// Each ref is asked for on its own, once, and no listing of every branch is fetched.
 	want := []string{
-		pkts("command=ls-refs\n", "0001", "peel\n", "ref-prefix HEAD\n", "ref-prefix refs/heads/\n", "0000"),
+		pkts("command=ls-refs\n", "0001", "peel\n", "ref-prefix HEAD\n", "0000"),
+		pkts("command=ls-refs\n", "0001", "peel\n", "ref-prefix refs/heads/release/1.x\n", "ref-prefix refs/tags/release/1.x\n", "0000"),
+		pkts("command=ls-refs\n", "0001", "peel\n", "ref-prefix refs/heads/stable\n", "ref-prefix refs/tags/stable\n", "0000"),
+		pkts("command=ls-refs\n", "0001", "peel\n", "ref-prefix refs/heads/main\n", "ref-prefix refs/tags/main\n", "0000"),
+		pkts("command=ls-refs\n", "0001", "peel\n", "ref-prefix refs/heads/gone\n", "ref-prefix refs/tags/gone\n", "0000"),
 		pkts("command=ls-refs\n", "0001", "peel\n", "ref-prefix refs/tags/\n", "ref-prefix HEAD\n", "0000"),
 	}
 	if !reflect.DeepEqual(bodies, want) {
