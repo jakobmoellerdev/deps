@@ -390,8 +390,11 @@ func (l *Lister) ReleaseTime(ctx context.Context, d dep.Dep, version string) (ti
 			t, complete = rel.Published, listed || gl.Complete()
 		})
 		switch {
-		case errors.Is(err, githubapi.ErrNotFound):
-			return time.Time{}, nil // the repository is not visible to the API
+		case githubapi.Unreadable(err):
+			// The repository is not visible to the API, or its organization refuses these
+			// credentials (an IP allow list): the release time stays unknown, as the version
+			// itself was listed over git.
+			return time.Time{}, nil
 		case err != nil || !t.IsZero():
 			return t, err
 		}

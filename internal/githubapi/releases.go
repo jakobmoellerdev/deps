@@ -258,11 +258,11 @@ const releaseQuery = `query($owner:String!,$name:String!,$tag:String!){repositor
 	`release(tagName:$tag){isDraft publishedAt}}}`
 
 // ReleaseTime looks up the publication time of the release of tag directly, for tags missing
-// from a list that is not Complete. A missing repository or release, or a draft, is zero.
-// Callers dedupe.
+// from a list that is not Complete. A missing repository or release, a draft, and a
+// repository the credentials may not read, are zero. Callers dedupe.
 func (c *Client) ReleaseTime(ctx context.Context, r Repo, tag string) (time.Time, error) {
 	t, err := c.releaseTime(ctx, r, tag)
-	if errors.Is(err, ErrNotFound) {
+	if Unreadable(err) {
 		return time.Time{}, nil
 	}
 	if err != nil {

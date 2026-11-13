@@ -35,8 +35,10 @@ func TestReleaseTime(t *testing.T) {
 			sha("e") + " refs/tags/v5\n", sha("f") + " refs/tags/v5^{}\n",
 		},
 		"/big/repo": {sha("1") + " refs/tags/v2.0.0\n", sha("2") + " refs/tags/v1.0.0\n", sha("1") + " refs/tags/v4\n"},
-		"/o/r.git":  {sha("3") + " refs/tags/v1.0.0\n", sha("3") + " refs/tags/latest\n", sha("4") + " refs/tags/v9\n"},
-		"/o/full":   {sha("5") + " refs/tags/old\n", sha("6") + " refs/tags/draft\n", sha("7") + " refs/tags/no-release\n"},
+		// An organization IP allow list refuses every credentialed API request for this one.
+		"/blocked/repo": {sha("8") + " refs/tags/v1.0.0\n"},
+		"/o/r.git":      {sha("3") + " refs/tags/v1.0.0\n", sha("3") + " refs/tags/latest\n", sha("4") + " refs/tags/v9\n"},
+		"/o/full":       {sha("5") + " refs/tags/old\n", sha("6") + " refs/tags/draft\n", sha("7") + " refs/tags/no-release\n"},
 	}
 	// o/full returns a full page (giteaListSize items), so tags missing from it fall back.
 	var full strings.Builder
@@ -73,6 +75,8 @@ func TestReleaseTime(t *testing.T) {
 			case repo == "lim/repo":
 				w.Header().Set("X-RateLimit-Reset", "1793707200")
 				io.WriteString(w, `{"errors":[{"type":"RATE_LIMITED","message":"API rate limit exceeded"}]}`)
+			case repo == "blocked/repo": // untyped FORBIDDEN of an organization IP allow list
+				io.WriteString(w, `{"errors":[{"message":"Although you appear to have the correct authorization credentials, the `+"`blocked`"+` organization has an IP allow list enabled, and your IP address is not permitted to access this resource."}]}`)
 			case v["ref"] == "refs/tags/v6.0.0": // lightweight tag: the commit date
 				io.WriteString(w, `{"data":{"repository":{"ref":{"target":{"committedDate":"2026-09-01T00:00:00Z"}}}}}`)
 			case v["ref"] == "refs/tags/v5": // annotated tag: the tagger date
@@ -149,6 +153,8 @@ func TestReleaseTime(t *testing.T) {
 		{source: "https://github.com/big/repo", tag: "v4", want: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)}, // no release: v2.0.0's commit
 		{source: "https://github.com/gone/repo", tag: "v1"},                                                     // NOT_FOUND: unknown
 		{source: "https://github.com/lim/repo", tag: "v1", wantErr: "rate limited by github.com until 2026-11-03T12:00:00Z"},
+		// The releases are refused, the tag was listed over git: unknown, not an error.
+		{source: "https://github.com/blocked/repo", tag: "v1.0.0"},
 		{source: srv.URL + "/o/r.git", tag: "sub/v1 1", want: when},
 		{source: srv.URL + "/o/r.git", tag: "latest", want: time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC)}, // v1.0.0's commit
 		{source: srv.URL + "/o/r.git", tag: "v9", want: time.Date(2026, 9, 15, 8, 0, 0, 0, time.UTC)},      // tag date
@@ -189,6 +195,7 @@ func TestReleaseTime(t *testing.T) {
 		"Bearer gh-tok /graphql big/repo v4",
 		"Bearer gh-tok /graphql gone/repo ",
 		"Bearer gh-tok /graphql lim/repo ",
+		"Bearer gh-tok /graphql blocked/repo ", // once: the refusal is cached, no tag lookup follows
 		"token gitea-tok /api/v1/repos/o/r/releases?limit=50",
 		"token gitea-tok /api/v1/repos/o/r/tags/v9",
 		"token gitea-tok /api/v1/repos/o/full/releases?limit=50",

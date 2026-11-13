@@ -30,6 +30,22 @@ import (
 // not visible with the credentials used: REST 404 or GraphQL NOT_FOUND.
 var ErrNotFound = errors.New("not found")
 
+// ErrForbidden is wrapped by errors for a repository that exists but whose data the
+// credentials used may not read, and that another token would not fix: a REST 403 or a
+// GraphQL FORBIDDEN that is no rate limit. A GitHub organization with an IP allow list
+// refuses every credentialed request from an address that is not on the list this way, for
+// its public repositories as well (anonymous requests for them still succeed).
+var ErrForbidden = errors.New("forbidden")
+
+// Unreadable reports whether err means the API does not show a repository's data with the
+// credentials used (ErrNotFound) or refuses to (ErrForbidden). Callers whose data is optional
+// — release times, whether a repository is archived — then leave it unknown instead of
+// failing the run; a caller that needs the data (the versions of github-releases) still
+// fails, so a pin that stopped moving stays visible.
+func Unreadable(err error) bool {
+	return errors.Is(err, ErrNotFound) || errors.Is(err, ErrForbidden)
+}
+
 // Repo is a GitHub repository. Host is "github.com" for the public instance, else a GitHub
 // Enterprise Server host (with an optional port) whose API is served by the host itself.
 type Repo struct {
@@ -170,12 +186,15 @@ func (c *Client) restDo(ctx context.Context, r Repo, path string, logRate bool, 
 	return decode(resp.Body)
 }
 
-// statusError describes a non-2xx REST or GraphQL response: a 404 wraps ErrNotFound and a
-// rate limit (a 429, or a 403 with an exhausted quota or Retry-After) wraps
-// httpx.ErrRateLimited, naming its host and reset time.
+// statusError describes a non-2xx REST or GraphQL response: a 404 wraps ErrNotFound, a rate
+// limit (a 429, or a 403 with an exhausted quota or Retry-After) wraps httpx.ErrRateLimited,
+// naming its host and reset time, and any other 403 wraps ErrForbidden.
 func statusError(resp *http.Response) error {
-	if resp.StatusCode == http.StatusNotFound {
+	switch {
+	case resp.StatusCode == http.StatusNotFound:
 		return fmt.Errorf("HTTP %d: %w", resp.StatusCode, ErrNotFound)
+	case resp.StatusCode == http.StatusForbidden && httpx.LimitError(resp) == nil:
+		return fmt.Errorf("HTTP %d: %w", resp.StatusCode, ErrForbidden)
 	}
 	return httpx.ResponseError(resp)
 }
@@ -233,13 +252,19 @@ func graphql[T any](ctx context.Context, c *Client, r Repo, query string, vars m
 	return nil
 }
 
+// gqlErr classifies the `errors` array of a 200 answer: NOT_FOUND wraps ErrNotFound,
+// RATE_LIMITED wraps httpx.ErrRateLimited and FORBIDDEN wraps ErrForbidden. An organization
+// IP allow list refuses a query in this array rather than with a status, and its message is
+// matched as well because GitHub does not always type that error.
 func gqlErr(resp *http.Response, r Repo, errs []gqlError) error {
 	for _, e := range errs {
-		switch e.Type {
-		case "NOT_FOUND":
+		switch {
+		case e.Type == "NOT_FOUND":
 			return fmt.Errorf("%s: %w", e.Message, ErrNotFound)
-		case "RATE_LIMITED":
+		case e.Type == "RATE_LIMITED":
 			return fmt.Errorf("%w by %s until %s: %s", httpx.ErrRateLimited, r.hostname(), resetTime(resp.Header.Get("X-RateLimit-Reset")), e.Message)
+		case e.Type == "FORBIDDEN" || strings.Contains(e.Message, "IP allow list"):
+			return fmt.Errorf("%s: %w", e.Message, ErrForbidden)
 		}
 	}
 	msgs := make([]string, len(errs))

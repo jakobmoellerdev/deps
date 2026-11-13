@@ -3,7 +3,6 @@ package githubapi
 import (
 	"context"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -23,7 +22,7 @@ const (
 // tag or commit is zero. Callers dedupe.
 func (c *Client) TagTime(ctx context.Context, r Repo, tag, commit string) (time.Time, error) {
 	t, err := c.tagTime(ctx, r, tag, commit)
-	if errors.Is(err, ErrNotFound) {
+	if Unreadable(err) {
 		return time.Time{}, nil
 	}
 	if err != nil {
@@ -74,7 +73,7 @@ func (c *Client) tagTime(ctx context.Context, r Repo, tag, commit string) (time.
 // (`/git/commits/<sha>`). A missing repository or commit is zero. Callers dedupe.
 func (c *Client) CommitTime(ctx context.Context, r Repo, commit string) (time.Time, error) {
 	t, err := c.commitTime(ctx, r, commit)
-	if errors.Is(err, ErrNotFound) {
+	if Unreadable(err) {
 		return time.Time{}, nil
 	}
 	if err != nil {

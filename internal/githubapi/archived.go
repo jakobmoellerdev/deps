@@ -2,7 +2,6 @@ package githubapi
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -55,8 +54,9 @@ func (c *Client) archived(ctx context.Context, repos []Repo, out map[Repo]bool) 
 	var data map[string]*struct {
 		IsArchived bool `json:"isArchived"`
 	}
-	// A repository the API does not show is null with a NOT_FOUND error; the others answer.
-	if err := graphql(ctx, c, repos[0], q.String(), vars, &data); err != nil && !errors.Is(err, ErrNotFound) {
+	// A repository the API does not show is null with a NOT_FOUND error, and an organization
+	// that refuses the credentials (IP allow list) with a FORBIDDEN one; the others answer.
+	if err := graphql(ctx, c, repos[0], q.String(), vars, &data); err != nil && !Unreadable(err) {
 		return err
 	}
 	for i, r := range repos {

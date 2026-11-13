@@ -162,6 +162,14 @@ func TestGraphQLErrors(t *testing.T) {
 			_, _ = io.WriteString(w, `{"errors":[{"type":"RATE_LIMITED","message":"API rate limit exceeded for user ID 1."}]}`)
 		case "other":
 			_, _ = io.WriteString(w, `{"errors":[{"message":"Field 'x' doesn't exist"},{"type":"INTERNAL","message":"boom"}]}`)
+		case "forbidden":
+			_, _ = io.WriteString(w, `{"errors":[{"type":"FORBIDDEN","message":"Resource not accessible by integration"}]}`)
+		// An organization IP allow list refuses the query in the errors array of a 200, and
+		// GitHub does not type that error.
+		case "allowlist":
+			_, _ = io.WriteString(w, `{"errors":[{"message":"Although you appear to have the correct authorization credentials, the `+"`o`"+` organization has an IP allow list enabled, and your IP address is not permitted to access this resource."}]}`)
+		case "blocked":
+			w.WriteHeader(http.StatusForbidden)
 		case "unauthorized":
 			w.WriteHeader(http.StatusUnauthorized)
 		case "exhausted":
@@ -173,13 +181,15 @@ func TestGraphQLErrors(t *testing.T) {
 		}
 	})
 	for name, want := range map[string]string{
-		"missing":      "releases o/missing: Could not resolve to a Repository with the name 'o/missing'.: not found",
-		"null":         "releases o/null: repository: not found",
-		"limited":      "releases o/limited: rate limited by github.com until 2026-11-03T12:00:00Z: API rate limit exceeded for user ID 1.",
-		"other":        "releases o/other: graphql: Field 'x' doesn't exist; boom",
-		"unauthorized": "releases o/unauthorized: HTTP 401",
-		"exhausted":    "releases o/exhausted: HTTP 403: rate limited by 127.0.0.1 until 2026-11-03T12:00:00Z",
-		"html":         "releases o/html: malformed response: jsontext: invalid character '<' at start of value",
+		"missing":   "releases o/missing: Could not resolve to a Repository with the name 'o/missing'.: not found",
+		"null":      "releases o/null: repository: not found",
+		"limited":   "releases o/limited: rate limited by github.com until 2026-11-03T12:00:00Z: API rate limit exceeded for user ID 1.",
+		"other":     "releases o/other: graphql: Field 'x' doesn't exist; boom",
+		"forbidden": "releases o/forbidden: Resource not accessible by integration: forbidden",
+		"allowlist": "releases o/allowlist: Although you appear to have the correct authorization credentials, the `o` organization has an IP allow list enabled, and your IP address is not permitted to access this resource.: forbidden",
+		"blocked":   "releases o/blocked: HTTP 403: forbidden",
+		"exhausted": "releases o/exhausted: HTTP 403: rate limited by 127.0.0.1 until 2026-11-03T12:00:00Z",
+		"html":      "releases o/html: malformed response: jsontext: invalid character '<' at start of value",
 	} {
 		r := Repo{Scheme: "https", Host: "github.com", Owner: "o", Name: name}
 		for range 2 { // a failed list stays failed for the run
@@ -187,7 +197,8 @@ func TestGraphQLErrors(t *testing.T) {
 			if err == nil || !strings.HasPrefix(err.Error(), want) {
 				t.Errorf("%s: err = %v, want %q", name, err, want)
 			}
-			if errors.Is(err, ErrNotFound) != (name == "missing" || name == "null") || errors.Is(err, httpx.ErrRateLimited) != (name == "limited" || name == "exhausted") {
+			if errors.Is(err, ErrNotFound) != (name == "missing" || name == "null") || errors.Is(err, httpx.ErrRateLimited) != (name == "limited" || name == "exhausted") ||
+				errors.Is(err, ErrForbidden) != (name == "forbidden" || name == "allowlist" || name == "blocked") {
 				t.Errorf("%s: error kind of %v", name, err)
 			}
 		}
