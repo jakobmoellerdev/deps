@@ -26,6 +26,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/datasource"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/httpx"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/versioning"
 )
 
 // Name is the datasource name (Renovate's).
@@ -42,6 +43,10 @@ const CredentialsEnv = "NuGetPackageSourceCredentials_"
 // errNotFound marks a feed that does not have the package (HTTP 404).
 var errNotFound = errors.New("not found")
 
+// scheme orders NuGet versions: the bounds of a registration page against the version a dep
+// updates from (see floor).
+var scheme, _ = versioning.Get("nuget")
+
 // Source is the nuget datasource.
 type Source struct {
 	getter httpx.Getter
@@ -49,10 +54,13 @@ type Source struct {
 	def    string // the default feed's service index
 
 	services datasource.Memo[string, *service] // by feed.id
-	pkgs     datasource.Memo[string, *pkg]     // by feed.id + "\x00" + lower-case id
-	merged   datasource.Memo[string, *pkg]     // by lower-case id + the feed.id of every feed
+	pkgs     datasource.Memo[string, *pkg]     // by feed.id + "\x00" + lower-case id + "\x00" + floor
+	merged   datasource.Memo[string, *pkg]     // by lower-case id + floor + the feed.id of every feed
 	repos    datasource.Memo[string, string]   // by feed.id + "\x00" + lower-case id + "\x00" + version
 	creds    configCreds                       // nuget.config packageSourceCredentials
+
+	mu     sync.Mutex
+	floors map[string]string // lower-case id → lowest planned version, "" = unbounded
 }
 
 // feed is one package source of a dep: its nuget.config key ("" when none), URL and the
@@ -93,6 +101,62 @@ type pkg struct {
 // supplies DEPS_NUGET_URL and the NuGetPackageSourceCredentials_<key> credentials of feeds.
 func New(client *http.Client, sem chan struct{}, getenv func(string) string) *Source {
 	return &Source{getter: httpx.Getter{Client: client, Sem: sem}, getenv: getenv, def: cmp.Or(getenv("DEPS_NUGET_URL"), DefaultURL)}
+}
+
+// Plan implements datasource.Planner: it records the lowest version the deps of a package
+// update from, which bounds the registration pages its listing needs (see fetch). A dep whose
+// version is no NuGet version (a range, a floating version) leaves the package unbounded.
+func (s *Source) Plan(deps []dep.Dep) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.floors == nil {
+		s.floors = make(map[string]string, len(deps))
+	}
+	for _, d := range deps {
+		id := strings.ToLower(d.Name)
+		v := d.Version
+		if !scheme.Valid(v) {
+			v = ""
+		}
+		if cur, ok := s.floors[id]; ok {
+			v = lowest(cur, v)
+		}
+		s.floors[id] = v
+	}
+}
+
+// floor returns the lowest version a listing of id has to reach: the lowest planned version
+// of the package (see Plan) and version, the one this dep updates from. "" is unbounded: every
+// page of the registration is read, as without a plan. It is part of the memo keys of the
+// listing, so a dep that asks about an older version than the plan knew gets its own listing
+// instead of a short one.
+func (s *Source) floor(id, version string) string {
+	if !scheme.Valid(version) {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if planned, ok := s.floors[id]; ok {
+		return lowest(planned, version)
+	}
+	return version
+}
+
+// lowest returns the lower of two version floors; "" (no usable version) is the lowest of all.
+func lowest(a, b string) string {
+	switch {
+	case a == "" || b == "":
+		return ""
+	case scheme.Compare(a, b) <= 0:
+		return a
+	}
+	return b
+}
+
+// below reports whether a registration page ending at upper lies entirely under floor. An
+// unbounded floor, a page without an `upper` and a bound neither side can order keep the page.
+func below(upper, floor string) bool {
+	return floor != "" && scheme.Valid(upper) && scheme.Compare(upper, floor) < 0
 }
 
 // Releases lists every listed version of d on its feeds (d.Source, see feeds; "" = nuget.org),
@@ -199,12 +263,16 @@ func v3(u string) bool {
 	return strings.HasSuffix(strings.ToLower(u), ".json")
 }
 
-// lookup returns the listing of d's package merged over its feeds.
+// lookup returns the listing of d's package merged over its feeds, down to the version d
+// updates from (see floor).
 func (s *Source) lookup(ctx context.Context, d dep.Dep) (*pkg, error) {
 	id := strings.ToLower(d.Name)
 	feeds := s.feeds(d)
+	floor := s.floor(id, d.Version)
 	var key strings.Builder
 	key.WriteString(id)
+	key.WriteByte(0)
+	key.WriteString(floor)
 	for _, f := range feeds {
 		key.WriteByte(0)
 		key.WriteString(f.id())
@@ -225,7 +293,7 @@ func (s *Source) lookup(ctx context.Context, d dep.Dep) (*pkg, error) {
 				continue
 			}
 			wg.Go(func() {
-				pkgs[i], errs[i] = s.pkgs.Do(ctx, f.id()+"\x00"+id, func() (*pkg, error) { return s.fetch(ctx, f, id) })
+				pkgs[i], errs[i] = s.pkgs.Do(ctx, f.id()+"\x00"+id+"\x00"+floor, func() (*pkg, error) { return s.fetch(ctx, f, id, floor) })
 			})
 		}
 		wg.Wait()
@@ -310,6 +378,7 @@ type registration struct {
 
 type page struct {
 	ID    string `json:"@id"`
+	Upper string `json:"upper"` // the highest version on the page
 	Items []leaf `json:"items"` // nil = not inlined: GET the page
 }
 
@@ -325,14 +394,21 @@ type leaf struct {
 // fetch lists id (lower-case) on f: through the registration index
 // (`<registration>/<id>/index.json`, pages not inlined fetched concurrently), else through the
 // flat container (`<flat>/<id>/index.json`, versions only).
-func (s *Source) fetch(ctx context.Context, f feed, id string) (p *pkg, err error) {
+//
+// A page that is not inlined and ends (`upper`) below floor is not fetched: every version on
+// it is older than the one the deps of the package update from, so it can hold no update and
+// no release time of theirs (see floor). Inlined pages are kept whole, so the listing of a
+// package whose registration index inlines its items — on nuget.org every package with up to
+// 128 versions — is the same as without a floor.
+func (s *Source) fetch(ctx context.Context, f feed, id, floor string) (p *pkg, err error) {
 	start := time.Now()
+	skipped := 0
 	defer func() {
 		n := 0
 		if p != nil {
 			n = len(p.rels)
 		}
-		slog.DebugContext(ctx, "nuget package fetched", "name", id, "feed", httpx.Redact(f.url), "versions", n, "duration", time.Since(start), "err", err)
+		slog.DebugContext(ctx, "nuget package fetched", "name", id, "feed", httpx.Redact(f.url), "versions", n, "floor", floor, "pagesSkipped", skipped, "duration", time.Since(start), "err", err)
 	}()
 	svc, err := s.service(ctx, f)
 	if err != nil {
@@ -352,6 +428,10 @@ func (s *Source) fetch(ctx context.Context, f feed, id string) (p *pkg, err erro
 	errs := make([]error, len(pages))
 	for i := range pages {
 		if pages[i].Items != nil {
+			continue
+		}
+		if below(pages[i].Upper, floor) {
+			skipped++
 			continue
 		}
 		wg.Go(func() {
