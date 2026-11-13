@@ -616,6 +616,57 @@ func TestResolveSkipsMajorsOlderThanCurrent(t *testing.T) {
 	}
 }
 
+// lockedCrate lists a cargo crate whose legacy major 2.0.0 predates the locked 1.0.150, and
+// counts the versions whose release time was asked. The range text ("1.0") is no release:
+// its time is unknown, as a registry answers for a version it does not have.
+type lockedCrate struct{ asked map[string]int }
+
+func (lockedCrate) Releases(context.Context, dep.Dep, string) ([]Release, error) {
+	return []Release{{Version: "1.0.150"}, {Version: "2.0.0"}}, nil
+}
+
+func (lockedCrate) Digest(context.Context, dep.Dep, string) (string, error) { return "", nil }
+
+func (c lockedCrate) ReleaseTime(_ context.Context, _ dep.Dep, v string) (time.Time, error) {
+	c.asked[v]++
+	switch v {
+	case "1.0.150":
+		return time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), nil
+	case "2.0.0":
+		return time.Date(2019, 1, 1, 0, 0, 0, 0, time.UTC), nil
+	}
+	return time.Time{}, nil // unknown, as for the range text
+}
+
+// A range dep is aged against the version installed (its locked one), not against the range's
+// bare version, which no release carries: the legacy major 2.0.0 of `serde = "^1.0"` locked at
+// 1.0.150 is older than what is installed, so it is no upgrade.
+func TestResolveSkipsMajorsOlderThanLocked(t *testing.T) {
+	ds := lockedCrate{asked: map[string]int{}}
+	m := stubManager{name: "cargo", deps: []dep.Dep{
+		{Datasource: "crate", Versioning: "cargo", Name: "serde", Version: "1.0", Range: "^1.0", Locked: "1.0.150", Line: 1},
+	}}
+	root, cfg := setup(t, "", map[string]string{"stub.txt": "1.0\n"})
+	var tr Trace
+	res, err := Resolve(t.Context(), root, cfg, env, Options{
+		Managers:    []manager.Manager{m},
+		Datasources: map[string]Datasource{"crate": ds},
+		Trace:       func(x Trace) { tr = x },
+	})
+	if err != nil || len(res.Errors) > 0 {
+		t.Fatalf("err = %v, errors = %v", err, res.Errors)
+	}
+	if len(res.Updates) != 0 {
+		t.Fatalf("updates = %+v, want none: 2.0.0 is older than the locked 1.0.150", res.Updates)
+	}
+	if !slices.Equal(tr.Rejected[reasonOlder], []string{"2.0.0"}) {
+		t.Errorf("rejected = %v, want 2.0.0 %q", tr.Rejected, reasonOlder)
+	}
+	if n := ds.asked["1.0"]; n != 0 {
+		t.Errorf("release time of the range text asked %d times", n)
+	}
+}
+
 // movingMajors lists two floating majors whose times are those of their current content, the
 // older major last (rebuilt docker images; git tags moved by a backport release), and counts
 // the release-time lookups.

@@ -2201,14 +2201,16 @@ func (r *resolver) prefetchPaths(name string, versions []string) {
 	wg.Wait()
 }
 
-// olderThanCurrent reports whether candidate was released before the current version; false
-// when either time is unknown.
+// olderThanCurrent reports whether candidate was released before the version installed (the
+// locked one when known, as applyAge uses it): a range dep's Version is the range's bare
+// version ("1.0" of cargo's `serde = "^1.0"`), which no release carries, so its time would be
+// unknown and the guard would never fire. False when either time is unknown.
 func (r *resolver) olderThanCurrent(timer datasource.Timer, candidate string) bool {
 	tb := r.releaseTime(timer, candidate)
 	if tb.IsZero() {
 		return false
 	}
-	tc := r.releaseTime(timer, r.d.Version)
+	tc := r.releaseTime(timer, cmp.Or(r.d.Locked, r.d.Version))
 	return !tc.IsZero() && tb.Before(tc)
 }
 
