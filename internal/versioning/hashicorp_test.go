@@ -107,6 +107,17 @@ func TestHashicorpMatchRange(t *testing.T) {
 		{"1.2", []string{"1.2.0"}, []string{"1.2.1"}},
 		{"1.0.0-rc1", []string{"1.0.0-rc1"}, []string{"1.0.0"}},
 		{"< 2", []string{"1.9.9", "x"}[:1], []string{"2.0.0", "x"}},
+		// go-version's prereleaseCheck: a constraint naming a prerelease takes the
+		// prereleases of the same release parts, and `~>` then takes nothing else;
+		// `=` and `!=` compare outright, without the check.
+		{">= 1.0.0-beta1", []string{"1.0.0-beta1", "1.0.0-beta2", "1.0.0", "1.0.1"}, []string{"0.9.0", "1.0.1-rc1"}},
+		{"> 1.0.0-beta1", []string{"1.0.0-beta2", "1.0.0"}, []string{"1.0.0-beta1", "1.0.1-rc1"}},
+		{"<= 1.0.0-beta2", []string{"1.0.0-beta1", "1.0.0-beta2", "0.9.0"}, []string{"1.0.0", "1.0.1-rc1"}},
+		{"< 1.0.0-beta2", []string{"1.0.0-beta1", "0.9.0"}, []string{"1.0.0-beta2", "1.0.0"}},
+		{"~> 1.0.0-beta1", []string{"1.0.0-beta1", "1.0.0-beta2"}, []string{"1.0.0", "1.0.1", "0.9.0"}},
+		{"!= 1.0.0", []string{"1.0.0-beta1", "1.0.1-rc1", "2.0.0"}, []string{"1.0.0"}},
+		// Every clause runs the check, so `< 2.0.0` keeps the prereleases out.
+		{">= 1.0.0-beta1, < 2.0.0", []string{"1.2.3"}, []string{"1.0.0-beta2", "2.0.0", "0.9.0"}},
 	} {
 		f, err := m.MatchRange(tt.rng)
 		if err != nil {

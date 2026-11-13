@@ -215,7 +215,8 @@ type RangeMatcher interface {
 
 // MatchRange implements RangeMatcher with Terraform's constraint semantics (go-version): all
 // clauses must hold; `~> 1.2` is `>= 1.2, < 2.0` and `~> 1.2.3` is `>= 1.2.3, < 1.3.0`; a
-// prerelease only satisfies an exact clause naming it.
+// prerelease satisfies an exact clause naming it and the clauses naming a prerelease of the
+// same release parts (admits).
 func (hashicorpScheme) MatchRange(rng string) (func(v string) bool, error) {
 	clauses, err := ParseHashicorpConstraint(rng)
 	if err != nil {
@@ -239,17 +240,23 @@ func (hashicorpScheme) MatchRange(rng string) (func(v string) bool, error) {
 	}, nil
 }
 
-// admits reports whether v satisfies `op c`.
+// admits reports whether v satisfies `op c`, as go-version's constraint functions do: `=`
+// and `!=` compare outright, and the ordering operators and `~>` first run go-version's
+// prereleaseCheck, which lets a prerelease through only for a constraint naming a
+// prerelease with the same release parts (`>= 1.0.0-beta1` admits 1.0.0-beta2) and never
+// for one naming a release. `~>` additionally takes only prereleases once it names one.
 func admits(op string, c, v hcVersion) bool {
 	cmp := compareValue(v, c)
-	if v.pre != "" && (op != "" && op != "=" || cmp != 0) {
-		return false
-	}
 	switch op {
 	case "", "=":
 		return cmp == 0
 	case "!=":
 		return cmp != 0
+	}
+	if v.pre != "" && (c.pre == "" || v.parts != c.parts) {
+		return false
+	}
+	switch op {
 	case ">":
 		return cmp > 0
 	case ">=":
@@ -260,7 +267,7 @@ func admits(op string, c, v hcVersion) bool {
 		return cmp <= 0
 	}
 	// ~>: at least c, and the parts before c's last one are equal.
-	if cmp < 0 {
+	if c.pre != "" && v.pre == "" || cmp < 0 {
 		return false
 	}
 	for i := range c.n - 1 {
