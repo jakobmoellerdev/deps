@@ -47,6 +47,10 @@ func (b *Buffer) hold(h *BufferHandler, r slog.Record) bool {
 // were logged to and writes them to w in one Write, between header and footer; nothing at all
 // when no record was held. Records logged after Flush pass through unbuffered. Flushing
 // twice writes nothing the second time.
+//
+// A record its handler fails on contributes whatever it rendered; the rest of the block,
+// header and footer included, is written all the same and the first error is returned, so
+// one bad record does not drop the log of a whole unit of work.
 func (b *Buffer) Flush(w io.Writer, header, footer string) error {
 	b.mu.Lock()
 	entries := b.entries
@@ -57,6 +61,7 @@ func (b *Buffer) Flush(w io.Writer, header, footer string) error {
 	}
 	var out bytes.Buffer
 	out.WriteString(header)
+	var firstErr error
 	chains := map[*BufferHandler]slog.Handler{}
 	for _, e := range entries {
 		h, ok := chains[e.h]
@@ -64,13 +69,15 @@ func (b *Buffer) Flush(w io.Writer, header, footer string) error {
 			h = e.h.chain(&out)
 			chains[e.h] = h
 		}
-		if err := h.Handle(context.Background(), e.r); err != nil {
-			return err
+		if err := h.Handle(context.Background(), e.r); err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
 	out.WriteString(footer)
-	_, err := w.Write(out.Bytes())
-	return err
+	if _, err := w.Write(out.Bytes()); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	return firstErr
 }
 
 // BufferHandler passes records to the next handler, except records whose context carries

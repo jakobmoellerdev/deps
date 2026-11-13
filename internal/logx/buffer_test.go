@@ -3,6 +3,7 @@ package logx
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -104,5 +105,45 @@ func TestBufferFlush(t *testing.T) {
 	h := NewBufferHandler(slog.DiscardHandler, nil)
 	if h.WithAttrs(nil) != h || h.WithGroup("") != h || h.Enabled(ctx, slog.LevelInfo) {
 		t.Error("no-op WithAttrs/WithGroup or Enabled")
+	}
+}
+
+// failingHandler renders every record as "<msg>\n" and fails on the ones whose message is
+// "bad", after writing them.
+type failingHandler struct{ w io.Writer }
+
+func (failingHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h failingHandler) Handle(_ context.Context, r slog.Record) error {
+	if _, err := io.WriteString(h.w, r.Message+"\n"); err != nil {
+		return err
+	}
+	if r.Message == "bad" {
+		return errors.New("render failed")
+	}
+	return nil
+}
+
+func (h failingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h failingHandler) WithGroup(string) slog.Handler      { return h }
+
+// A record whose handler fails must not cost the block of its unit of work: the header, the
+// records before and after it and the footer are written, and Flush reports the first error.
+func TestBufferFlushHandlerError(t *testing.T) {
+	var out bytes.Buffer
+	w := NewWriter(&out)
+	// The next handler must report Enabled, so it is a failingHandler writing nowhere.
+	log := slog.New(NewBufferHandler(failingHandler{io.Discard}, func(w io.Writer) slog.Handler { return failingHandler{w} }))
+	b := &Buffer{}
+	ctx := WithBuffer(context.Background(), b)
+	log.InfoContext(ctx, "first")
+	log.InfoContext(ctx, "bad")
+	log.InfoContext(ctx, "last")
+	err := b.Flush(w, "[\n", "]\n")
+	if err == nil || err.Error() != "render failed" {
+		t.Errorf("Flush error = %v, want render failed", err)
+	}
+	if want := "[\nfirst\nbad\nlast\n]\n"; out.String() != want {
+		t.Errorf("got %q, want %q", out.String(), want)
 	}
 }
