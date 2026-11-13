@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"slices"
 	"testing"
 	"time"
@@ -15,6 +16,42 @@ type deprecatedReleases struct {
 }
 
 func (d deprecatedReleases) Deprecation(_ dep.Dep, v string) string { return d.why[v] }
+
+// pathedReleases is a timedReleases whose versions declare the module paths in declares
+// (DeclaredPathSource); a version missing from it declares the module's own path.
+type pathedReleases struct {
+	*timedReleases
+	declares map[string]string
+}
+
+func (p pathedReleases) DeclaredPath(_ context.Context, modPath, v string) (string, error) {
+	if declared, ok := p.declares[v]; ok {
+		return declared, nil
+	}
+	return modPath, nil
+}
+
+// A Go module's version list can carry tags of an unrelated line (github.com/prometheus/common
+// lists v1.20.99, whose go.mod declares another module). Such a version is no update, so the
+// abandonment check must not date the module by it either.
+func TestAbandonmentSkipsForeignVersions(t *testing.T) {
+	d := []dep.Dep{{Datasource: "go", Versioning: "go", Name: "example.com/a", Version: "v1.0.0", Line: 1}}
+	ds := pathedReleases{
+		&timedReleases{
+			versions: []string{"v1.0.0", "v1.1.0", "v9.0.0"},
+			times:    map[string]time.Time{"v1.0.0": daysAgo(900), "v1.1.0": daysAgo(800), "v9.0.0": daysAgo(1)},
+		},
+		map[string]string{"v9.0.0": "example.com/other"},
+	}
+	res, _ := resolveStub(t, "abandonmentThreshold: 2 years\n", "gomod", d, ds, nil)
+	want := "newest release v1.1.0 published " + day(daysAgo(800)) + " (abandonmentThreshold 730 days)"
+	if len(res.Warnings) != 1 || res.Warnings[0].Kind != WarnAbandoned || res.Warnings[0].Reason != want {
+		t.Fatalf("warnings = %+v, want %q", res.Warnings, want)
+	}
+	if len(res.Updates) != 1 || res.Updates[0].NewVersion != "v1.1.0" {
+		t.Errorf("updates = %+v, want v1.1.0", res.Updates)
+	}
+}
 
 func TestLifecycleWarnings(t *testing.T) {
 	d := []dep.Dep{{Datasource: "go", Versioning: "go", Name: "example.com/a", Version: "v1.0.0", Line: 1}}

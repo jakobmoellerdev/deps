@@ -1735,8 +1735,8 @@ func (r *resolver) versionUpdates(t *Trace, scheme versioning.Scheme, vulns func
 	case reason != "":
 		return nil, &dep.SkipError{Reason: reason}
 	}
-	r.checkLifecycle(scheme)
 	r.declared, _ = r.ds.(datasource.DeclaredPathSource)
+	r.checkLifecycle(scheme)
 	t.Candidates = len(rels)
 	names := r.names.of(rels)
 	var reject func(v, reason string)
@@ -2199,6 +2199,16 @@ func (r *resolver) prefetchTimes(timer datasource.Timer, versions []string) {
 // the update. "" when it declares name or the path is unknown; a failed lookup is logged and
 // left to go mod tidy. The first reason is kept for the dep's skip (versionUpdates).
 func (r *resolver) pathChange(name, version string) string {
+	reason := r.declaresOtherPath(name, version)
+	if reason != "" && r.renamed == "" {
+		r.renamed = reason
+	}
+	return reason
+}
+
+// declaresOtherPath is pathChange without recording the reason for the dep's skip, for the
+// abandonment check, whose versions are no candidates.
+func (r *resolver) declaresOtherPath(name, version string) string {
 	if r.declared == nil {
 		return ""
 	}
@@ -2210,12 +2220,8 @@ func (r *resolver) pathChange(name, version string) string {
 	case p == "" || p == name:
 		return ""
 	}
-	slog.DebugContext(r.ctx, "candidate declares another module path", "name", name, "candidate", version, "declared", p)
-	reason := fmt.Sprintf("module path changed to %s (%s@%s)", p, name, version)
-	if r.renamed == "" {
-		r.renamed = reason
-	}
-	return reason
+	slog.DebugContext(r.ctx, "version declares another module path", "name", name, "version", version, "declared", p)
+	return fmt.Sprintf("module path changed to %s (%s@%s)", p, name, version)
 }
 
 // prefetchPaths asks for the declared module paths of versions of name concurrently; the

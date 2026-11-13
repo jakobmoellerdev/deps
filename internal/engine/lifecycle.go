@@ -3,6 +3,7 @@ package engine
 import (
 	"cmp"
 	"log/slog"
+	"slices"
 	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
@@ -60,7 +61,7 @@ func (r *resolver) checkLifecycle(scheme versioning.Scheme) {
 			}
 		}
 	}
-	newest := newestStable(scheme, r.rels)
+	newest := r.newestReleased(scheme)
 	if newest == "" {
 		return
 	}
@@ -79,9 +80,35 @@ func (r *resolver) abandoned(reason string, threshold time.Duration) {
 		Reason: reason + " (abandonmentThreshold " + config.FormatAge(threshold) + ")"})
 }
 
-// newestStable returns the highest valid release that is not a prerelease, "" if none.
-func newestStable(scheme versioning.Scheme, rels []datasource.Release) string {
-	newest := ""
+// newestReleased returns the newest stable release the abandonment check dates: the highest
+// valid non-prerelease version whose go.mod declares the dep's own module path, since a Go
+// module's version list can carry tags of an unrelated line (a repository that once held
+// another module), which no update would ever propose. At most abandonPathChecks versions
+// are asked for their path; if they all name another module, the dep is not dated.
+func (r *resolver) newestReleased(scheme versioning.Scheme) string {
+	stable := stableVersions(scheme, r.rels)
+	slices.SortFunc(stable, func(a, b string) int { return scheme.Compare(b, a) })
+	for i, v := range stable {
+		if r.declared == nil {
+			return v
+		}
+		if i == abandonPathChecks {
+			slog.DebugContext(r.ctx, "abandonment check without a version of this module", "name", r.d.Name, "checked", i)
+			return ""
+		}
+		if r.declaresOtherPath(r.d.Name, v) == "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// abandonPathChecks bounds the declared-path lookups of newestReleased.
+const abandonPathChecks = 5
+
+// stableVersions returns the valid releases that are no prerelease.
+func stableVersions(scheme versioning.Scheme, rels []datasource.Release) []string {
+	out := make([]string, 0, len(rels))
 	for _, rel := range rels {
 		v := rel.Version
 		if !scheme.Valid(v) {
@@ -90,11 +117,9 @@ func newestStable(scheme versioning.Scheme, rels []datasource.Release) string {
 		if sv := scheme.Semver(v); sv != nil && sv.Prerelease() != "" {
 			continue
 		}
-		if newest == "" || scheme.Compare(v, newest) > 0 {
-			newest = v
-		}
+		out = append(out, v)
 	}
-	return newest
+	return out
 }
 
 // day renders t as a UTC date.
