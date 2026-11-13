@@ -178,3 +178,33 @@ func TestNixpkgsReleaseBranches(t *testing.T) {
 		t.Errorf("post-processed inputs = %v", inputs)
 	}
 }
+
+// TestNixUnpinnedInputsStayLocal: an unpinned branch input carries no spans at all (nix clears
+// both: only `nix flake update <input>` moves it), so several of them in one flake.nix must
+// still be told apart. All of them belong into the plan; one digest update per run was the
+// report.
+func TestNixUnpinnedInputsStayLocal(t *testing.T) {
+	const old = "0000000000000000000000000000000000000000"
+	flake := "{\n  inputs.one.url = \"github:acme/one/main\";\n" +
+		"  inputs.two.url = \"github:acme/two/main\";\n" +
+		"  outputs = { self, ... }: { };\n}\n"
+	node := func(repo string) string {
+		return `{"locked": {"owner": "acme", "repo": "` + repo + `", "rev": "` + old + `", "type": "github"}, ` +
+			`"original": {"owner": "acme", "repo": "` + repo + `", "ref": "main", "type": "github"}}`
+	}
+	lock := `{"nodes": {"one": ` + node("one") + `, "two": ` + node("two") +
+		`, "root": {"inputs": {"one": "one", "two": "two"}}}, "root": "root", "version": 7}`
+	ms := []manager.Manager{nix.New()}
+	opts := Options{Managers: ms, Datasources: map[string]Datasource{"git-refs": fakeRefs{
+		"https://github.com/acme/one#main": sha("one"), "https://github.com/acme/two#main": sha("two"),
+	}}}
+	root, cfg := setup(t, "", map[string]string{"flake.nix": flake, "flake.lock": lock})
+	res, err := Resolve(t.Context(), root, cfg, env, opts)
+	if err != nil || len(res.Errors) > 0 || len(res.Skipped) > 0 || len(res.Updates) != 2 {
+		t.Fatalf("err = %v, errors = %v, skipped = %+v, updates = %+v", err, res.Errors, res.Skipped, res.Updates)
+	}
+	local, separate := Local(res.Updates)
+	if len(local) != 2 || slices.Contains(separate, true) {
+		t.Errorf("local = %d updates, separate = %v, want both inputs local", len(local), separate)
+	}
+}

@@ -150,10 +150,32 @@ func union(dst, add []string) []string {
 	return dst
 }
 
+// occ identifies the dependency occurrence an update edits, see occurrence.
+type occ struct {
+	file        string
+	ref, digest dep.Span
+	ident       string
+}
+
+// occurrence is the occurrence u edits: its file and the spans it writes, so commit-only deps
+// without a RefSpan, such as a cargo git `rev` or a kustomize commit ref or untagged digest,
+// stay apart. A dep without any span is written by identity rather than by offset (an
+// unpinned nix flake input refreshes its lockfile entry, a submodule without a branch its
+// gitlink), so such deps are told apart by the dep itself: its gitlink, else its name and dep
+// type. Keying them by their empty spans would collapse every one of them in a file into a
+// single local update and report the rest as separate PRs.
+func occurrence(u dep.Update) occ {
+	k := occ{file: u.Dep.File, ref: u.Dep.RefSpan, digest: u.Dep.DigestSpan}
+	if k.ref == (dep.Span{}) && k.digest == (dep.Span{}) {
+		if k.ident = u.Dep.Gitlink; k.ident == "" {
+			k.ident = u.Dep.Name + "\x00" + u.Dep.DepType
+		}
+	}
+	return k
+}
+
 // Local splits updates into the ones plan and apply write and the ones only `run` proposes
-// (in their own PRs): a dependency occurrence (File, RefSpan and DigestSpan, so commit-only
-// deps without a RefSpan, such as a cargo git `rev` or a kustomize commit ref or untagged
-// digest, stay apart) gets one local version, since
+// (in their own PRs): a dependency occurrence (see occurrence) gets one local version, since
 // the updates of its PR buckets edit the same bytes. The newest non-major update is kept, else
 // the lowest major one (Resolve orders a dep's updates by version; deps sharing a version
 // definition are compared by version). Every update of a shared definition (dep.Dep.VersionRef)
@@ -161,16 +183,12 @@ func union(dst, add []string) []string {
 // maintenance updates are always left out: they refresh a lockfile apart from any update.
 // local keeps the order of updates; separate[i] reports whether updates[i] was left out.
 func Local(updates []dep.Update) (local []dep.Update, separate []bool) {
-	type occ struct {
-		file        string
-		ref, digest dep.Span
-	}
 	chosen := make(map[occ]int, len(updates))
 	for i, u := range updates {
 		if u.Maintenance() {
 			continue // run only: its own PR
 		}
-		k := occ{u.Dep.File, u.Dep.RefSpan, u.Dep.DigestSpan}
+		k := occurrence(u)
 		j, ok := chosen[k]
 		if !ok {
 			chosen[k] = i
@@ -199,7 +217,7 @@ func Local(updates []dep.Update) (local []dep.Update, separate []bool) {
 	}
 	local = make([]dep.Update, 0, len(chosen))
 	for i, u := range updates {
-		if j, ok := chosen[occ{u.Dep.File, u.Dep.RefSpan, u.Dep.DigestSpan}]; !u.Maintenance() && ok && (j == i || sameSharedEdit(u, updates[j])) {
+		if j, ok := chosen[occurrence(u)]; !u.Maintenance() && ok && (j == i || sameSharedEdit(u, updates[j])) {
 			local = append(local, u)
 		} else {
 			separate[i] = true

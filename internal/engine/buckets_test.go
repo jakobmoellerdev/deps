@@ -280,6 +280,44 @@ func TestLocal(t *testing.T) {
 	}
 }
 
+// TestLocalZeroSpans: deps a manager writes by identity rather than by offset carry no spans
+// at all (an unpinned nix flake input refreshes its lockfile entry, a submodule without a
+// branch its gitlink). Keying them by their empty spans collapsed every one of them in a file
+// into a single local update, so plan and apply wrote one per run and reported the rest as
+// separate PRs.
+func TestLocalZeroSpans(t *testing.T) {
+	input := func(name string) dep.Dep {
+		return dep.Dep{Manager: "nix", Datasource: "git-refs", File: "flake.nix", Name: name, Version: "main", Digest: "old"}
+	}
+	inputs := []dep.Update{
+		{Dep: input("one"), Type: dep.Digest, NewVersion: "main", NewDigest: "a"},
+		{Dep: input("two"), Type: dep.Digest, NewVersion: "main", NewDigest: "b"},
+	}
+	if local, separate := Local(inputs); len(local) != 2 || slices.Contains(separate, true) {
+		t.Errorf("nix inputs: local %s, separate %v, want both local", summary(local), separate)
+	}
+	// Two submodules of one repository at two paths share every field but the gitlink.
+	sub := func(path string) dep.Dep {
+		return dep.Dep{Manager: "git-submodules", DepType: "submodule", File: ".gitmodules", Name: "acme/a", Gitlink: path, Version: "HEAD", Digest: "old"}
+	}
+	subs := []dep.Update{
+		{Dep: sub("lib/a"), Type: dep.Digest, NewVersion: "HEAD", NewDigest: "a"},
+		{Dep: sub("lib/b"), Type: dep.Digest, NewVersion: "HEAD", NewDigest: "a"},
+	}
+	if local, separate := Local(subs); len(local) != 2 || slices.Contains(separate, true) {
+		t.Errorf("submodules: local %s, separate %v, want both local", summary(local), separate)
+	}
+	// The buckets of one such dep still collapse to one local update.
+	one := input("one")
+	buckets := []dep.Update{
+		{Dep: one, Type: dep.Minor, NewVersion: "v1.4.0", Bucket: "minor"},
+		{Dep: one, Type: dep.Major, NewVersion: "v2.0.0", Bucket: "v2"},
+	}
+	if local, separate := Local(buckets); len(local) != 1 || !slices.Equal(separate, []bool{false, true}) {
+		t.Errorf("buckets of one input: local %s, separate %v", summary(local), separate)
+	}
+}
+
 func TestGroupBucketSuffixes(t *testing.T) {
 	a := dep.Dep{Manager: "gomod", Name: "example.com/A"}
 	b := dep.Dep{Manager: "gomod", Name: "example.com/b"}
