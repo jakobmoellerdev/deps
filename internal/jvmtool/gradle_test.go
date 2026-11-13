@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -378,5 +379,39 @@ func TestGradleLockerIncludedBuild(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(filepath.Join(dir, "gradle.lockfile")); string(b) != "a\n" {
 		t.Error("working tree touched")
+	}
+}
+
+// TestScopeSiblingsCachedNoAlias covers the slice the memoizing ScopeCache hands out:
+// appending the verification files to it would write into the spare capacity every caller of
+// the build root shares, and a ScopeCache answers several goroutines at once (engine.Build
+// runs the scopes of a group concurrently, and the bot builds up to four groups at a time).
+func TestScopeSiblingsCachedNoAlias(t *testing.T) {
+	root := t.TempDir()
+	// Three lockfiles: the scan appends them, so the memoized slice has length 3 and
+	// capacity 4, one spare slot an append would write into.
+	write(t, root, map[string]string{
+		"settings.gradle": "", "build.gradle": "", "gradle.lockfile": "", "settings-gradle.lockfile": "",
+		"a/build.gradle": "", "a/gradle.lockfile": "", "gradle/verification-metadata.xml": "",
+	})
+	l := GradleLocker{Scopes: NewScopeCache()}
+	want := []string{"a/gradle.lockfile", "gradle.lockfile", "settings-gradle.lockfile", VerificationMetadata}
+	var wg sync.WaitGroup
+	got := make([][]string, 8)
+	for i := range got {
+		wg.Go(func() { got[i] = l.ScopeSiblings(root) })
+	}
+	wg.Wait()
+	for i, names := range got {
+		if !slices.Equal(names, want) {
+			t.Errorf("%d: ScopeSiblings = %v, want %v", i, names, want)
+		}
+	}
+	cached := l.Scopes.scan(root, false).lockfiles
+	if cap(cached) <= len(cached) {
+		t.Fatalf("fixture leaves no spare capacity: len %d cap %d", len(cached), cap(cached))
+	}
+	if spare := cached[:cap(cached)][len(cached)]; spare != "" {
+		t.Errorf("ScopeSiblings wrote %q into the memoized slice's spare capacity", spare)
 	}
 }

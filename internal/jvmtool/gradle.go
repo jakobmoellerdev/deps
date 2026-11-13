@@ -98,13 +98,19 @@ func (GradleLocker) Siblings() []string {
 }
 
 // ScopeSiblings lists the lockfiles of every project of the build at dir, its verification
-// metadata and keyrings.
+// metadata and keyrings. The result must not be modified: without verification it is the
+// memoized scan's own slice.
 func (g GradleLocker) ScopeSiblings(dir string) []string {
 	l := g.Scopes.scan(dir, false)
 	if !l.verification {
 		return l.lockfiles
 	}
-	names := l.lockfiles
+	// The scan is memoized and its slice is handed to every caller of this build root, which
+	// a ScopeCache may answer from several goroutines at once (engine.Build runs the scopes
+	// of a group concurrently, and the bot builds up to four groups at a time): appending to
+	// it would write into spare capacity they all share.
+	names := make([]string, 0, len(l.lockfiles)+3)
+	names = append(names, l.lockfiles...)
 	names = append(names, VerificationMetadata)
 	for _, k := range [...]string{KeysKeyring, GPGKeyring} {
 		if hasAny(dir, filepath.FromSlash(k)) {
