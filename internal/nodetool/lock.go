@@ -3,7 +3,6 @@ package nodetool
 import (
 	"bufio"
 	"bytes"
-	"cmp"
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -366,13 +365,10 @@ func lockGroups(locks map[string][]dep.Update) []lockGroup {
 //     `--workspace=<dir>`);
 //   - pnpm: `pnpm update --no-save --lockfile-only --ignore-scripts --filter <sel>
 //     <name>@<version>…` per manifest, sel being `.` for the root and `./<dir>` for a member;
-//     --no-save keeps the specifiers;
-//   - yarn berry: `yarn set resolution <name>@npm:<range> npm:<version>` per descriptor, in
-//     order.
+//     --no-save keeps the specifiers.
 //
-// yarn classic and bun have none: their updates are installed from pinned manifests
-// (lockOnly).
-func lockCommands(c cmdSpec, lockName string, berry bool, locks map[string][]dep.Update) []cmdSpec {
+// yarn and bun have none: their updates are installed from pinned manifests (lockOnly).
+func lockCommands(c cmdSpec, lockName string, locks map[string][]dep.Update) []cmdSpec {
 	var cmds []cmdSpec
 	with := func(args ...string) {
 		cc := c
@@ -387,17 +383,6 @@ func lockCommands(c cmdSpec, lockName string, berry bool, locks map[string][]dep
 				sel = "./" + g.dir
 			}
 			with(append([]string{"update", "--no-save", "--lockfile-only", "--ignore-scripts", "--filter", sel}, g.specs...)...)
-		}
-	case lockName == YarnLock && berry:
-		var res [][2]string
-		for _, ups := range locks {
-			for _, u := range ups {
-				res = append(res, [2]string{u.Dep.Name + "@npm:" + u.Dep.Range, "npm:" + u.NewVersion})
-			}
-		}
-		slices.SortFunc(res, func(a, b [2]string) int { return cmp.Or(strings.Compare(a[0], b[0]), strings.Compare(a[1], b[1])) })
-		for _, r := range slices.Compact(res) {
-			with("set", "resolution", r[0], r[1])
 		}
 	case toolOf[lockName] == "npm":
 		for _, g := range lockGroups(locks) {

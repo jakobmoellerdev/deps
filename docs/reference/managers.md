@@ -547,14 +547,13 @@ Before resolving, deps reads the lock root's lockfile (the one the post-processo
    - else `npx --yes <tool>`;
    - else error `<tool> not found (needed to update <lock>)`.
 5. **Several lockfiles.** If a root has more than one lockfile, the `packageManager` tool's lockfile wins, else `npm-shrinkwrap.json`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, then `bun.lock`.
-6. **Lockfile-only updates.** The manifests stay unchanged: only the lockfile is read back from the copy. The plain install runs first only when a manifest of the root changed (yarn classic and bun install from the pinned manifests instead). Then, per tool:
+6. **Lockfile-only updates.** The manifests stay unchanged: only the lockfile is read back from the copy. The plain install runs first only when a manifest of the root changed (yarn and bun install from the pinned manifests instead). Then, per tool:
 
    | Tool | Commands |
    |---|---|
    | npm | `npm install … <name>@<version>` for the root manifest's updates, `npm install … --workspace=<dir> <name>@<version>` per workspace member; npm saves `^<version>` into the lockfile's own package entries (`packages[""]`, `packages["<member dir>"]`), and deps restores the range package.json holds, so `npm ci` accepts the lockfile (a missing entry is an error). A v1 lockfile comes back as npm writes it (version 3). |
    | pnpm | `pnpm update --no-save --lockfile-only --ignore-scripts --filter <sel> <name>@<version>…` per manifest (`<sel>` is `.` for the root, `./<dir>` for a member); the specifiers stay. |
-   | yarn berry | `yarn set resolution <name>@npm:<range> npm:<version>` per descriptor. |
-   | yarn classic | an install from manifests whose updated ranges are replaced by the new versions, which adds `<name>@<version>` entries; deps moves each `<name>@<range>` descriptor into that entry (out of its old one, which goes away when nothing is left), then installs from the real manifests, which drops the pinned descriptors nothing else uses. |
+   | yarn (classic and berry) | an install from manifests whose updated ranges are replaced by the new versions, which adds `<name>@<version>` entries (berry: `<name>@npm:<version>`); deps moves each `<name>@<range>` descriptor into that entry (out of its old one, which goes away when nothing is left), then installs from the real manifests, which drops the pinned descriptors nothing else uses. Two installs apply any number of updates. |
    | bun | an install from manifests pinned the same way; deps puts the ranges package.json holds back into `bun.lock`'s `workspaces` entries. |
 
    Every tool locks exactly `<version>`. In yarn, a descriptor is shared by every manifest and dependency that requests the same `<name>@<range>`, so they all move.

@@ -285,16 +285,18 @@ func (r runner) runAll(cmds ...cmdSpec) error {
 	return nil
 }
 
-// lockOnly applies the lockfile-only updates: npm, pnpm and yarn berry run the plain install
-// first only when a manifest changed, then lockCommands. yarn classic and bun cannot install
-// one version within a range, so they install from manifests whose updated ranges are pinned
-// to the new versions (pinManifests): bun once, after which restoreRanges puts the ranges back
-// into bun.lock; yarn classic moves each `<name>@<range>` descriptor to the entry of the pinned
-// `<name>@<version>` (moveDescriptors) and installs again from the unpinned manifests, which
-// keeps the moved descriptors and drops the pinned ones nothing else needs.
+// lockOnly applies the lockfile-only updates: npm and pnpm run the plain install first only
+// when a manifest changed, then lockCommands. yarn and bun cannot install one version within a
+// range, so they install from manifests whose updated ranges are pinned to the new versions
+// (pinManifests): bun once, after which restoreRanges puts the ranges back into bun.lock; yarn
+// moves each `<name>@<range>` descriptor to the entry of the pinned `<name>@<version>`
+// (moveDescriptors) and installs again from the unpinned manifests, which keeps the moved
+// descriptors and drops the pinned ones nothing else needs. Two installs do that for any
+// number of updates, where berry's `yarn set resolution` would load the project once per
+// descriptor.
 func (r runner) lockOnly(s *staged, locks map[string][]dep.Update, changed bool) error {
-	switch {
-	case s.lockName == BunLock, s.lockName == YarnLock && !s.berry:
+	switch s.lockName {
+	case BunLock, YarnLock:
 		pinned, err := pinManifests(s.write, locks)
 		if err != nil {
 			return err
@@ -317,7 +319,7 @@ func (r runner) lockOnly(s *staged, locks map[string][]dep.Update, changed bool)
 		if err != nil {
 			return err
 		}
-		if lock, err = moveDescriptors(lock, locks); err != nil {
+		if lock, err = moveDescriptors(lock, locks, s.berry); err != nil {
 			return err
 		}
 		if err := os.WriteFile(p, lock, 0o644); err != nil {
@@ -325,7 +327,7 @@ func (r runner) lockOnly(s *staged, locks map[string][]dep.Update, changed bool)
 		}
 		return r.runAll(r.c)
 	}
-	cmds := lockCommands(r.c, s.lockName, s.berry, locks)
+	cmds := lockCommands(r.c, s.lockName, locks)
 	if changed {
 		cmds = slices.Insert(cmds, 0, r.c) // the plain install first
 	}

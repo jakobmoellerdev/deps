@@ -84,18 +84,24 @@ type yarnEntry struct {
 	changed bool
 }
 
-// moveDescriptors edits the classic yarn.lock installed from pinned manifests (pinManifests):
-// the descriptor `<name>@<range>` of each lockfile-only update leaves its entry (which goes
-// away when no descriptor is left) and joins the entry of the pinned `<name>@<version>`, so the
-// next install from the unpinned manifests keeps the new version. Changed headers and the
-// entry order follow yarn's own output (descriptors sorted, quoted where yarn quotes them;
-// entries ordered by their first descriptor), since yarn keeps a lockfile that already matches
-// its resolution as it is; the other headers are kept as written.
-func moveDescriptors(lock []byte, locks map[string][]dep.Update) ([]byte, error) {
+// moveDescriptors edits the yarn.lock installed from pinned manifests (pinManifests): the
+// descriptor `<name>@<range>` of each lockfile-only update (berry: `<name>@npm:<range>`)
+// leaves its entry (which goes away when no descriptor is left) and joins the entry of the
+// pinned `<name>@<version>`, so the next install from the unpinned manifests keeps the new
+// version. In a classic lockfile, changed headers and the entry order follow yarn's own output
+// (descriptors sorted, quoted where yarn quotes them; entries ordered by their first
+// descriptor), since yarn keeps a lockfile that already matches its resolution as it is; the
+// other headers are kept as written. Berry writes the descriptors of an entry as one quoted
+// key and rewrites the whole lockfile on every install, so there the entries keep their order.
+func moveDescriptors(lock []byte, locks map[string][]dep.Update, berry bool) ([]byte, error) {
+	at := "@"
+	if berry {
+		at = "@npm:"
+	}
 	var moves [][2]string
 	for _, ups := range locks {
 		for _, u := range ups {
-			moves = append(moves, [2]string{u.Dep.Name + "@" + u.Dep.Range, u.Dep.Name + "@" + u.NewVersion})
+			moves = append(moves, [2]string{u.Dep.Name + at + u.Dep.Range, u.Dep.Name + at + u.NewVersion})
 		}
 	}
 	slices.SortFunc(moves, func(a, b [2]string) int { return strings.Compare(a[0]+"\x00"+a[1], b[0]+"\x00"+b[1]) })
@@ -123,7 +129,9 @@ func moveDescriptors(lock []byte, locks map[string][]dep.Update) ([]byte, error)
 	for i := range entries {
 		slices.Sort(entries[i].descs)
 	}
-	slices.SortStableFunc(entries, func(a, b yarnEntry) int { return strings.Compare(a.descs[0], b.descs[0]) })
+	if !berry {
+		slices.SortStableFunc(entries, func(a, b yarnEntry) int { return strings.Compare(a.descs[0], b.descs[0]) })
+	}
 
 	var b strings.Builder
 	b.WriteString(preamble)
@@ -136,11 +144,15 @@ func moveDescriptors(lock []byte, locks map[string][]dep.Update) ([]byte, error)
 			b.WriteString(e.body)
 			continue
 		}
-		for j, d := range e.descs {
-			if j > 0 {
-				b.WriteString(", ")
+		if berry {
+			b.WriteString(yarnKey(strings.Join(e.descs, ", ")))
+		} else {
+			for j, d := range e.descs {
+				if j > 0 {
+					b.WriteString(", ")
+				}
+				b.WriteString(yarnKey(d))
 			}
-			b.WriteString(yarnKey(d))
 		}
 		b.WriteString(":\n")
 		b.WriteString(e.body)
