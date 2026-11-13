@@ -97,7 +97,7 @@ var replacementIndex = func() map[string][]replacementMatcher {
 // replacementOf returns the first built-in replacement matching d that changes its name, or
 // nil. Entries match the dep's packageName.
 func (c *Config) replacementOf(d dep.Dep, vc *vcache) *Replacement {
-	name := packageName(&d)
+	name := vc.pkgName(&d)
 	for _, m := range replacementIndex[d.Manager] {
 		if !m.match(name) {
 			continue

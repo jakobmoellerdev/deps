@@ -1284,7 +1284,7 @@ Manager names as in [managers.md](managers.md); `custom` matches the deps of eve
 
 ### `rules[].names`
 
-Only match deps whose name matches any of these doublestar globs, compared case-insensitively as in Renovate (`*` stays within a path segment, `**` crosses segments, `{a,b}` alternates). An entry starting with `!` excludes the names its glob matches (Renovate's `!pattern`); a list of only exclusions matches every other name. Entries may also be Renovate regexes /RE2/ (case-sensitive) or /RE2/i (also after `!`).
+Only match deps whose name matches any of these doublestar globs, compared case-insensitively as in Renovate (`*` stays within a path segment, `**` crosses segments, `{a,b}` alternates). A helm chart of an OCI registry also matches its full reference without the scheme, the name Renovate's matchPackageNames sees (`registry-1.docker.io/bitnamicharts/redis` as well as `redis`). An entry starting with `!` excludes the names its glob matches (Renovate's `!pattern`); a list of only exclusions matches every other name. Entries may also be Renovate regexes /RE2/ (case-sensitive) or /RE2/i (also after `!`).
 
 - **Type:** list of strings
 

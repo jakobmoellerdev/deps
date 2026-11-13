@@ -198,11 +198,23 @@ func (c *Config) WantsCurrentAge(d dep.Dep) bool {
 	return false
 }
 
-// vcache memoizes the versioning scheme of one dep across the rules matched against it: every
-// currentVersion constraint converts with it, and resolving it walks every rule.
+// vcache memoizes the per-dep values the rules matched against it share: the versioning scheme
+// (every currentVersion constraint converts with it, and resolving it walks every rule) and the
+// package name its names are matched against.
 type vcache struct {
-	v  string
-	ok bool
+	v     string
+	ok    bool
+	pkg   string
+	pkgOK bool
+}
+
+// pkgName is packageName(d), computed at most once per dep: it only differs from d.Name for an
+// OCI helm chart, where it allocates.
+func (vc *vcache) pkgName(d *dep.Dep) string {
+	if !vc.pkgOK {
+		vc.pkg, vc.pkgOK = packageName(d), true
+	}
+	return vc.pkg
 }
 
 // matches reports whether r applies to d; kind "" skips rules with updateTypes, a negative
@@ -222,7 +234,7 @@ func (c *Config) matches(r *Rule, d dep.Dep, kind dep.UpdateType, age time.Durat
 func (c *Config) matchesDep(r *Rule, d dep.Dep, vc *vcache) bool {
 	switch {
 	case len(r.Managers) > 0 && !slices.Contains(r.Managers, d.Manager),
-		len(r.Names) > 0 && !r.names.Match(d.Name),
+		len(r.Names) > 0 && !matchesNames(r, &d, vc),
 		len(r.DepTypes) > 0 && !slices.Contains(r.DepTypes, d.DepType),
 		len(r.Paths) > 0 && !r.paths.Match(d.File),
 		len(r.Datasources) > 0 && !slices.ContainsFunc(r.Datasources, func(ds string) bool { return CanonicalDatasource(ds) == d.Datasource }),
@@ -230,6 +242,18 @@ func (c *Config) matchesDep(r *Rule, d dep.Dep, vc *vcache) bool {
 		return false
 	}
 	return r.currentVersion == nil || c.currentMatches(r.currentVersion, d, vc)
+}
+
+// matchesNames reports whether r's names match d: its name, or the package name Renovate's
+// matchPackageNames sees (packageName), which differs for an OCI helm chart (redis is also
+// registry-1.docker.io/bitnamicharts/redis). The replacement half of a rule matches the
+// package name too, and a config translated from Renovate names deps that way.
+func matchesNames(r *Rule, d *dep.Dep, vc *vcache) bool {
+	if r.names.Match(d.Name) {
+		return true
+	}
+	pkg := vc.pkgName(d)
+	return pkg != d.Name && r.names.Match(pkg)
 }
 
 // currentMatches reports whether d's current version (the locked one when known) satisfies a,
@@ -286,15 +310,20 @@ func (c *Config) RegistryURLs(d dep.Dep) string {
 // a dep applies to it once an update of a listed type exists or its release time is known.
 func (c *Config) UnusedRules(deps []dep.Dep) []int {
 	var out []int
+	vcs := make([]vcache, len(deps)) // one cache per dep, shared by the rules matched against it
 	for i := range c.Rules {
 		r := &c.Rules[i]
 		if len(r.BaseBranches) > 0 && c.baseBranch == "" {
 			continue // without a base branch it cannot match; that says nothing about the rule
 		}
-		if !slices.ContainsFunc(deps, func(d dep.Dep) bool {
-			var vc vcache
-			return c.matchesDep(r, d, &vc)
-		}) {
+		used := false
+		for j := range deps {
+			if c.matchesDep(r, deps[j], &vcs[j]) {
+				used = true
+				break
+			}
+		}
+		if !used {
 			out = append(out, i)
 		}
 	}
@@ -392,7 +421,7 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Polic
 	var vc vcache
 	if c.ReplacementsEnabled() {
 		if rp := c.replacementOf(d, &vc); rp != nil {
-			p.Replacement, p.ReplacementName, p.ReplacementVersion = rp.Name, rp.NewName(packageName(&d)), rp.Version
+			p.Replacement, p.ReplacementName, p.ReplacementVersion = rp.Name, rp.NewName(vc.pkgName(&d)), rp.Version
 		}
 	}
 	switch {
@@ -411,7 +440,7 @@ func (c *Config) policy(d dep.Dep, kind dep.UpdateType, age time.Duration) Polic
 		if r.ReplacementName != "" {
 			// The prefix matches the name Renovate's replacementNameTemplate sees (packageName),
 			// not Dep.Name: an OCI helm chart's Name is the chart alone.
-			if name := packageName(&d); strings.HasPrefix(name, r.ReplacementPrefix) {
+			if name := vc.pkgName(&d); strings.HasPrefix(name, r.ReplacementPrefix) {
 				to := r.ReplacementName
 				if r.ReplacementPrefix != "" {
 					to += name[len(r.ReplacementPrefix):]

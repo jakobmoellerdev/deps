@@ -47,6 +47,41 @@ func TestRuleNegatedGlobs(t *testing.T) {
 	}
 }
 
+// TestRuleNamesPackageName covers a rule naming deps by the package name Renovate's
+// matchPackageNames sees: an OCI helm chart's full reference, not its bare chart name.
+func TestRuleNamesPackageName(t *testing.T) {
+	chart := dep.Dep{Manager: "helm", Name: "redis", Source: "oci://registry-1.docker.io/bitnamicharts", Version: "18.0.0"}
+	for _, tc := range []struct {
+		name  string
+		rule  string
+		d     dep.Dep
+		match bool
+	}{
+		{"full OCI reference", "names: ['registry-1.docker.io/bitnamicharts/*']", chart, true},
+		{"full OCI reference, exact", "names: ['registry-1.docker.io/bitnamicharts/redis']", chart, true},
+		{"chart name alone", "names: [redis]", chart, true},
+		{"other registry", "names: ['ghcr.io/**']", chart, false},
+		{"other chart of the registry", "names: ['registry-1.docker.io/bitnamicharts/postgresql']", chart, false},
+		{"helm chart of an HTTP repository", "names: ['charts.example.com/redis']", dep.Dep{Manager: "helm", Name: "redis", Source: "https://charts.example.com", Version: "18.0.0"}, false},
+		{"non-helm dep keeps its name", "names: [redis], managers: [docker]", dep.Dep{Manager: "docker", Name: "redis", Version: "7.2"}, true},
+		{"non-helm dep has no package name", "names: ['docker.io/library/redis']", dep.Dep{Manager: "docker", Name: "redis", Version: "7.2"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := load(t, ".deps.yaml", "rules: [{"+tc.rule+", group: g}]\n")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := c.Policy(tc.d).Group == "g"; got != tc.match {
+				t.Errorf("match = %v, want %v", got, tc.match)
+			}
+			unused := c.UnusedRules([]dep.Dep{tc.d})
+			if used := len(unused) == 0; used != tc.match {
+				t.Errorf("UnusedRules = %v, want rule used = %v", unused, tc.match)
+			}
+		})
+	}
+}
+
 func TestRuleCurrentVersion(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
