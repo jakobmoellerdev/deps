@@ -342,7 +342,9 @@ func targetOf(d dep.Dep) *target {
 		}
 		return nil
 	case "npm", "deno":
-		if d.Datasource != "npm" && d.Manager == "deno" { // jsr and deno.land have no OSV ecosystem
+		// Only npm-registry deps are npm packages: git dependencies, the node engine
+		// (node-version), jsr and deno.land have no OSV npm ecosystem entry.
+		if d.Datasource != "npm" {
 			return nil
 		}
 		// The version installs get is the locked one; the range floor only without a lockfile.

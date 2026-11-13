@@ -631,12 +631,19 @@ func TestAdvisoriesNpm(t *testing.T) {
 		"affected":[{"package":{"name":"lodash","ecosystem":"npm"},"ranges":[{"type":"SEMVER","events":[{"introduced":"0"},{"fixed":"4.17.21"}]}]},
 		            {"package":{"name":"lodash-es","ecosystem":"npm"},"ranges":[{"type":"SEMVER","events":[{"fixed":"9.9.9"}]}]}]}`
 	f.vulns["CVE-ALIAS"] = `{"id":"CVE-ALIAS","affected":[{"package":{"name":"lodash","ecosystem":"npm"},"ranges":[{"type":"ECOSYSTEM","events":[{"fixed":"v4.17.21"}]}]}]}`
+	// An advisory of the npm package named node must not land on the engines.node pin.
+	f.results["npm|node|20.11.0|"] = result{ids: []string{"GHSA-node-pkg"}}
+	f.vulns["GHSA-node-pkg"] = `{"id":"GHSA-node-pkg","summary":"npm package node",
+		"affected":[{"package":{"name":"node","ecosystem":"npm"},"ranges":[{"type":"SEMVER","events":[{"introduced":"0"},{"fixed":"99.0.0"}]}]}]}`
 	s := f.start(nil)
 	deps := []dep.Dep{
-		{Manager: "npm", DepType: "dependencies", Name: "lodash", Version: "4.17.20"},
-		{Manager: "npm", DepType: "dependencies", Name: "unversioned"},
+		{Manager: "npm", Datasource: "npm", DepType: "dependencies", Name: "lodash", Version: "4.17.20"},
+		{Manager: "npm", Datasource: "npm", DepType: "dependencies", Name: "unversioned"},
 		// The locked version is queried, not the range floor: the same query as above.
-		{Manager: "npm", DepType: "dependencies", Name: "lodash", Version: "4.0.0", Locked: "4.17.20"},
+		{Manager: "npm", Datasource: "npm", DepType: "dependencies", Name: "lodash", Version: "4.0.0", Locked: "4.17.20"},
+		// The node engine is not the npm package named node, and git dependencies are not npm packages.
+		{Manager: "npm", Datasource: "node-version", DepType: "engines", Name: "node", Version: "20.11.0"},
+		{Manager: "npm", Datasource: "git-tags", DepType: "dependencies", Name: "lodash", Version: "4.17.20"},
 		// A deno npm: specifier is an npm package; jsr: ones have no OSV ecosystem.
 		{Manager: "deno", Datasource: "npm", DepType: "imports", Name: "lodash", Version: "4.0.0", Locked: "4.17.20"},
 		{Manager: "deno", Datasource: "jsr", DepType: "imports", Name: "@std/path", Version: "1.0.0"},
@@ -646,7 +653,7 @@ func TestAdvisoriesNpm(t *testing.T) {
 		t.Fatal(err)
 	}
 	lodash := []datasource.Vuln{{Advisory: dep.Advisory{ID: "GHSA-35jh-r3h4-6jhm", Summary: "Command injection", URL: "https://osv.dev/vulnerability/GHSA-35jh-r3h4-6jhm", Aliases: []string{"CVE-ALIAS"}}, Fixed: []string{"4.17.21"}}}
-	want := [][]datasource.Vuln{lodash, nil, lodash, lodash, nil}
+	want := [][]datasource.Vuln{lodash, nil, lodash, nil, nil, lodash, nil}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got  %+v\nwant %+v", got, want)
 	}
