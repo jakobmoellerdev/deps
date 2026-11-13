@@ -39,7 +39,7 @@ jobs:
         with:
           token: ${{ steps.jwt.outputs.jwt }}
       # The published release, as users run it; deps bumps this pin itself after each release.
-      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.15.0
+      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.15.1
         with:
           token: ${{ steps.jwt.outputs.jwt }}
           signing-key: ${{ secrets.DEPS_SIGNING_KEY }}
