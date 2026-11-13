@@ -304,6 +304,9 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	if cfg.LockFileMaintenance.Enabled && o.Filter == nil {
 		res.Updates = maintenanceUpdates(cfg, root, o.Managers, found, ex)
 	}
+	// The lock file maintenance updates come first; the resolved updates follow them, so
+	// res.Updates[maint:] is what upPols below is indexed like.
+	maint := len(res.Updates)
 	// Dep, Update and Pending are hundreds of bytes and append grows large slices by a
 	// quarter: the slices below are sized up front, counting first where the length is only
 	// known after a pass.
@@ -574,7 +577,7 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 	res.Updates = slices.Grow(res.Updates, nUp)
 	res.Warnings = slices.Grow(res.Warnings, nWarn)
 	res.Pending = slices.Grow(res.Pending, nPend)
-	upPols := make([]*policies, 0, nUp) // the policies of res.Updates[i]
+	upPols := make([]*policies, 0, nUp) // the policies of res.Updates[maint+i]
 	var upAt []int                      // with a lister: the index of ups[i] in res.Updates
 	if lister != nil {
 		upAt = make([]int, len(outs))
@@ -602,7 +605,9 @@ func Resolve(ctx context.Context, root string, cfg *config.Config, env manager.E
 			o.Trace(t)
 		}
 	}
-	unifyShared(ctx, res.Updates, func(i int, kind dep.UpdateType) *config.Policy { return upPols[i].of(kind) })
+	// Only the resolved updates are handed over: a maintenance update is never a member of a
+	// shared definition (sharedMember), and its index would not be one of upPols.
+	unifyShared(ctx, res.Updates[maint:], func(i int, kind dep.UpdateType) *config.Policy { return upPols[i].of(kind) })
 	var listed []DepReport
 	if lister != nil {
 		listed = depReports(todo, outs, pend, res.Updates, upAt, ups)

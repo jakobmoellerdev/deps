@@ -10,6 +10,7 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/config"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager"
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/manager/cargo"
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/patch"
 )
 
@@ -363,5 +364,39 @@ func TestResolveSharedSecurityLowered(t *testing.T) {
 	groups := GroupUpdates(res.Updates, "")
 	if len(groups) != 1 || groups[0].Title != "build(deps): update jackson.version to 2.15.3" || !groups[0].DashboardApproval {
 		t.Errorf("groups = %+v", groups)
+	}
+}
+
+// TestResolveSharedLoweredWithMaintenance: the lock file maintenance updates are prepended to
+// the resolved ones, which the policies are indexed like. A lowered member of a shared
+// definition must still take its own policy (its group here), not one of a dep that many
+// positions away, and an index past the policies must not panic.
+func TestResolveSharedLoweredWithMaintenance(t *testing.T) {
+	const pom = "<project><properties><jackson.version>2.15.0</jackson.version></properties><dependencies>" +
+		"<artifactId>jackson-core</artifactId><version>${jackson.version}</version>" +
+		"<artifactId>jackson-databind</artifactId><version>${jackson.version}</version>" +
+		"</dependencies></project>"
+	files := map[string]string{"pom.xml": pom, "Cargo.toml": "[workspace]\nmembers = [\"a\"]\n", "Cargo.lock": "version = 4\n"}
+	root, cfg := setup(t, "lockFileMaintenance: {enabled: true}\nrules: [{names: [jackson-databind], group: jackson-backend}]\n", files)
+	o := Options{
+		Managers: []manager.Manager{propManager{}, cargo.New()},
+		Datasources: map[string]Datasource{"go": fakeGo{
+			"jackson-core":     {"2.15.0", "2.16.0"},
+			"jackson-databind": {"2.15.0", "2.16.0", "2.17.0"},
+		}},
+	}
+	res, err := Resolve(t.Context(), root, cfg, env, o) // panicked on the maintenance update's index
+	if err != nil || len(res.Errors) != 0 || len(res.Updates) != 3 {
+		t.Fatalf("err %v, errors %v, updates %s", err, res.Errors, render(res.Updates))
+	}
+	for _, u := range res.Updates {
+		if u.Maintenance() {
+			continue
+		}
+		// jackson-databind, lowered from 2.17.0, keeps the group of its own package rule, and
+		// jackson-core joins it (unifyShared).
+		if u.NewVersion != "2.16.0" || u.Group != "jackson-backend" {
+			t.Errorf("%s: %s group %q, want 2.16.0 group jackson-backend", u.Dep.Name, u.NewVersion, u.Group)
+		}
 	}
 }
