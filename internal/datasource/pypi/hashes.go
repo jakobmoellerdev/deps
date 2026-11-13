@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"log/slog"
 	"mime"
@@ -18,19 +19,22 @@ import (
 )
 
 // Hashes returns the sha256 digests (lowercase hex, sorted, unique) of the files of version of
-// d.Name on d's index, as pip's `--hash` options pin them: from the JSON API
+// d.Name, as pip's `--hash` options pin them: from the JSON API
 // (`GET <base>/pypi/<name>/<version>/json`, `urls[].digests.sha256`) for PyPI, else from the
 // files of the version on the simple index page (JSON `hashes.sha256` or HTML `#sha256=`).
-// Files without a sha256 digest are left out; a version without any is an error.
+// d's indexes are tried in order (primary, then the extra ones Releases merges) and the
+// digests of the first index holding the version win. Files without a sha256 digest are left
+// out; a version no index has any file of is an error.
 func (s *Source) Hashes(ctx context.Context, d dep.Dep, version string) (hashes []string, err error) {
-	idx, err := s.index(d)
+	idxs, err := s.indexes(d)
 	if err != nil {
 		return nil, err
 	}
 	name := pyreq.Normalize(d.Name)
 	start := time.Now()
+	var from string // index the digests came from, for the log
 	defer func() {
-		slog.DebugContext(ctx, "pypi hashes fetched", "name", name, "version", version, "index", httpx.Redact(cmp.Or(idx, s.base)),
+		slog.DebugContext(ctx, "pypi hashes fetched", "name", name, "version", version, "index", httpx.Redact(cmp.Or(from, s.base)),
 			"hashes", len(hashes), "duration", time.Since(start), "err", err)
 	}()
 	release, err := httpx.Acquire(ctx, s.sem)
@@ -38,20 +42,34 @@ func (s *Source) Hashes(ctx context.Context, d dep.Dep, version string) (hashes 
 		return nil, err
 	}
 	defer release()
-	if idx == "" {
-		hashes, err = s.jsonHashes(ctx, d.Name, name, version)
-	} else {
-		hashes, err = s.simpleHashes(ctx, idx, d.Name, name, version)
+	var missing error // the first index without the package, when no index had it
+	for _, idx := range idxs {
+		var h []string
+		if idx == "" {
+			h, err = s.jsonHashes(ctx, d.Name, name, version)
+		} else {
+			h, err = s.simpleHashes(ctx, idx, d.Name, name, version)
+		}
+		switch {
+		case errors.Is(err, errNotFound):
+			if missing == nil {
+				missing = err
+			}
+			continue
+		case err != nil:
+			return nil, err
+		case len(h) == 0:
+			missing = nil // the package is published here, just not this version
+			continue
+		}
+		slices.Sort(h)
+		from, hashes = idx, slices.Compact(h)
+		return hashes, nil
 	}
-	if err != nil {
-		return nil, err
+	if missing != nil {
+		return nil, missing
 	}
-	slices.Sort(hashes)
-	hashes = slices.Compact(hashes)
-	if len(hashes) == 0 {
-		return nil, fmt.Errorf("pypi: %s %s has no files with a sha256 digest", d.Name, version)
-	}
-	return hashes, nil
+	return nil, fmt.Errorf("pypi: %s %s has no files with a sha256 digest", d.Name, version)
 }
 
 // jsonHashes reads `urls[].digests.sha256` of the JSON API document of one release.

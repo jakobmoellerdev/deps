@@ -94,3 +94,34 @@ func TestHashesCanceled(t *testing.T) {
 		t.Error("no error")
 	}
 }
+
+// TestHashesExtraIndex pins that Hashes reads the digests of a package only an extra index
+// publishes, as Releases does: a hash-pinned compile of such a package must not fail.
+func TestHashesExtraIndex(t *testing.T) {
+	const digest = "1111111111111111111111111111111111111111111111111111111111111111"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/extra/corp-lib/" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", simpleJSON)
+		_, _ = w.Write([]byte(`{"files":[{"filename":"corp_lib-1.1-py3-none-any.whl","hashes":{"sha256":"` + digest + `"}}]}`))
+	}))
+	defer srv.Close()
+	for _, c := range []struct {
+		name string
+		d    dep.Dep
+		env  map[string]string
+	}{
+		{"extra sources", dep.Dep{Name: "corp-lib", Source: srv.URL + "/simple", ExtraSources: []string{srv.URL + "/extra"}}, nil},
+		{"pip extra index url", dep.Dep{Name: "corp-lib", Source: srv.URL + "/simple"}, map[string]string{"PIP_EXTRA_INDEX_URL": srv.URL + "/extra"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := New(srv.Client(), make(chan struct{}, 1), env(c.env))
+			got, err := s.Hashes(t.Context(), c.d, "1.1")
+			if err != nil || !slices.Equal(got, []string{digest}) {
+				t.Fatalf("got %v, %v; want [%s]", got, err, digest)
+			}
+		})
+	}
+}
