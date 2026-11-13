@@ -21,8 +21,10 @@ func logicalLinesOracle(src []byte) []line {
 		}
 		next := end + 1
 		raw := strings.TrimSuffix(string(src[pos:end]), "\r")
-		cont := strings.HasSuffix(raw, "\\")
-		raw = strings.TrimSuffix(raw, "\\")
+		cont := strings.HasSuffix(raw, "\\") && !isComment([]byte(raw))
+		if cont {
+			raw = strings.TrimSuffix(raw, "\\")
+		}
 		cur.segs = append(cur.segs, seg{at: b.Len(), file: pos})
 		b.WriteString(raw)
 		if !cont || next >= len(src) {
@@ -60,6 +62,8 @@ var logicalLinesSeeds = []string{
 	"a==1 \\\r\n  b # c \\\r\nd\r\n",
 	"# only comment \\\nstill comment\n",
 	"  x \\\n  # comment after continuation\ny==2\n",
+	"# see C:\\old\\path\\\nrequests==2.0\n",
+	"   # indented comment \\\na==1\n",
 	"a\\\\\nb\n",
 	"no newline at end",
 }

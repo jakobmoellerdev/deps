@@ -338,6 +338,14 @@ func (l line) offset(i int) int {
 	return s.file + i - s.at
 }
 
+// isComment reports whether the physical line raw is a comment: pip's join_lines matches
+// COMMENT_RE before joining, so a trailing backslash of a comment is literal text and does
+// not continue the line.
+func isComment(raw []byte) bool {
+	t := bytes.TrimLeft(raw, " \t")
+	return len(t) > 0 && t[0] == '#'
+}
+
 func logicalLines(src []byte) []line {
 	var out []line
 	// arena backs every line's segs; each line gets a clipped sub-slice, so the
@@ -352,7 +360,7 @@ func logicalLines(src []byte) []line {
 		}
 		next := end + 1
 		raw := bytes.TrimSuffix(src[pos:end], []byte("\r"))
-		cont := len(raw) > 0 && raw[len(raw)-1] == '\\'
+		cont := len(raw) > 0 && raw[len(raw)-1] == '\\' && !isComment(raw)
 		if cont {
 			raw = raw[:len(raw)-1]
 		}

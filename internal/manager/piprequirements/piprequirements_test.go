@@ -307,3 +307,19 @@ func BenchmarkExtract(b *testing.B) {
 		}
 	}
 }
+
+// TestExtractCommentBackslash covers a comment whose last byte is a backslash (a Windows
+// path): pip does not continue it, so the requirement on the next line is a requirement.
+func TestExtractCommentBackslash(t *testing.T) {
+	src := "# see C:\\old\\path\\\nrequests==2.0\n"
+	deps, err := New().Extract("requirements.txt", []byte(src), manager.Env{})
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	if len(deps) != 1 || deps[0].Name != "requests" || deps[0].Version != "2.0" || deps[0].Range != "==2.0" {
+		t.Fatalf("Extract = %+v, want requests ==2.0", deps)
+	}
+	if got := src[deps[0].RefSpan.Start:deps[0].RefSpan.End]; got != "==2.0" {
+		t.Errorf("ref span = %q", got)
+	}
+}
