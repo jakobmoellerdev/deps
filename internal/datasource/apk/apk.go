@@ -15,7 +15,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -107,12 +106,9 @@ func (s *Source) lookup(ctx context.Context, d dep.Dep) ([]entry, error) {
 		return nil, fmt.Errorf("package %q not found in %s", d.Name, strings.Join(shown, ", "))
 	}
 	scheme, _ := versioning.Get("apk")
-	slices.SortStableFunc(out, func(a, b entry) int {
-		if c := scheme.Compare(a.version, b.version); c != 0 {
-			return c
-		}
-		return strings.Compare(a.version, b.version)
-	})
+	versioning.SortBy(scheme, out,
+		func(e entry) string { return e.version },
+		func(a, b entry) int { return strings.Compare(a.version, b.version) })
 	merged := out[:1]
 	for _, e := range out[1:] {
 		last := &merged[len(merged)-1]

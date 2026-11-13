@@ -152,7 +152,7 @@ func (r *resolver) bestOfPath(mp datasource.ModulePath, scheme versioning.Scheme
 		}
 		cands = append(cands, v)
 	}
-	slices.SortFunc(cands, func(a, b string) int { return scheme.Compare(b, a) })
+	scheme.SortDesc(cands)
 	p := r.pol.of(dep.Major)
 	nd := r.d
 	nd.Name = mp.Name

@@ -206,8 +206,10 @@ func (m *customManager) finishJSONataDep(d *dep.Dep, markErr error) {
 	if d.Skip == "" && !m.knownVersioning(d.Versioning, d.Datasource) {
 		d.Skip = fmt.Sprintf("unknown versioning %q", d.Versioning)
 	}
-	if _, err := versioning.CompileExtract(d.ExtractVersion); d.Skip == "" && d.ExtractVersion != "" && err != nil {
-		d.Skip = "invalid extractVersion: " + err.Error()
+	if d.Skip == "" && d.ExtractVersion != "" {
+		if _, err := versioning.CompileExtract(d.ExtractVersion); err != nil {
+			d.Skip = "invalid extractVersion: " + err.Error()
+		}
 	}
 }
 

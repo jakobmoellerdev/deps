@@ -15,8 +15,17 @@ import (
 // Scheme parses, compares and selects versions of one versioning style.
 type Scheme interface {
 	Valid(v string) bool
-	// Compare orders two valid versions.
+	// Compare orders two valid versions. Sorting a list with it parses every version
+	// twice per comparison; Sort, SortDesc and SortBy parse each version once.
 	Compare(a, b string) int
+	// Sort sorts vs in place, lowest version first, in Compare's order with ties keeping
+	// the input order, parsing each version once.
+	Sort(vs []string)
+	// SortDesc is Sort with the highest version first.
+	SortDesc(vs []string)
+	// Order parses vs once and returns the comparator over its indices, for callers that
+	// sort records by their version (see SortBy).
+	Order(vs []string) Comparator
 	Kind(cur, next string) dep.UpdateType
 	// Semver returns v as a Masterminds version, or nil if it is not representable.
 	Semver(v string) *msemver.Version

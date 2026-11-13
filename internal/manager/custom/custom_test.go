@@ -629,6 +629,28 @@ func BenchmarkAnnotations(b *testing.B) {
 	}
 }
 
+// BenchmarkRenovateMarkers extracts a file that is nothing but Renovate markers, the shape
+// a generated manifest has: it measures the work per dep, which the line scan of
+// BenchmarkAnnotations hides.
+func BenchmarkRenovateMarkers(b *testing.B) {
+	var sb strings.Builder
+	for range 2000 {
+		sb.WriteString("# renovate: datasource=docker depName=nginx\nimage: nginx:1.27.3\n")
+	}
+	src := []byte(sb.String())
+	ms, err := New(&config.Config{Custom: []config.Custom{{Files: []string{"**/x.yaml"}}}})
+	if err != nil {
+		b.Fatal(err)
+	}
+	m := ms[0].(*customManager)
+	b.ReportAllocs()
+	for b.Loop() {
+		if got := len(m.annotations("x.yaml", src)); got != 2000 {
+			b.Fatalf("deps = %d", got)
+		}
+	}
+}
+
 // Renovate's currentDigest of a github-release-attachments dep (OCM's cosign .env pin) is the
 // sha256 of a release asset: it becomes the dep's attachment checksum, not its digest.
 func TestRegexAttachmentDigest(t *testing.T) {

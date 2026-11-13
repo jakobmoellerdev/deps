@@ -408,7 +408,7 @@ func resolve(base, ref string) (string, error) {
 }
 
 func sortReleases(rels []datasource.Release, s versioning.Scheme) {
-	slices.SortStableFunc(rels, func(a, b datasource.Release) int { return s.Compare(a.Version, b.Version) })
+	versioning.SortBy(s, rels, func(r datasource.Release) string { return r.Version }, nil)
 }
 
 // parseTime parses an RFC 3339 time; zero when malformed.
