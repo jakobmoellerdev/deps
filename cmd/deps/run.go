@@ -5,6 +5,7 @@ import (
 
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -241,6 +242,9 @@ type runShared struct {
 	token      string
 }
 
+// gitAuthor is the author of the commits deps makes.
+type gitAuthor struct{ Name, Email string }
+
 func runBot(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts) error {
 	start := time.Now()
 	switch r.platform {
@@ -328,19 +332,22 @@ func runBot(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts) erro
 		return err
 	}
 	defer s.close()
-	return runRepo(ctx, cmd, o, r, sh, s, start, nil)
-}
-
-// runRepo runs the bot on the checkout of session s. In a multi-repository run (multi
-// non-nil) its summary names the repository and its result is added to multi.
-func runRepo(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runOpts, sh *runShared, s *session, start time.Time, multi *multiRun) error {
-	stderr := cmd.Root().ErrWriter
-	info, token, client := s.info, sh.token, sh.client
-	repo := gitx.Repo{Dir: s.root, Signer: sh.signer}
 	name, email, err := commitAuthor(cmd, r, os.Getenv("DEPS_GIT_AUTHOR"), s.cfg.Git.Author)
 	if err != nil {
 		return err
 	}
+	return runRepo(ctx, cmd.Root().ErrWriter, o, r, sh, s, gitAuthor{name, email}, start, nil)
+}
+
+// runRepo runs the bot on the checkout of session s, writing its result lines to w. In a
+// multi-repository run (multi non-nil) its summary names the repository and its result is
+// added to multi. It takes no *cli.Command: `deps serve` runs it concurrently for many
+// repositories, each with its own writer and author, in one process.
+func runRepo(ctx context.Context, w io.Writer, o *rootOpts, r *runOpts, sh *runShared, s *session, author gitAuthor, start time.Time, multi *multiRun) error {
+	stderr := w
+	info, token, client := s.info, sh.token, sh.client
+	repo := gitx.Repo{Dir: s.root, Signer: sh.signer}
+	name, email := author.Name, author.Email
 	usePlatform, err := platformCommits(ctx, os.Getenv(platformCommitEnv), s.cfg.Git.PlatformCommit, info.Kind, token, sh.signer != nil)
 	if err != nil {
 		return err
@@ -612,7 +619,11 @@ func runRepositories(ctx context.Context, cmd *cli.Command, o *rootOpts, r *runO
 		if err != nil {
 			return err
 		}
-		return runRepo(ctx, cmd, o, r, sh, s, time.Now(), multi)
+		name, email, err := commitAuthor(cmd, r, os.Getenv("DEPS_GIT_AUTHOR"), s.cfg.Git.Author)
+		if err != nil {
+			return err
+		}
+		return runRepo(ctx, stderr, o, r, sh, s, gitAuthor{name, email}, time.Now(), multi)
 	})
 	if err != nil {
 		return err

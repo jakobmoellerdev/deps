@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/dep"
@@ -112,9 +113,30 @@ type TreeRegenerator interface {
 	Trees(dir string) []string
 }
 
-// postSem bounds concurrent post-processor runs (go mod tidy, npm install) across all Build
-// calls.
-var postSem = make(chan struct{}, 4)
+// DefaultPostLimit is how many post-processor runs (go mod tidy, npm install) may run
+// concurrently across all Build calls unless SetPostLimit raises it.
+const DefaultPostLimit = 4
+
+// postSem bounds concurrent post-processor runs across all Build calls; postStarted marks
+// the first Build, after which the limit is fixed.
+var (
+	postSem     = make(chan struct{}, DefaultPostLimit)
+	postStarted atomic.Bool
+)
+
+// SetPostLimit sets how many post-processor runs may be in flight across all Build calls.
+// The limit is one channel shared by every caller, so it can only be chosen before the
+// first Build: a later call panics. A long-running process that builds many repositories at
+// once (deps serve) raises it; the CLI leaves it at DefaultPostLimit.
+func SetPostLimit(n int) {
+	switch {
+	case n < 1:
+		panic("engine.SetPostLimit: limit must be at least 1")
+	case postStarted.Load():
+		panic("engine.SetPostLimit after Build")
+	}
+	postSem = make(chan struct{}, n)
+}
 
 // fileBuild is the patched state of one file of a Build call.
 type fileBuild struct {
@@ -146,6 +168,7 @@ type postScope struct {
 // regenerated siblings, is dropped and its error returned; the remaining changes are returned
 // sorted by Path.
 func Build(ctx context.Context, root string, managers []manager.Manager, updates []dep.Update, post map[string]PostProcessor) ([]FileChange, []error) {
+	postStarted.Store(true)
 	byName := make(map[string]manager.Manager, len(managers))
 	for _, m := range managers {
 		byName[m.Name()] = m

@@ -90,6 +90,7 @@ type rootOpts struct {
 	term         terminal     // set up with the logger
 	stderr       *logx.Writer // stderr of the command, set up with the logger
 	rawStderr    io.Writer    // the writer behind stderr (the terminal's file)
+	stdout       io.Writer    // stdout of the command, where plan writes its diff
 	prof         profiler
 	concurrency  int
 	report       string   // --report: JSON result file of plan, apply and run
@@ -149,7 +150,7 @@ func newRoot() *cli.Command {
 			tty := logx.IsTerminal(stderr)
 			w := logx.NewWriter(stderr)
 			cmd.ErrWriter = w
-			o.stderr, o.rawStderr = w, stderr
+			o.stderr, o.rawStderr, o.stdout = w, stderr, cmd.Writer
 			actionsLog = newAnnotator(os.Getenv, w, o.dir)
 			t, err := setupLogger(o.log, w, tty, logx.IsTerminal(cmd.Writer), os.Getenv)
 			if err != nil {

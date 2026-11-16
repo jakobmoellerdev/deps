@@ -55,7 +55,10 @@ func newPlan(o *rootOpts) *cli.Command {
 			"  deps plan --config ci/deps.yaml --log-level info"},
 		ArgValidator: noArgs,
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			return local(ctx, cmd, o, false)
+			if entries := repositoryEntries(cmd, o.repositories); len(entries) > 0 {
+				return planRepositories(ctx, cmd.Root().ErrWriter, o, entries)
+			}
+			return local(ctx, cmd.Root().ErrWriter, o, false)
 		},
 		Flags: append(scanFlags(o, scanResults), &cli.BoolFlag{Name: "diff", Destination: &o.showDiff,
 			Usage: "print the diff when stdout is a terminal too (piped stdout always gets it)"},
@@ -92,48 +95,44 @@ func colorDiff(st logx.Style, d string) string {
 	return b.String()
 }
 
-// local implements plan (write=false) and apply (write=true): on the checkout of --dir, or,
-// for plan with --repositories, on each remote repository in turn (planRepositories).
-func local(ctx context.Context, cmd *cli.Command, o *rootOpts, write bool) error {
+// local implements plan (write=false) and apply (write=true) on the checkout of --dir,
+// writing its result lines to w and, for plan, the diff to o.stdout. It takes no
+// *cli.Command: `deps serve` plans many repositories concurrently in one process, each into
+// its own writer.
+func local(ctx context.Context, w io.Writer, o *rootOpts, write bool) error {
 	start := time.Now()
-	stderr := cmd.Root().ErrWriter
-	if !write {
-		if entries := repositoryEntries(cmd, o.repositories); len(entries) > 0 {
-			return planRepositories(ctx, cmd, o, entries)
-		}
-	}
 	info, _ := platform.FromEnv(os.Getenv)
-	s, err := newSession(ctx, o, info, envToken(), newHTTPClient(), stderr)
+	s, err := newSession(ctx, o, info, envToken(), newHTTPClient(), w)
 	if err != nil {
 		return err
 	}
 	defer s.close()
-	return planSession(ctx, cmd, o, s, write, nil, "", start)
+	return planSession(ctx, w, o, s, write, nil, "", start)
 }
 
 // planRepositories plans each repository of --repositories in turn, sharing the datasources
 // between them, and writes one report over all of them.
-func planRepositories(ctx context.Context, cmd *cli.Command, o *rootOpts, entries []string) error {
-	return repositoriesCommand(ctx, cmd, o, entries, false, "")
+func planRepositories(ctx context.Context, w io.Writer, o *rootOpts, entries []string) error {
+	return repositoriesCommand(ctx, w, o, entries, false, "")
 }
 
 // applyRepositories applies to a kept clone of each repository of --repositories under into
 // (<into>/<owner>/<name>), so the changed files, their lockfiles and the output of the
 // post-upgrade tasks stay for inspection.
-func applyRepositories(ctx context.Context, cmd *cli.Command, o *rootOpts, entries []string, into string) error {
+func applyRepositories(ctx context.Context, w io.Writer, o *rootOpts, entries []string, into string) error {
 	abs, err := filepath.Abs(into)
 	if err != nil {
 		return err
 	}
-	return repositoriesCommand(ctx, cmd, o, entries, true, abs)
+	return repositoriesCommand(ctx, w, o, entries, true, abs)
 }
 
 // repositoriesCommand plans (write=false) or applies (write=true) every repository of
 // entries in turn, sharing the datasources between them, and writes one report over all of
 // them. A failing repository does not stop the others.
-func repositoriesCommand(ctx context.Context, cmd *cli.Command, o *rootOpts, entries []string, write bool, into string) error {
+func repositoriesCommand(ctx context.Context, w io.Writer, o *rootOpts, entries []string, write bool, into string) error {
 	start := time.Now()
-	stderr := cmd.Root().ErrWriter
+	stderr := w
 	client := newHTTPClient()
 	src, err := newRemoteSource(ctx, o, entries, envToken(), client)
 	if err != nil {
@@ -152,7 +151,7 @@ func repositoriesCommand(ctx context.Context, cmd *cli.Command, o *rootOpts, ent
 		if err != nil {
 			return err
 		}
-		return planSession(ctx, cmd, o, s, write, multi, name, time.Now())
+		return planSession(ctx, stderr, o, s, write, multi, name, time.Now())
 	})
 	if err != nil {
 		return err
@@ -165,12 +164,13 @@ func repositoriesCommand(ctx context.Context, cmd *cli.Command, o *rootOpts, ent
 	return reportErr
 }
 
-// planSession plans (write=false) or applies (write=true) the updates of session s. In a
-// multi-repository plan (multi non-nil) repo names the repository: its summary carries the
-// name, its result is added to multi instead of written, and the diff paths are prefixed
-// with it, so one stream tells the repositories apart.
-func planSession(ctx context.Context, cmd *cli.Command, o *rootOpts, s *session, write bool, multi *multiRun, repo string, start time.Time) error {
-	stderr := cmd.Root().ErrWriter
+// planSession plans (write=false) or applies (write=true) the updates of session s, writing
+// its result lines to w and, for plan, the diff to o.stdout. In a multi-repository plan
+// (multi non-nil) repo names the repository: its summary carries the name, its result is
+// added to multi instead of written, and the diff paths are prefixed with it, so one stream
+// tells the repositories apart.
+func planSession(ctx context.Context, w io.Writer, o *rootOpts, s *session, write bool, multi *multiRun, repo string, start time.Time) error {
+	stderr := w
 	res, err := s.resolve(ctx)
 	if err != nil {
 		return err
@@ -215,7 +215,7 @@ func planSession(ctx context.Context, cmd *cli.Command, o *rootOpts, s *session,
 			buildErrs = append(buildErrs, err)
 		}
 	case !write && !diffHidden:
-		out := cmd.Root().Writer
+		out := o.stdout
 		prefix := ""
 		if repo != "" {
 			prefix = repo + "/"

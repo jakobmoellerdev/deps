@@ -67,7 +67,9 @@ func setupLogger(o logOpts, w *logx.Writer, tty, outTTY bool, getenv func(string
 		actionsLog.on = true
 		h = &annotatingHandler{Handler: h, a: actionsLog}
 	}
-	slog.SetDefault(slog.New(h))
+	// Outermost, so a record carries the attributes of its context (the repository and run of
+	// a serve cycle) wherever it goes next, including a Buffer that renders it later.
+	slog.SetDefault(slog.New(logx.ContextHandler{Next: h}))
 	// The diff is colored on a terminal or with --color always, never by $FORCE_COLOR alone:
 	// `deps plan > x.diff` must stay a patch git can apply.
 	diff := c == logx.ColorAlways || outTTY && c.Enabled(true, getenv)

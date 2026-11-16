@@ -69,9 +69,9 @@ func applyCmd(ctx context.Context, cmd *cli.Command, o *rootOpts, into string) e
 	case len(entries) > 0 && into == "":
 		return &usageError{errors.New("--repositories needs --into: apply writes files, so its clones must be kept somewhere")}
 	case len(entries) > 0:
-		return applyRepositories(ctx, cmd, o, entries, into)
+		return applyRepositories(ctx, cmd.Root().ErrWriter, o, entries, into)
 	}
-	return local(ctx, cmd, o, true)
+	return local(ctx, cmd.Root().ErrWriter, o, true)
 }
 
 // postProcessors regenerate go.sum (go mod tidy), package-lock.json (npm), Cargo.lock
