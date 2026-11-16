@@ -229,7 +229,7 @@ func TestCopierArgvUVX(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin)
-	argv, err := copierArgv()
+	argv, err := copierArgv(t.Context())
 	if err != nil || !slices.Equal(argv, []string{filepath.Join(bin, "uvx"), "--from", "copier", "copier"}) {
 		t.Errorf("copierArgv() = %q, %v", argv, err)
 	}

@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"maps"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"slices"
@@ -364,14 +363,14 @@ func mirrorDir(dir string, files map[string][]byte) (tmp, base string, err error
 // packages as `flutter pub` does without regenerating platform files; a failure carries the
 // tail of pub's output, with the mirror's paths shown as scope's.
 func runPub(ctx context.Context, dir, scope string, flutter bool, args ...string) error {
-	bin, env, err := dartTool(flutter)
+	bin, env, err := dartTool(ctx, flutter)
 	if err != nil {
 		return err
 	}
 	cmd, cancel := toolrun.Command(ctx, bin, append([]string{"--suppress-analytics", "pub"}, args...)...)
 	defer cancel()
 	cmd.Dir = dir
-	cmd.Env = toolrun.Env(env...)
+	cmd.Env = toolrun.Env(ctx, env...)
 	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()
@@ -387,15 +386,15 @@ func runPub(ctx context.Context, dir, scope string, flutter bool, args ...string
 // dartTool returns the dart binary and its extra environment: `dart` from PATH, or for a
 // Flutter scope the Dart SDK bundled with the `flutter` on PATH (bin/cache/dart-sdk, else the
 // bin/dart wrapper) with FLUTTER_ROOT.
-func dartTool(flutter bool) (string, []string, error) {
+func dartTool(ctx context.Context, flutter bool) (string, []string, error) {
 	if !flutter {
-		bin, err := exec.LookPath("dart")
+		bin, err := toolrun.Lookup(ctx, "dart")
 		if err != nil {
 			return "", nil, fmt.Errorf("dart not found (needed to update %s)", lockFile)
 		}
 		return bin, nil, nil
 	}
-	bin, err := exec.LookPath("flutter")
+	bin, err := toolrun.Lookup(ctx, "flutter")
 	if err == nil {
 		bin, err = filepath.EvalSymlinks(bin)
 	}

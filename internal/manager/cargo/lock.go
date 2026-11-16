@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"maps"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"slices"
@@ -506,7 +505,7 @@ func compatible(a, b *semver.Version) bool {
 // toolchain unless it is "" (rustupToolchain); a failure carries the tail of cargo's output,
 // with the mirror's paths shown as scope's.
 func cargo(ctx context.Context, dir, scope, toolchain string, args ...string) error {
-	bin, err := exec.LookPath("cargo")
+	bin, err := toolrun.Lookup(ctx, "cargo")
 	if err != nil {
 		return fmt.Errorf("cargo not found (needed to update %s)", lockFile)
 	}
@@ -517,7 +516,7 @@ func cargo(ctx context.Context, dir, scope, toolchain string, args ...string) er
 	if toolchain != "" {
 		env = append(env, "RUSTUP_TOOLCHAIN="+toolchain)
 	}
-	cmd.Env = toolrun.Env(env...)
+	cmd.Env = toolrun.Env(ctx, env...)
 	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()

@@ -382,7 +382,7 @@ func realLock(t *testing.T, manifest, lock string, files map[string]string, old,
 		t.Skip("network")
 	}
 	t.Parallel()
-	if _, err := c.argv(); err != nil {
+	if _, err := c.argv(t.Context()); err != nil {
 		t.Skipf("neither %s nor uvx in PATH", c.tool)
 	}
 	first := t.TempDir()
@@ -429,7 +429,7 @@ func TestProcessMirror(t *testing.T) {
 	if testing.Short() {
 		t.Skip("network")
 	}
-	if _, err := uvCmd().argv(); err != nil {
+	if _, err := uvCmd().argv(t.Context()); err != nil {
 		t.Skip("uv not in PATH")
 	}
 	gitBin, err := exec.LookPath("git")

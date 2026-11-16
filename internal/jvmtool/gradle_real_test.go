@@ -17,7 +17,7 @@ func TestGradleLockerMaintainReal(t *testing.T) {
 	if _, err := exec.LookPath("gradle"); err != nil {
 		t.Skip("gradle not in PATH")
 	}
-	if checkJava() != nil {
+	if checkJava(t.Context()) != nil {
 		t.Skip("java not found")
 	}
 	build := "plugins { id 'java' }\nrepositories { mavenCentral() }\ndependencyLocking { lockAllConfigurations() }\n" +

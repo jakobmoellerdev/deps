@@ -12,7 +12,6 @@ import (
 	"log/slog"
 	"maps"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"slices"
@@ -595,7 +594,7 @@ func skipEntry(rel string, d fs.DirEntry) bool {
 // lock as lockName, and returns the lockfile it leaves; a failure carries the tail of deno's
 // output, with the mirror's paths shown as dir's.
 func runDeno(ctx context.Context, dir string, configs map[string][]byte, lockName string, lock []byte) ([]byte, error) {
-	bin, err := exec.LookPath("deno")
+	bin, err := toolrun.Lookup(ctx, "deno")
 	if err != nil {
 		return nil, fmt.Errorf("deno not found (needed to update %s)", lockName)
 	}
@@ -610,7 +609,7 @@ func runDeno(ctx context.Context, dir string, configs map[string][]byte, lockNam
 	cmd, cancel := toolrun.Command(ctx, bin, args...)
 	defer cancel()
 	cmd.Dir = base
-	cmd.Env = toolrun.Env("DENO_NO_UPDATE_CHECK=1", "NO_COLOR=1")
+	cmd.Env = toolrun.Env(ctx, "DENO_NO_UPDATE_CHECK=1", "NO_COLOR=1")
 	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()

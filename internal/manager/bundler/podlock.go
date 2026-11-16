@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"slices"
@@ -149,7 +148,7 @@ func xcodeBundle(rel string) bool {
 // runs as root (CI containers), which CocoaPods refuses otherwise; a failure carries the tail
 // of CocoaPods' output, with the mirror's paths shown as scope's.
 func pod(ctx context.Context, dir, scope string, args ...string) error {
-	bin, err := exec.LookPath("pod")
+	bin, err := toolrun.Lookup(ctx, "pod")
 	if err != nil {
 		return fmt.Errorf("pod not found (needed to update %s)", podfileLock)
 	}
@@ -160,7 +159,7 @@ func pod(ctx context.Context, dir, scope string, args ...string) error {
 	cmd, cancel := toolrun.Command(ctx, bin, full...)
 	defer cancel()
 	cmd.Dir = dir
-	cmd.Env = toolrun.Env()
+	cmd.Env = toolrun.Env(ctx)
 	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()

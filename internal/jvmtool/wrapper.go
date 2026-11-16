@@ -71,7 +71,7 @@ func (GradleWrapper) Process(ctx context.Context, dir string, manifests, files m
 	if m == nil {
 		return nil, fmt.Errorf("unsupported distributionUrl %q", u)
 	}
-	if checkJava() != nil {
+	if checkJava(ctx) != nil {
 		slog.WarnContext(ctx, "java not found: keeping the Gradle wrapper jar and scripts, only "+GradleWrapperProperties+" is updated", "dir", dir)
 		return nil, nil
 	}
@@ -80,7 +80,7 @@ func (GradleWrapper) Process(ctx context.Context, dir string, manifests, files m
 		return nil, err
 	}
 	defer os.RemoveAll(root)
-	tool, err := toolPath(tmp, "gradlew", "gradle")
+	tool, err := toolPath(ctx, tmp, "gradlew", "gradle")
 	if err != nil {
 		return nil, errors.New("gradle not found (needed to regenerate the Gradle wrapper)")
 	}
@@ -131,7 +131,7 @@ func (MavenWrapper) Process(ctx context.Context, dir string, manifests, files ma
 	if err != nil {
 		return nil, err
 	}
-	if checkJava() != nil {
+	if checkJava(ctx) != nil {
 		slog.WarnContext(ctx, "java not found: keeping the Maven wrapper scripts, only "+MavenWrapperProperties+" is updated", "dir", dir)
 		return nil, nil
 	}
@@ -140,7 +140,7 @@ func (MavenWrapper) Process(ctx context.Context, dir string, manifests, files ma
 		return nil, err
 	}
 	defer os.RemoveAll(root)
-	tool, err := toolPath(tmp, "mvnw", "mvn")
+	tool, err := toolPath(ctx, tmp, "mvnw", "mvn")
 	if err != nil {
 		return nil, errors.New("mvn not found (needed to regenerate the Maven wrapper)")
 	}

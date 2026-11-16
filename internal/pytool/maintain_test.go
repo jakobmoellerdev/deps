@@ -176,7 +176,7 @@ func TestMaintainReal(t *testing.T) {
 		{"pipenv", Pipfile, PipfileLock, `"version": "==VER"`, pipfile, pipenvCmd()},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			if _, err := c.cmd.argv(); err != nil {
+			if _, err := c.cmd.argv(t.Context()); err != nil {
 				t.Skipf("neither %s nor uvx in PATH", c.cmd.tool)
 			}
 			t.Setenv("UV_CACHE_DIR", t.TempDir())

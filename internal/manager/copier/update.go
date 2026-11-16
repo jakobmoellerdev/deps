@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"maps"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"slices"
@@ -53,7 +52,7 @@ func (Updater) Trees(string) []string { return []string{"."} }
 // files that differ from the copy afterwards (nil for deleted ones). An update that leaves
 // merge conflicts fails, naming the files.
 func (Updater) Process(ctx context.Context, dir string, manifests, _ map[string][]byte) (map[string][]byte, error) {
-	argv, err := copierArgv()
+	argv, err := copierArgv(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -148,18 +147,18 @@ func result(tmp, p string) ([]byte, error) {
 
 // copierArgv returns the command running copier: copier from PATH, else `uvx --from copier
 // copier`.
-func copierArgv() ([]string, error) {
-	if p, err := exec.LookPath("copier"); err == nil {
+func copierArgv(ctx context.Context) ([]string, error) {
+	if p, err := toolrun.Lookup(ctx, "copier"); err == nil {
 		return []string{p}, nil
 	}
-	if uvx, err := exec.LookPath("uvx"); err == nil {
+	if uvx, err := toolrun.Lookup(ctx, "uvx"); err == nil {
 		return []string{uvx, "--from", "copier", "copier"}, nil
 	}
 	return nil, errors.New("copier not found (needed to update from Copier templates)")
 }
 
 // env is the environment of copier and git: no terminal prompts for template credentials.
-func env() []string { return toolrun.Env("GIT_TERMINAL_PROMPT=0") }
+func env(ctx context.Context) []string { return toolrun.Env(ctx, "GIT_TERMINAL_PROMPT=0") }
 
 // runCopier runs bin args in tmp; a failure carries the tail of copier's output with tmp shown
 // as scope.
@@ -167,7 +166,7 @@ func runCopier(ctx context.Context, tmp, scope, bin string, args []string) error
 	cmd, cancel := toolrun.Command(ctx, bin, args...)
 	defer cancel()
 	cmd.Dir = tmp
-	cmd.Env = env()
+	cmd.Env = env(ctx)
 	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()
@@ -187,7 +186,7 @@ func (g gitRunner) run(ctx context.Context, args ...string) (string, error) {
 	cmd, cancel := toolrun.Command(ctx, "git", args...)
 	defer cancel()
 	cmd.Dir = g.dir
-	cmd.Env = env()
+	cmd.Env = env(ctx)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -215,7 +214,7 @@ func copyProject(ctx context.Context, dir, dst string) error {
 	cmd, cancel := toolrun.Command(ctx, "git", "ls-files", "-z", "--cached", "--others", "--exclude-standard")
 	defer cancel()
 	cmd.Dir = dir
-	cmd.Env = env()
+	cmd.Env = env(ctx)
 	list, err := cmd.Output()
 	if err != nil {
 		return toolrun.CopyTree(dir, dst, func(_ string, d fs.DirEntry) bool { return d.Name() == ".git" })

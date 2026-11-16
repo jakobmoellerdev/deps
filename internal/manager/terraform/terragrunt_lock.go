@@ -51,7 +51,7 @@ func (TerragruntLocker) Maintain(ctx context.Context, _ string, files map[string
 	if err != nil || cfg == nil {
 		return nil, err
 	}
-	tool, bin, err := lockTool(tofu)
+	tool, bin, err := lockTool(ctx, tofu)
 	if err != nil {
 		return nil, err
 	}

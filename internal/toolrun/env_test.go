@@ -20,7 +20,7 @@ func TestEnv(t *testing.T) {
 		k, v, _ := strings.Cut(kv, "=")
 		t.Setenv(k, v)
 	}
-	env := Env("A=1", "NPM_TOKEN=override")
+	env := Env(t.Context(), "A=1", "NPM_TOKEN=override")
 	for _, kv := range env {
 		if k, _, _ := strings.Cut(kv, "="); slices.Contains(secrets, k) {
 			t.Errorf("Env() has %s", kv)

@@ -8,7 +8,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"slices"
@@ -106,7 +105,7 @@ var skipDirs = []string{".git", ".paket", "packages", "paket-files", "node_modul
 // directories of the scope to symlink the checkout's files one by one only cost a walk of the
 // whole tree per scope.
 func run(ctx context.Context, dir string, src, lock []byte, cmds [][]string) (map[string][]byte, error) {
-	bin, err := exec.LookPath("paket")
+	bin, err := toolrun.Lookup(ctx, "paket")
 	if err != nil {
 		return nil, fmt.Errorf("paket not found (needed to update %s)", lockFile)
 	}
@@ -137,7 +136,7 @@ func paket(ctx context.Context, bin, dir, scope string, args []string) error {
 	cmd, cancel := toolrun.Command(ctx, bin, args...)
 	defer cancel()
 	cmd.Dir = dir
-	cmd.Env = toolrun.Env("NO_COLOR=1", "DOTNET_CLI_TELEMETRY_OPTOUT=1")
+	cmd.Env = toolrun.Env(ctx, "NO_COLOR=1", "DOTNET_CLI_TELEMETRY_OPTOUT=1")
 	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()

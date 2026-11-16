@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"maps"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"slices"
@@ -118,7 +117,7 @@ func (Locker) Maintain(ctx context.Context, dir string, files map[string][]byte)
 // lockfile when it differs from lock. A patched `.bazelversion` among copies runs Bazelisk
 // first, so the lockfile is written by the new Bazel version.
 func regenerate(ctx context.Context, dir string, copies map[string][]byte, lock []byte) (map[string][]byte, error) {
-	bin, err := bazelBinary(copies[bazelVersionFile] != nil)
+	bin, err := bazelBinary(ctx, copies[bazelVersionFile] != nil)
 	if err != nil {
 		return nil, err
 	}
@@ -222,13 +221,13 @@ func materialize(src, dst, rel string) error {
 // of .bazelversion); with versionChanged (an updated .bazelversion) `bazelisk` comes first, as a
 // plain Bazel binary would ignore the new version (a `bazel` that is Bazelisk, as npm's
 // @bazel/bazelisk and most CI images install it, honors it too).
-func bazelBinary(versionChanged bool) (string, error) {
+func bazelBinary(ctx context.Context, versionChanged bool) (string, error) {
 	names := []string{"bazel", "bazelisk"}
 	if versionChanged {
 		names[0], names[1] = names[1], names[0]
 	}
 	for _, n := range names {
-		if bin, err := exec.LookPath(n); err == nil {
+		if bin, err := toolrun.Lookup(ctx, n); err == nil {
 			return bin, nil
 		}
 	}
@@ -241,7 +240,7 @@ func runBazel(ctx context.Context, bin, dir, scope, outBase string, args ...stri
 	cmd, cancel := toolrun.Command(ctx, bin, append([]string{"--output_base=" + outBase}, args...)...)
 	defer cancel()
 	cmd.Dir = dir
-	cmd.Env = toolrun.Env()
+	cmd.Env = toolrun.Env(ctx)
 	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()

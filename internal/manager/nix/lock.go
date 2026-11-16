@@ -11,7 +11,6 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -374,14 +373,14 @@ func mirrorDir(dir string, copies map[string][]byte) (tmp, base string, err erro
 // mirror of scope), with GitHubToken added to NIX_CONFIG as an access token for github.com; a
 // failure carries the tail of nix's output, with the mirror's paths shown as scope's.
 func (l Locker) nix(ctx context.Context, dir, scope string, args ...string) error {
-	bin, err := exec.LookPath("nix")
+	bin, err := toolrun.Lookup(ctx, "nix")
 	if err != nil {
 		return fmt.Errorf("nix not found (needed to update %s)", lockFile)
 	}
 	cmd, cancel := toolrun.Command(ctx, bin, append([]string{"--extra-experimental-features", "nix-command flakes"}, args...)...)
 	defer cancel()
 	cmd.Dir = dir
-	cmd.Env = toolrun.Env()
+	cmd.Env = toolrun.Env(ctx)
 	if l.GitHubToken != "" {
 		conf := "extra-access-tokens = github.com=" + l.GitHubToken
 		if prev := os.Getenv("NIX_CONFIG"); prev != "" {

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
-	"os/exec"
 	"slices"
 	"strings"
 	"time"
@@ -35,14 +34,14 @@ func mirror(dir, pattern string, copies map[string][]byte, skip []string) (tmp, 
 // tool runs `<name> args...` in dir (the mirror of scope) with env added; a failure carries
 // the tail of the tool's output, with the mirror's paths shown as scope's.
 func tool(ctx context.Context, name, lock, dir, scope string, args []string, env ...string) error {
-	bin, err := exec.LookPath(name)
+	bin, err := toolrun.Lookup(ctx, name)
 	if err != nil {
 		return fmt.Errorf("%s not found (needed to update %s)", name, lock)
 	}
 	cmd, cancel := toolrun.Command(ctx, bin, args...)
 	defer cancel()
 	cmd.Dir = dir
-	cmd.Env = append(toolrun.Env("NO_COLOR=1"), env...)
+	cmd.Env = append(toolrun.Env(ctx, "NO_COLOR=1"), env...)
 	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()

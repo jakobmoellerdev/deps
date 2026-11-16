@@ -95,8 +95,8 @@ var droppedEnv = []string{
 }
 
 // taskEnv is toolrun.Env without droppedEnv.
-func taskEnv() []string {
-	return slices.DeleteFunc(toolrun.Env(), func(kv string) bool {
+func taskEnv(ctx context.Context) []string {
+	return slices.DeleteFunc(toolrun.Env(ctx), func(kv string) bool {
 		k, _, _ := strings.Cut(kv, "=")
 		return slices.Contains(droppedEnv, k)
 	})
@@ -159,7 +159,7 @@ func (r TaskRun) env() []string {
 // killed once it is over: a command that times out, is canceled or backgrounds a child would
 // otherwise leave that child writing into dir after runTasks returned.
 func runTasks(ctx context.Context, dir string, runs []TaskRun) error {
-	env := taskEnv()
+	env := taskEnv(ctx)
 	for _, r := range runs {
 		ctx, cancel := context.WithTimeout(ctx, taskTimeout)
 		cmd := exec.CommandContext(ctx, "sh", "-c", r.Command)
@@ -615,7 +615,7 @@ func gitOut(ctx context.Context, dir string, stdin []byte, args ...string) (stri
 func gitEnvOut(ctx context.Context, dir string, stdin []byte, env []string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(append(taskEnv(), "GIT_TERMINAL_PROMPT=0"), env...)
+	cmd.Env = append(append(taskEnv(ctx), "GIT_TERMINAL_PROMPT=0"), env...)
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}

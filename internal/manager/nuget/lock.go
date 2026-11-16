@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"maps"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"slices"
@@ -206,7 +205,7 @@ func restore(ctx context.Context, dir string, manifests, files map[string][]byte
 	if len(targets) == 0 {
 		return nil, nil
 	}
-	bin, err := exec.LookPath("dotnet")
+	bin, err := toolrun.Lookup(ctx, "dotnet")
 	if err != nil {
 		return nil, fmt.Errorf("dotnet not found (needed to update %s)", lockFile)
 	}
@@ -291,7 +290,7 @@ func dotnet(ctx context.Context, bin, dir, scope string, args []string) error {
 	cmd, cancel := toolrun.Command(ctx, bin, args...)
 	defer cancel()
 	cmd.Dir = dir
-	cmd.Env = toolrun.Env("DOTNET_CLI_TELEMETRY_OPTOUT=1", "DOTNET_NOLOGO=1", "DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1", "NUGET_XMLDOC_MODE=skip")
+	cmd.Env = toolrun.Env(ctx, "DOTNET_CLI_TELEMETRY_OPTOUT=1", "DOTNET_NOLOGO=1", "DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1", "NUGET_XMLDOC_MODE=skip")
 	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()

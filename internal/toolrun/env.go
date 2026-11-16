@@ -1,6 +1,7 @@
 package toolrun
 
 import (
+	"context"
 	"os"
 	"slices"
 	"strings"
@@ -30,12 +31,16 @@ func Secret(name string) bool {
 	return false
 }
 
-// Env is the environment of a tool deps runs: deps' own without the Secret variables,
-// followed by extra (KEY=value entries, which win over inherited ones).
-func Env(extra ...string) []string {
+// Env is the environment of a tool deps runs: deps' own without the Secret variables, then
+// the entries of the Provider of ctx (the toolchains it installed for this unit of work),
+// then extra. Later entries win over earlier ones, so extra overrides both.
+func Env(ctx context.Context, extra ...string) []string {
 	env := slices.DeleteFunc(os.Environ(), func(kv string) bool {
 		k, _, _ := strings.Cut(kv, "=")
 		return Secret(k)
 	})
+	if p := provider(ctx); p != nil {
+		env = append(env, p.Env(ctx)...)
+	}
 	return append(env, extra...)
 }

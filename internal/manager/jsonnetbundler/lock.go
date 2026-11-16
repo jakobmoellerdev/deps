@@ -9,7 +9,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"slices"
@@ -174,14 +173,14 @@ func mirrorDir(dir string, copies map[string][]byte) (tmp, base string, err erro
 // jb runs `jb args...` in dir (the mirror of scope); a failure carries the tail of jb's
 // output, with the mirror's paths shown as scope's.
 func jb(ctx context.Context, dir, scope string, args ...string) error {
-	bin, err := exec.LookPath("jb")
+	bin, err := toolrun.Lookup(ctx, "jb")
 	if err != nil {
 		return fmt.Errorf("jb not found (needed to update %s)", lockFile)
 	}
 	cmd, cancel := toolrun.Command(ctx, bin, args...)
 	defer cancel()
 	cmd.Dir = dir
-	cmd.Env = toolrun.Env()
+	cmd.Env = toolrun.Env(ctx)
 	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()

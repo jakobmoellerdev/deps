@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"maps"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"slices"
@@ -204,7 +203,7 @@ func relock(ctx context.Context, dir string, manifests, files map[string][]byte,
 	if err != nil {
 		return nil, fmt.Errorf("%s in %s: %w", lockFile, dir, err)
 	}
-	bin, err := exec.LookPath("conda-lock")
+	bin, err := toolrun.Lookup(ctx, "conda-lock")
 	if err != nil {
 		return nil, fmt.Errorf("conda-lock not found (needed to update %s)", lockFile)
 	}
@@ -246,7 +245,7 @@ func condaLockCmd(ctx context.Context, bin, dir, scope string, args []string) er
 	cmd, cancel := toolrun.Command(ctx, bin, args...)
 	defer cancel()
 	cmd.Dir = dir
-	cmd.Env = toolrun.Env("NO_COLOR=1")
+	cmd.Env = toolrun.Env(ctx, "NO_COLOR=1")
 	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()

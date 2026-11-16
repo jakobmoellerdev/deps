@@ -12,7 +12,6 @@ import (
 	"log/slog"
 	"maps"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -224,7 +223,7 @@ var versions sync.Map
 // exactly their versions, but their dependencies may move to the newest versions the
 // constraints admit; Composer 1 is refused. A version that cannot be read counts as current.
 func updateFlags(ctx context.Context) ([]string, error) {
-	bin, err := exec.LookPath("composer")
+	bin, err := toolrun.Lookup(ctx, "composer")
 	if err != nil {
 		return nil, fmt.Errorf("composer not found (needed to update %s)", lockFile)
 	}
@@ -250,7 +249,7 @@ func updateFlags(ctx context.Context) ([]string, error) {
 func readVersion(ctx context.Context, bin string) [2]int {
 	cmd, cancel := toolrun.Command(ctx, bin, "--version", "--no-ansi")
 	defer cancel()
-	cmd.Env = toolrun.Env("COMPOSER_NO_INTERACTION=1", "NO_COLOR=1")
+	cmd.Env = toolrun.Env(ctx, "COMPOSER_NO_INTERACTION=1", "NO_COLOR=1")
 	out, _ := cmd.CombinedOutput()
 	m := composerVersion.FindSubmatch(out)
 	if m == nil {
@@ -343,14 +342,14 @@ func mirrorDir(dir string, copies map[string][]byte) (tmp, base string, err erro
 // composer.json; a failure carries the tail of Composer's output, with the mirror's paths
 // shown as scope's.
 func composer(ctx context.Context, dir, scope string, args ...string) error {
-	bin, err := exec.LookPath("composer")
+	bin, err := toolrun.Lookup(ctx, "composer")
 	if err != nil {
 		return fmt.Errorf("composer not found (needed to update %s)", lockFile)
 	}
 	cmd, cancel := toolrun.Command(ctx, bin, args...)
 	defer cancel()
 	cmd.Dir = dir
-	cmd.Env = toolrun.Env("COMPOSER="+filepath.Join(dir, manifest), "COMPOSER_NO_INTERACTION=1", "NO_COLOR=1")
+	cmd.Env = toolrun.Env(ctx, "COMPOSER="+filepath.Join(dir, manifest), "COMPOSER_NO_INTERACTION=1", "NO_COLOR=1")
 	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()

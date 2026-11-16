@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"maps"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -433,14 +432,14 @@ func projectFiles(dir string, projects map[string][]byte) (map[string][]byte, er
 // failure carries the tail of Julia's output before the backtrace, with the mirror's paths
 // shown as scope's.
 func julia(ctx context.Context, dir, scope, lock, script string, args []string) error {
-	bin, err := exec.LookPath("julia")
+	bin, err := toolrun.Lookup(ctx, "julia")
 	if err != nil {
 		return fmt.Errorf("julia not found (needed to update %s)", lock)
 	}
 	cmd, cancel := toolrun.Command(ctx, bin, append([]string{"--startup-file=no", "--history-file=no", "--color=no", "-e", script}, args...)...)
 	defer cancel()
 	cmd.Dir = dir
-	cmd.Env = toolrun.Env("JULIA_PKG_PRECOMPILE_AUTO=0")
+	cmd.Env = toolrun.Env(ctx, "JULIA_PKG_PRECOMPILE_AUTO=0")
 	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()

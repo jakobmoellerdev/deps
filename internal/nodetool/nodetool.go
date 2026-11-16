@@ -407,11 +407,11 @@ func command(lockName string, berry bool) cmdSpec {
 
 // argv resolves the command: the tool from PATH, else npx running the tool (at version when
 // packageManager pins it), else exec.ErrNotFound.
-func (c cmdSpec) argv(version string) ([]string, error) {
-	if p, err := exec.LookPath(c.tool); err == nil {
+func (c cmdSpec) argv(ctx context.Context, version string) ([]string, error) {
+	if p, err := toolrun.Lookup(ctx, c.tool); err == nil {
 		return append([]string{p}, c.args...), nil
 	}
-	npx, err := exec.LookPath("npx")
+	npx, err := toolrun.Lookup(ctx, "npx")
 	if err != nil {
 		return nil, exec.ErrNotFound
 	}
@@ -434,14 +434,14 @@ func (c cmdSpec) argv(version string) ([]string, error) {
 // run executes the command in dir; a failure carries the tail of its output (package managers
 // report errors on stdout as well as stderr).
 func (c cmdSpec) run(ctx context.Context, dir, version string) error {
-	argv, err := c.argv(version)
+	argv, err := c.argv(ctx, version)
 	if err != nil {
 		return err
 	}
 	cmd, cancel := toolrun.Command(ctx, argv[0], argv[1:]...)
 	defer cancel()
 	cmd.Dir = dir
-	cmd.Env = toolrun.Env("npm_config_update_notifier=false", "COREPACK_ENABLE_DOWNLOAD_PROMPT=0")
+	cmd.Env = toolrun.Env(ctx, "npm_config_update_notifier=false", "COREPACK_ENABLE_DOWNLOAD_PROMPT=0")
 	cmd.Env = append(cmd.Env, c.env...)
 	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out

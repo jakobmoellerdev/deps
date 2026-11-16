@@ -351,7 +351,7 @@ func TestProcessLockedReal(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			if _, err := c.cmd.argv(); err != nil {
+			if _, err := c.cmd.argv(t.Context()); err != nil {
 				t.Skipf("neither %s nor uvx in PATH", c.cmd.tool)
 			}
 			// Lock at 1.15.0 with a pin, then widen the manifest to a range admitting 1.16.0.

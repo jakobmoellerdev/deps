@@ -787,7 +787,7 @@ func run(ctx context.Context, dir string, env []string, args ...string) ([]byte,
 	defer cancel()
 	cmd.Dir = dir
 	if env != nil {
-		cmd.Env = toolrun.Env(env...)
+		cmd.Env = toolrun.Env(ctx, env...)
 	}
 	var stdout bytes.Buffer
 	stderr := &toolrun.TailBuffer{Max: 32 << 10}

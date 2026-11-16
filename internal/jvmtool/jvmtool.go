@@ -25,11 +25,11 @@ var errNoJava = errors.New("java not found")
 
 // checkJava reports errNoJava unless java is on PATH or JAVA_HOME/bin/java is executable;
 // the wrapper scripts look it up the same way.
-func checkJava() error {
+func checkJava(ctx context.Context) error {
 	if h := os.Getenv("JAVA_HOME"); h != "" && executable(filepath.Join(h, "bin", "java")) {
 		return nil
 	}
-	if _, err := exec.LookPath("java"); err == nil {
+	if _, err := toolrun.Lookup(ctx, "java"); err == nil {
 		return nil
 	}
 	return errNoJava
@@ -42,11 +42,11 @@ func executable(p string) bool {
 
 // toolPath returns the wrapper script in dir when it is executable, else tool from PATH, else
 // exec.ErrNotFound.
-func toolPath(dir, wrapper, tool string) (string, error) {
+func toolPath(ctx context.Context, dir, wrapper, tool string) (string, error) {
 	if p := filepath.Join(dir, wrapper); executable(p) {
 		return p, nil
 	}
-	p, err := exec.LookPath(tool)
+	p, err := toolrun.Lookup(ctx, tool)
 	if err != nil {
 		return "", exec.ErrNotFound
 	}
@@ -127,7 +127,7 @@ func run(ctx context.Context, dir string, argv []string) error {
 	cmd, cancel := toolrun.Command(ctx, argv[0], argv[1:]...)
 	defer cancel()
 	cmd.Dir = dir
-	cmd.Env = toolrun.Env()
+	cmd.Env = toolrun.Env(ctx)
 	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()

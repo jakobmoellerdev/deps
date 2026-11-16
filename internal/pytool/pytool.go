@@ -638,7 +638,7 @@ var poetryV1s sync.Map
 // and keeps them by default. A poetry found only through uvx is the latest, so Poetry 2.
 func poetryCmd(ctx context.Context) cmdSpec {
 	c := poetryTool()
-	p, err := exec.LookPath("poetry")
+	p, err := toolrun.Lookup(ctx, "poetry")
 	if err != nil {
 		return c
 	}
@@ -658,7 +658,7 @@ func poetryCmd(ctx context.Context) cmdSpec {
 func readPoetryV1(ctx context.Context, bin string, env []string) bool {
 	cmd, cancel := toolrun.Command(ctx, bin, "--version")
 	defer cancel()
-	cmd.Env = toolrun.Env(env...)
+	cmd.Env = toolrun.Env(ctx, env...)
 	out, err := cmd.Output()
 	return err == nil && poetryV1(string(out))
 }
@@ -682,12 +682,12 @@ func pipenvCmd() cmdSpec {
 
 // argv resolves the command: the tool from PATH, else (when allowed) uvx running it; with a
 // python version uvx first.
-func (c cmdSpec) argv() ([]string, error) {
-	uvx, uvxErr := exec.LookPath("uvx")
+func (c cmdSpec) argv(ctx context.Context) ([]string, error) {
+	uvx, uvxErr := toolrun.Lookup(ctx, "uvx")
 	if c.uvx && c.python != "" && uvxErr == nil {
 		return c.uvxArgv(uvx), nil
 	}
-	if p, err := exec.LookPath(c.tool); err == nil {
+	if p, err := toolrun.Lookup(ctx, c.tool); err == nil {
 		return append([]string{p}, c.args...), nil
 	}
 	if !c.uvx || uvxErr != nil {
@@ -718,14 +718,14 @@ func (e *toolError) Unwrap() error { return e.err }
 
 // run executes the command in dir; a failure is a *toolError.
 func (c cmdSpec) run(ctx context.Context, dir string) error {
-	argv, err := c.argv()
+	argv, err := c.argv(ctx)
 	if err != nil {
 		return err
 	}
 	cmd, cancel := toolrun.Command(ctx, argv[0], argv[1:]...)
 	defer cancel()
 	cmd.Dir = dir
-	cmd.Env = toolrun.Env(c.env...)
+	cmd.Env = toolrun.Env(ctx, c.env...)
 	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()

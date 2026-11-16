@@ -347,7 +347,7 @@ func runGradle(ctx context.Context, dir string, manifests, files map[string][]by
 	if len(lockfiles) > 0 {
 		target = lockfiles[0]
 	}
-	if err := checkJava(); err != nil {
+	if err := checkJava(ctx); err != nil {
 		return nil, fmt.Errorf("java not found (needed to update %s)", target)
 	}
 	root, tmp, err := copyBuild(dir, manifests, gradleSkip)
@@ -355,7 +355,7 @@ func runGradle(ctx context.Context, dir string, manifests, files map[string][]by
 		return nil, err
 	}
 	defer os.RemoveAll(root)
-	tool, err := toolPath(tmp, "gradlew", "gradle")
+	tool, err := toolPath(ctx, tmp, "gradlew", "gradle")
 	if err != nil {
 		return nil, fmt.Errorf("gradle not found (needed to update %s)", target)
 	}

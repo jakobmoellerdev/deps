@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"maps"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"slices"
@@ -120,7 +119,7 @@ func refresh(ctx context.Context, dir string, manifests, files map[string][]byte
 	if err != nil {
 		return nil, err
 	}
-	tool, bin, err := lockTool(tofu)
+	tool, bin, err := lockTool(ctx, tofu)
 	if err != nil {
 		return nil, err
 	}
@@ -159,7 +158,7 @@ func (Locker) Maintain(ctx context.Context, dir string, files map[string][]byte)
 			tofu = tofu || isTofu(e.Name())
 		}
 	}
-	tool, bin, err := lockTool(tofu)
+	tool, bin, err := lockTool(ctx, tofu)
 	if err != nil {
 		return nil, err
 	}
@@ -188,12 +187,12 @@ func (tfManager) LockRoots(root string, files []string) []manager.LockRoot {
 }
 
 // lockTool finds the CLI that refreshes a lock: tofu for OpenTofu, else terraform.
-func lockTool(tofu bool) (tool, bin string, err error) {
+func lockTool(ctx context.Context, tofu bool) (tool, bin string, err error) {
 	tool = "terraform"
 	if tofu {
 		tool = "tofu"
 	}
-	if bin, err = exec.LookPath(tool); err != nil {
+	if bin, err = toolrun.Lookup(ctx, tool); err != nil {
 		return "", "", fmt.Errorf("%s not found (needed to update %s)", tool, LockFile)
 	}
 	return tool, bin, nil
@@ -440,7 +439,7 @@ func runInit(ctx context.Context, bin, work string, args ...string) error {
 	cmd, cancel := toolrun.Command(ctx, bin, append([]string{"init", "-backend=false", "-input=false", "-no-color"}, args...)...)
 	defer cancel()
 	cmd.Dir = work
-	cmd.Env = toolrun.Env("TF_IN_AUTOMATION=1", "TF_INPUT=0", "CHECKPOINT_DISABLE=1", "TF_DATA_DIR="+filepath.Join(work, ".terraform"))
+	cmd.Env = toolrun.Env(ctx, "TF_IN_AUTOMATION=1", "TF_INPUT=0", "CHECKPOINT_DISABLE=1", "TF_DATA_DIR="+filepath.Join(work, ".terraform"))
 	out := &toolrun.TailBuffer{Max: 32 << 10}
 	cmd.Stdout, cmd.Stderr = out, out
 	start := time.Now()

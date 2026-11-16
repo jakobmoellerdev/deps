@@ -96,18 +96,18 @@ func logged(t *testing.T, log string) (argv, files []string) {
 
 func TestCheckJava(t *testing.T) {
 	bin, log := toolEnv(t, true)
-	if err := checkJava(); !errors.Is(err, errNoJava) {
+	if err := checkJava(t.Context()); !errors.Is(err, errNoJava) {
 		t.Fatalf("no java: %v", err)
 	}
 	home := t.TempDir()
 	script(t, filepath.Join(home, "bin", "java"), log, "")
 	t.Setenv("JAVA_HOME", home)
-	if err := checkJava(); err != nil {
+	if err := checkJava(t.Context()); err != nil {
 		t.Errorf("JAVA_HOME: %v", err)
 	}
 	t.Setenv("JAVA_HOME", t.TempDir())
 	script(t, filepath.Join(bin, "java"), log, "")
-	if err := checkJava(); err != nil {
+	if err := checkJava(t.Context()); err != nil {
 		t.Errorf("PATH with a JAVA_HOME without java: %v", err)
 	}
 }
