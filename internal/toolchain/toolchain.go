@@ -90,8 +90,9 @@ type Entry struct {
 	// version of each is derived from the dependent's resolved version, so the pair always
 	// matches; an empty one falls back to what the repository declares, else the pin.
 	Requires func(version string) []Need
-	// Setup runs in the install directory after extraction, before it is marked complete.
-	Setup func(ctx context.Context, m *Manager, dir, version string) error
+	// Setup runs in the install directory after extraction, before it is marked complete;
+	// reqs are the installations of Requires, in order, for a tool that is built by another.
+	Setup func(ctx context.Context, m *Manager, dir, version string, reqs []Installed) error
 	// Provides maps a command name to its path below the install directory.
 	Provides map[string]string
 	// Env are the entries a run of one of the commands needs, given the install directory.
@@ -221,6 +222,7 @@ func (m *Manager) Ensure(ctx context.Context, tool Tool, version string) (Instal
 	// Requirements are installed first and their environment comes first too, so the
 	// dependent's own entries win where both set a variable.
 	var env []string
+	var reqs []Installed
 	if e.Requires != nil {
 		for _, need := range e.Requires(version) {
 			req, err := m.Ensure(ctx, need.Tool, need.Version)
@@ -228,10 +230,11 @@ func (m *Manager) Ensure(ctx context.Context, tool Tool, version string) (Instal
 				return Installed{}, fmt.Errorf("toolchain %s %s needs %s: %w", tool, version, need.Tool, err)
 			}
 			env = append(env, req.Env...)
+			reqs = append(reqs, req)
 		}
 	}
 	dir := filepath.Join(m.Root, string(tool), version, m.goos()+"-"+m.goarch())
-	err = m.install(ctx, e, dir, version)
+	err = m.install(ctx, e, dir, version, reqs)
 	if m.OnInstall != nil {
 		m.OnInstall(tool, err)
 	}
@@ -284,7 +287,7 @@ func (m *Manager) resolve(ctx context.Context, e Entry, version string) (string,
 const okFile = ".ok"
 
 // install downloads, verifies and unpacks the tool into dir unless it is complete already.
-func (m *Manager) install(ctx context.Context, e Entry, dir, version string) error {
+func (m *Manager) install(ctx context.Context, e Entry, dir, version string, reqs []Installed) error {
 	if _, err := os.Stat(filepath.Join(dir, okFile)); err == nil {
 		return nil
 	}
@@ -300,30 +303,34 @@ func (m *Manager) install(ctx context.Context, e Entry, dir, version string) err
 	if err := os.RemoveAll(dir); err != nil {
 		return err
 	}
-	d, err := e.Download(ctx, m, version, m.goos(), m.goarch())
-	if err != nil {
-		return fmt.Errorf("toolchain %s %s: %w", e.Tool, version, err)
-	}
 	start := time.Now()
-	art, err := m.fetchVerified(ctx, d)
-	if err != nil {
-		return fmt.Errorf("toolchain %s %s: %w", e.Tool, version, err)
-	}
-	defer os.Remove(art)
-	tmp := dir + ".tmp-" + filepath.Base(art)
+	tmp := dir + ".tmp"
 	defer os.RemoveAll(tmp)
 	if err := os.MkdirAll(tmp, 0o755); err != nil {
 		return err
 	}
-	name := d.Name
-	if name == "" {
-		name = string(e.Tool)
-	}
-	if err := unpack(ctx, art, tmp, e.Archive, e.Strip, name); err != nil {
-		return fmt.Errorf("toolchain %s %s: %w", e.Tool, version, err)
+	// An entry without a Download is built from source by another tool of the catalog (jb
+	// through the Go module proxy), which verifies what it fetches itself.
+	if e.Download != nil {
+		d, err := e.Download(ctx, m, version, m.goos(), m.goarch())
+		if err != nil {
+			return fmt.Errorf("toolchain %s %s: %w", e.Tool, version, err)
+		}
+		art, err := m.fetchVerified(ctx, d)
+		if err != nil {
+			return fmt.Errorf("toolchain %s %s: %w", e.Tool, version, err)
+		}
+		defer os.Remove(art)
+		name := d.Name
+		if name == "" {
+			name = string(e.Tool)
+		}
+		if err := unpack(ctx, art, tmp, e.Archive, e.Strip, name); err != nil {
+			return fmt.Errorf("toolchain %s %s: %w", e.Tool, version, err)
+		}
 	}
 	if e.Setup != nil {
-		if err := e.Setup(ctx, m, tmp, version); err != nil {
+		if err := e.Setup(ctx, m, tmp, version, reqs); err != nil {
 			return fmt.Errorf("toolchain %s %s: %w", e.Tool, version, err)
 		}
 	}

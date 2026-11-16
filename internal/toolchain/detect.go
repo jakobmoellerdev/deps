@@ -64,6 +64,7 @@ var toolVersionNames = map[string]Tool{
 	"dart": Dart, "flutter": Flutter, "dotnet": DotNet, "dotnet-core": DotNet,
 	"bazelisk": Bazelisk, "bazel": Bazelisk,
 	"erlang": Erlang, "elixir": Elixir, "gleam": Gleam,
+	"jb": JB, "jsonnet-bundler": JB,
 }
 
 // toolVersions reads .tool-versions (asdf, mise): one `<tool> <version>` line each, the

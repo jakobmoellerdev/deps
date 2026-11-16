@@ -37,6 +37,7 @@ func TestCatalogResolvesRealDownloads(t *testing.T) {
 		Erlang:    "27",     // a major, so Resolve picks the newest build
 		Elixir:    "1.18",   // a line; Resolve pairs it with an OTP major
 		Gleam:     "1.19.2",
+		JB:        "0.6.0",
 	}
 	for _, tool := range Tools() {
 		t.Run(string(tool), func(t *testing.T) {
@@ -50,6 +51,11 @@ func TestCatalogResolvesRealDownloads(t *testing.T) {
 			v, err := m.resolve(t.Context(), e, version)
 			if err != nil {
 				t.Fatalf("resolve %s: %v", version, err)
+			}
+			if e.Download == nil {
+				// A build-only entry (jb) has no artifact to resolve; `go install` fetches
+				// and verifies it through the module proxy and the checksum database.
+				return
 			}
 			d, err := e.Download(t.Context(), m, v, "linux", "amd64")
 			if err != nil {

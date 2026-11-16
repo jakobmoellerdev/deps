@@ -3,6 +3,7 @@ package toolchain
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,12 +17,12 @@ import (
 	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/toolrun"
 )
 
-// The tools of the catalog. A tool is here only when its publisher ships a checksum artifact
-// deps can verify the download against. The ones that do not stay out, and the manager that
+// The tools of the catalog. A tool is here only when its download can be verified: against
+// the publisher's own checksum artifact, or, for a tool built from source, against the Go
+// module checksum database. The ones that can be neither stay out, and the manager that
 // needs them reports them as not found, exactly as on a machine without them: nix (which
-// also needs a daemon or a root-owned store), the Ruby builds of ruby/ruby-builder, the PHP
-// builds of static-php-cli and the jsonnet-bundler releases all ship their binaries without
-// a digest.
+// also needs a daemon or a root-owned store) and the Ruby and PHP builds of
+// ruby/ruby-builder and static-php-cli, which publish their binaries without a digest.
 const (
 	Go        Tool = "go"
 	Node      Tool = "node"
@@ -42,6 +43,7 @@ const (
 	Erlang    Tool = "erlang"
 	Elixir    Tool = "elixir"
 	Gleam     Tool = "gleam"
+	JB        Tool = "jb"
 )
 
 // Catalog is every installable tool by name.
@@ -65,6 +67,7 @@ var Catalog = map[Tool]Entry{
 	Erlang:    erlangEntry,
 	Elixir:    elixirEntry,
 	Gleam:     gleamEntry,
+	JB:        jbEntry,
 }
 
 // provider indexes the catalog by command name: which tool provides `npx`, `mvn`, `tofu`.
@@ -435,7 +438,7 @@ var rustEntry = Entry{
 		return Download{URL: url, Sum: sum, Hash: SHA256, Name: "rustup-init"}, nil
 	},
 	Archive: Raw,
-	Setup: func(ctx context.Context, m *Manager, dir, version string) error {
+	Setup: func(ctx context.Context, m *Manager, dir, version string, _ []Installed) error {
 		cmd, cancel := toolrun.Command(ctx, filepath.Join(dir, "rustup-init"),
 			"-y", "--no-modify-path", "--profile", "minimal", "--default-toolchain", version)
 		defer cancel()
@@ -881,7 +884,7 @@ var erlangEntry = Entry{
 	Strip:   1,
 	// An OTP binary distribution carries no bin/erl until its Install script writes the
 	// launchers with the absolute paths of this installation.
-	Setup: func(ctx context.Context, _ *Manager, dir, _ string) error {
+	Setup: func(ctx context.Context, _ *Manager, dir, _ string, _ []Installed) error {
 		cmd, cancel := toolrun.Command(ctx, filepath.Join(dir, "Install"), "-minimal", dir)
 		defer cancel()
 		cmd.Dir = dir
@@ -980,6 +983,38 @@ var gleamEntry = Entry{
 	Provides: map[string]string{"gleam": "gleam"},
 	Env: func(m *Manager, dir string) []string {
 		return []string{pathEnv(dir), "HEX_HOME=" + m.state("hex")}
+	},
+}
+
+// --- jsonnet-bundler ---------------------------------------------------------
+
+// jbEntry has no download of its own. The jsonnet-bundler releases publish their binaries
+// without a digest, but the module is on the Go proxy, where `go install` verifies the
+// module and every dependency against the public checksum database — the same guarantee the
+// rest of the catalog gets from a publisher checksum, so jb is built rather than fetched.
+// It needs a Go version to build with: the one the repository declares, else the `go` pin.
+var jbEntry = Entry{
+	Tool:     JB,
+	Requires: func(string) []Need { return []Need{{Tool: Go}} },
+	Setup: func(ctx context.Context, _ *Manager, dir, version string, reqs []Installed) error {
+		if len(reqs) == 0 || reqs[0].Bins["go"] == "" {
+			return errors.New("no Go toolchain to build jb with")
+		}
+		pkg := "github.com/jsonnet-bundler/jsonnet-bundler/cmd/jb@v" + strings.TrimPrefix(version, "v")
+		cmd, cancel := toolrun.Command(ctx, reqs[0].Bins["go"], "install", pkg)
+		defer cancel()
+		// GOFLAGS=-trimpath keeps the build reproducible; GONOSUMDB and GOPRIVATE are left
+		// untouched so the checksum database is consulted.
+		cmd.Env = append(append(os.Environ(), reqs[0].Env...),
+			"GOBIN="+filepath.Join(dir, "bin"), "GOFLAGS=-trimpath")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("go install %s: %w: %s", pkg, err, toolrun.Tail(out, 10))
+		}
+		return nil
+	},
+	Provides: map[string]string{"jb": "bin/jb"},
+	Env: func(_ *Manager, dir string) []string {
+		return []string{pathEnv(filepath.Join(dir, "bin"))}
 	},
 }
 
