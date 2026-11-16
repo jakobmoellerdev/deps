@@ -485,6 +485,9 @@ func runRepo(ctx context.Context, w io.Writer, o *rootOpts, r *runOpts, sh *runS
 		multi.add(&sum)
 	}
 	sum.write(stderr)
+	if o.collect != nil {
+		o.collect(&sum)
+	}
 	var reportErr error
 	if multi == nil {
 		reportErr = sum.writeMachine(stderr, sum.Report)

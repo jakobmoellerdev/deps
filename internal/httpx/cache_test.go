@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net/http"
@@ -37,14 +38,14 @@ func (c *memCache) Put(_ context.Context, key string, entry []byte, ttl time.Dur
 }
 
 // cachingClient wires a caching transport in front of srv, without the retry chain, so the
-// test sees exactly the cache's behaviour.
+// test sees exactly the cache's behavior.
 func cachingClient(c Cache, scope string, next http.RoundTripper, observe func(string, CacheOutcome)) *http.Client {
 	return &http.Client{Transport: &cacheTransport{next: next, cache: c, scope: scope, observe: observe}}
 }
 
 func get(t *testing.T, c *http.Client, url string) (int, string) {
 	t.Helper()
-	resp, err := c.Get(url) //nolint:noctx // a test request
+	resp, err := c.Get(url)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +192,7 @@ func TestCacheSkipsForgeAPIsAndWrites(t *testing.T) {
 			t.Errorf("outcome = %v, want uncacheable", o)
 		}
 	}
-	resp, err := c.Post(srv.URL+"/mod/x/@v/list", "application/json", strings.NewReader("{}")) //nolint:noctx // a test request
+	resp, err := c.Post(srv.URL+"/mod/x/@v/list", "application/json", strings.NewReader("{}"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +239,7 @@ func TestCacheTTLClasses(t *testing.T) {
 		{"https://api.github.com/repos/o/n/pulls", 0},
 		{"https://gitlab.com/api/v4/projects/1/merge_requests", 0},
 	} {
-		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, tc.url, nil)
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, tc.url, http.NoBody)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -260,7 +261,7 @@ func TestEntryRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.status != e.status || got.etag != e.etag || got.lastModified != e.lastModified ||
-		string(got.body) != string(e.body) || !got.stored.Equal(e.stored) ||
+		!bytes.Equal(got.body, e.body) || !got.stored.Equal(e.stored) ||
 		len(got.headers) != len(e.headers) || got.headers["X-Checksum-Sha256"] != "deadbeef" {
 		t.Errorf("round trip = %+v, want %+v", got, e)
 	}

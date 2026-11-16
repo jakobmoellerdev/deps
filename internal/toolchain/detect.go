@@ -2,7 +2,6 @@ package toolchain
 
 import (
 	"encoding/json"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,13 +32,10 @@ func Detect(root string) map[Tool]string {
 	set(Node, readFile(root, ".node-version"))
 	pkg := packageJSON(root)
 	set(Node, pkg.Engines.Node)
-	if name, version, ok := strings.Cut(pkg.PackageManager, "@"); ok {
-		// packageManager pins the package manager, not the runtime; only the ones deps can
-		// install are tools of their own.
-		switch name {
-		case "bun":
-			set(Bun, version)
-		}
+	// packageManager pins the package manager, not the runtime; bun is the only one of them
+	// that is a tool of its own in the catalog.
+	if name, version, ok := strings.Cut(pkg.PackageManager, "@"); ok && name == "bun" {
+		set(Bun, version)
 	}
 	set(Bun, readFile(root, ".bun-version"))
 	set(Deno, readFile(root, ".deno-version"))
@@ -99,7 +95,7 @@ func cleanVersion(v string) string {
 	// temurin-21.0.5, graalvm-22: the distribution is not deps' to choose, the feature
 	// version is.
 	if _, rest, ok := strings.Cut(v, "-"); ok && !strings.HasPrefix(v, "lts/") {
-		if _, err := firstDigit(rest); err == nil {
+		if startsWithDigit(rest) {
 			v = rest
 		}
 	}
@@ -112,18 +108,16 @@ func cleanVersion(v string) string {
 	case strings.ContainsAny(v, "^~*<>=|,"):
 		return ""
 	}
-	if _, err := firstDigit(v); err != nil {
+	if !startsWithDigit(v) {
 		return ""
 	}
 	return v
 }
 
-// firstDigit reports whether s starts with a digit.
-func firstDigit(s string) (byte, error) {
-	if s == "" || s[0] < '0' || s[0] > '9' {
-		return 0, fs.ErrInvalid
-	}
-	return s[0], nil
+// startsWithDigit reports whether s starts with a digit, which is what separates a version
+// from a channel name.
+func startsWithDigit(s string) bool {
+	return s != "" && s[0] >= '0' && s[0] <= '9'
 }
 
 // readFile reads a small declaration file at the repository root; "" when it is missing or

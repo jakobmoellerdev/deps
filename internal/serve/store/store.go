@@ -10,6 +10,7 @@ package store
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"iter"
@@ -268,7 +269,10 @@ func (s *Store) Upsert(ctx context.Context, r Repo) (bool, error) {
 		s.c.B().Hset().Key(keyRepo + r.ID).FieldValue().FieldValueIter(pairs(r.fields())).Build(),
 		s.c.B().Sadd().Key(keyRepos).Member(r.ID).Build(),
 	}
-	if r.Enabled {
+	// The queue entry is only written when the repository enters it: for one that is already
+	// queued the entry is the scheduler's, and rewriting it here would undo a claim's
+	// visibility bump or a webhook's demand.
+	if r.Enabled && (!known || !old.Enabled) {
 		score := float64(dueScore(r.NextDue, r.Priority))
 		cmds = append(cmds,
 			s.c.B().Zadd().Key(keyDue+strconv.Itoa(int(r.Bucket))).ScoreMember().ScoreMember(score, r.ID).Build(),
@@ -321,7 +325,7 @@ func (s *Store) Disable(ctx context.Context, id string) error {
 }
 
 // ErrNoRepo means the store has no such repository.
-var ErrNoRepo = fmt.Errorf("repository not found")
+var ErrNoRepo = errors.New("repository not found")
 
 // Get reads one repository.
 func (s *Store) Get(ctx context.Context, id string) (Repo, error) {
@@ -365,17 +369,26 @@ func (s *Store) Count(ctx context.Context) (int64, error) {
 // Due is how many repositories are due now, for the queue metric. scope "" counts the whole
 // fleet; a bucket list counts only those partitions.
 func (s *Store) Due(ctx context.Context, now time.Time, buckets []uint16) (int64, error) {
-	max := strconv.FormatInt(ms(now), 10)
+	upto := strconv.FormatInt(ms(now), 10)
 	if buckets == nil {
-		return s.c.Do(ctx, s.c.B().Zcount().Key(keyDueAll).Min("-inf").Max(max).Build()).AsInt64()
+		return s.c.Do(ctx, s.c.B().Zcount().Key(keyDueAll).Min("-inf").Max(upto).Build()).AsInt64()
 	}
 	var total int64
 	for _, b := range buckets {
-		n, err := s.c.Do(ctx, s.c.B().Zcount().Key(keyDue+strconv.Itoa(int(b))).Min("-inf").Max(max).Build()).AsInt64()
+		n, err := s.c.Do(ctx, s.c.B().Zcount().Key(keyDue+strconv.Itoa(int(b))).Min("-inf").Max(upto).Build()).AsInt64()
 		if err != nil {
 			return 0, err
 		}
 		total += n
 	}
 	return total, nil
+}
+
+// MarkRunning records that a cycle of the repository started, so the API and the inventory
+// show what is in flight. A replica that dies mid-cycle leaves the mark until its next
+// cycle overwrites it, which is what tells an operator the cycle was interrupted.
+func (s *Store) MarkRunning(ctx context.Context, id string, at time.Time) error {
+	return s.c.Do(ctx, s.c.B().Hset().Key(keyRepo+id).FieldValue().
+		FieldValue("lastStatus", "running").
+		FieldValue("lastRunAtMs", strconv.FormatInt(ms(at), 10)).Build()).Error()
 }

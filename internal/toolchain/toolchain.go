@@ -6,7 +6,7 @@
 // every ecosystem preinstalled would be gigabytes and still wrong for a repository that pins
 // another version. The version installed is the one the repository declares (Detect), else a
 // pin from the configuration; a tool with neither is treated as absent, which is the CLI's
-// behaviour on a machine without it.
+// behavior on a machine without it.
 //
 // Verification is mandatory. A tool is in the catalog only when its publisher ships a
 // checksum artifact, and an install whose hash does not match fails; there is no unverified
@@ -323,7 +323,7 @@ func (m *Manager) install(ctx context.Context, e Entry, dir, version string) err
 // path, which the caller removes. A mismatch is an error and the file is removed, so an
 // unverified artifact is never unpacked.
 func (m *Manager) fetchVerified(ctx context.Context, d Download) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, d.URL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, d.URL, http.NoBody)
 	if err != nil {
 		return "", err
 	}
@@ -409,8 +409,8 @@ func (m *Manager) Size() int64 {
 // GC removes whole tool versions, least recently used first, until the cache is under max,
 // which 0 turns off. A version in use by a running cycle keeps its files: removal only
 // happens between installs, and the caller runs it from the same loop that starts them.
-func (m *Manager) GC(max int64) (removed int, freed int64) {
-	if max <= 0 || m.Size() <= max {
+func (m *Manager) GC(limit int64) (removed int, freed int64) {
+	if limit <= 0 || m.Size() <= limit {
 		return 0, 0
 	}
 	type entry struct {
@@ -446,7 +446,7 @@ func (m *Manager) GC(max int64) (removed int, freed int64) {
 	}
 	slices.SortFunc(all, func(a, b entry) int { return a.used.Compare(b.used) })
 	for _, e := range all {
-		if total <= max {
+		if total <= limit {
 			break
 		}
 		m.mu.Lock()

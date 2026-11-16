@@ -317,6 +317,9 @@ func planSession(ctx context.Context, w io.Writer, o *rootOpts, s *session, writ
 		multi.add(&sum)
 	}
 	sum.write(stderr)
+	if o.collect != nil {
+		o.collect(&sum)
+	}
 	if multi == nil {
 		reportErr = sum.writeMachine(stderr, o.report)
 	}

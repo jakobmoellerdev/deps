@@ -115,20 +115,20 @@ func b64(s string) string { return base64.RawURLEncoding.EncodeToString([]byte(s
 // InstallationToken returns a token for installation, from the process, from the shared
 // cache, or newly minted. The expiry is returned so the caller can see how long it has.
 func (a *App) InstallationToken(ctx context.Context, installation int64) (string, time.Time, error) {
-	min := a.MinLifetime
-	if min <= 0 {
-		min = defaultMinLifetime
+	want := a.MinLifetime
+	if want <= 0 {
+		want = defaultMinLifetime
 	}
 	key := a.cacheKey(installation)
 	now := time.Now()
 	a.mu.Lock()
 	c, ok := a.local[installation]
 	a.mu.Unlock()
-	if ok && c.exp.Sub(now) > min {
+	if ok && c.exp.Sub(now) > want {
 		return c.token, c.exp, nil
 	}
 	if a.Cache != nil {
-		if token, exp, ok := a.Cache.Get(ctx, key); ok && exp.Sub(now) > min {
+		if token, exp, ok := a.Cache.Get(ctx, key); ok && exp.Sub(now) > want {
 			a.remember(installation, token, exp)
 			return token, exp, nil
 		}
@@ -253,7 +253,7 @@ func (a *App) do(ctx context.Context, method, path string, out any) error {
 }
 
 func (a *App) request(ctx context.Context, method, url, auth string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, method, url, nil)
+	req, err := http.NewRequestWithContext(ctx, method, url, http.NoBody)
 	if err != nil {
 		return err
 	}

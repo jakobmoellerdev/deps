@@ -64,27 +64,48 @@ return out
 
 // completeScript records a finished cycle, but only while the worker still holds the lease:
 // a worker whose lease was stolen must not move the due time of a cycle someone else is
-// running. ARGV: id, worker, nextScore, status, lastRunMs, failCount, bucket.
+// running.
+//
+// The next due time is written absolutely, not with LT: claiming pushed the score out to the
+// visibility timeout, so an LT write could never move it back and the repository would come
+// due again a visibility later, forever. A demand that arrived *during* the cycle (a webhook,
+// a manual trigger) is kept in the rerun field and wins over the cadence, so it is not lost.
+// ARGV: id, worker, nextScore, status, lastRunMs, failCount, bucket.
 const completeScript = `
 local id = ARGV[1]
 local worker = ARGV[2]
 if redis.call('GET', 'deps:lease:' .. id) ~= worker then return 0 end
 redis.call('DEL', 'deps:lease:' .. id)
-redis.call('ZADD', 'deps:due:' .. ARGV[7], 'LT', tonumber(ARGV[3]), id)
-redis.call('ZADD', 'deps:due:all', 'LT', tonumber(ARGV[3]), id)
+local score = tonumber(ARGV[3])
+local rerun = redis.call('HGET', 'deps:repo:' .. id, 'rerun')
+if rerun and rerun ~= '' and tonumber(rerun) and tonumber(rerun) < score then
+  score = tonumber(rerun)
+end
+redis.call('ZADD', 'deps:due:' .. ARGV[7], score, id)
+redis.call('ZADD', 'deps:due:all', score, id)
 redis.call('HSET', 'deps:repo:' .. id,
-  'nextDueMs', ARGV[3], 'lastStatus', ARGV[4], 'lastRunAtMs', ARGV[5], 'failCount', ARGV[6], 'priority', '0')
+  'nextDueMs', ARGV[3], 'lastStatus', ARGV[4], 'lastRunAtMs', ARGV[5], 'failCount', ARGV[6],
+  'priority', '0', 'rerun', '')
 return 1
 `
 
-// enqueueScript brings a repository forward. ARGV: id, score, priority, bucket.
+// enqueueScript brings a repository forward. While a cycle holds the lease the demand is
+// also recorded in the rerun field, so completing that cycle schedules another one instead
+// of overwriting the demand with the cadence. ARGV: id, score, priority, bucket.
 const enqueueScript = `
 local id = ARGV[1]
 if redis.call('EXISTS', 'deps:repo:' .. id) == 0 then return 0 end
 if redis.call('HGET', 'deps:repo:' .. id, 'enabled') ~= 'true' then return 0 end
-redis.call('ZADD', 'deps:due:' .. ARGV[4], 'LT', tonumber(ARGV[2]), id)
-redis.call('ZADD', 'deps:due:all', 'LT', tonumber(ARGV[2]), id)
+local score = tonumber(ARGV[2])
+redis.call('ZADD', 'deps:due:' .. ARGV[4], 'LT', score, id)
+redis.call('ZADD', 'deps:due:all', 'LT', score, id)
 redis.call('HSET', 'deps:repo:' .. id, 'priority', ARGV[3])
+if redis.call('EXISTS', 'deps:lease:' .. id) == 1 then
+  local prev = redis.call('HGET', 'deps:repo:' .. id, 'rerun')
+  if not prev or prev == '' or tonumber(prev) == nil or tonumber(prev) > score then
+    redis.call('HSET', 'deps:repo:' .. id, 'rerun', ARGV[2])
+  end
+end
 return 1
 `
 
@@ -231,7 +252,7 @@ func (s *Store) Leave(ctx context.Context, worker string) error {
 }
 
 // OwnedBuckets is the partitions worker owns among workers, by rendezvous hashing: bucket b
-// belongs to the worker maximising fnv64a(worker|b). Adding or removing a worker moves only
+// belongs to the worker maximizing fnv64a(worker|b). Adding or removing a worker moves only
 // its own share, and a disagreement during a rollout is harmless, since the lease still
 // admits one worker per repository.
 func OwnedBuckets(worker string, workers []string) []uint16 {

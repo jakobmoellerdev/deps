@@ -94,7 +94,9 @@ func testManager(t *testing.T, s *httptest.Server, file string) *Manager {
 		Archive:  TarGz,
 		Strip:    1,
 		Provides: map[string]string{"demo": "bin/demo"},
-		Env:      func(m *Manager, dir string) []string { return []string{pathEnv(filepath.Join(dir, "bin")), "DEMO_HOME=" + dir} },
+		Env: func(m *Manager, dir string) []string {
+			return []string{pathEnv(filepath.Join(dir, "bin")), "DEMO_HOME=" + dir}
+		},
 	}}
 	return m
 }

@@ -155,3 +155,19 @@ func cut(v string) (int64, string, bool) {
 	}
 	return 0, "", false
 }
+
+// CacheGet reads an entry of the shared HTTP metadata cache; a miss is (nil, nil).
+func (s *Store) CacheGet(ctx context.Context, key string) ([]byte, error) {
+	b, err := s.c.Do(ctx, s.c.B().Get().Key(KeyCache+key).Build()).AsBytes()
+	if valkey.IsValkeyNil(err) {
+		return nil, nil
+	}
+	return b, err
+}
+
+// CachePut stores an entry of the shared HTTP metadata cache for ttl. The eviction is
+// Valkey's own (the deployment sets maxmemory-policy allkeys-lru), so a full cache degrades
+// to more misses, never to errors.
+func (s *Store) CachePut(ctx context.Context, key string, entry []byte, ttl time.Duration) error {
+	return s.c.Do(ctx, s.c.B().Set().Key(KeyCache+key).Value(valkey.BinaryString(entry)).Px(ttl).Build()).Error()
+}

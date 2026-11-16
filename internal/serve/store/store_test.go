@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"net"
@@ -319,7 +320,7 @@ func TestReportRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := s.Report(ctx, "run1")
-	if err != nil || string(got) != string(body) {
+	if err != nil || !bytes.Equal(got, body) {
 		t.Errorf("Report = %v, %v", got, err)
 	}
 	if got, err := s.Report(ctx, "missing"); err != nil || got != nil {
@@ -477,5 +478,96 @@ func TestScanListsEveryRepository(t *testing.T) {
 	}
 	if n, err := s.Count(ctx); err != nil || n != 25 {
 		t.Errorf("Count = %d, %v", n, err)
+	}
+}
+
+// A completed cycle must push the repository out to its next cadence. Claiming bumps the due
+// score to the visibility timeout, so a conditional write could never move it back and the
+// repository would come due again one visibility later, forever.
+func TestCompleteSchedulesTheNextCadence(t *testing.T) {
+	s := testStore(t)
+	ctx := t.Context()
+	r := testRepo("git.example/o/n", time.Now().Add(-time.Minute))
+	if _, err := s.Upsert(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := s.Claim(ctx, "w1", allBuckets(), 1, 30*time.Second)
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim = %v, %v", claimed, err)
+	}
+	next := time.Now().Add(24 * time.Hour)
+	if ok, err := s.Complete(ctx, "w1", claimed[0], "ok", next); err != nil || !ok {
+		t.Fatalf("Complete = %v, %v", ok, err)
+	}
+	if got, want := s.score(t, r.ID), next.UnixMilli(); got != want {
+		t.Errorf("due score = %d, want %d (a day out, not the visibility timeout)", got, want)
+	}
+}
+
+// A demand that arrives while the cycle runs must survive it: the webhook cannot be claimed
+// (the lease holds) and Complete would otherwise overwrite it with the cadence.
+func TestEnqueueDuringACycleSurvivesComplete(t *testing.T) {
+	s := testStore(t)
+	ctx := t.Context()
+	r := testRepo("git.example/o/n", time.Now().Add(-time.Minute))
+	if _, err := s.Upsert(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := s.Claim(ctx, "w1", allBuckets(), 1, time.Minute)
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim = %v, %v", claimed, err)
+	}
+	soon := time.Now().Add(30 * time.Second)
+	if ok, err := s.Enqueue(ctx, r.ID, soon, PriorityWebhook); err != nil || !ok {
+		t.Fatalf("Enqueue during the cycle = %v, %v", ok, err)
+	}
+	if ok, err := s.Complete(ctx, "w1", claimed[0], "ok", time.Now().Add(24*time.Hour)); err != nil || !ok {
+		t.Fatalf("Complete = %v, %v", ok, err)
+	}
+	if got, want := s.score(t, r.ID), dueScore(soon, PriorityWebhook); got != want {
+		t.Errorf("due score = %d, want the webhook's %d: the demand was lost", got, want)
+	}
+	// The next cycle starts from a clean slate.
+	again, err := s.Claim(ctx, "w2", allBuckets(), 1, time.Minute)
+	if err != nil || len(again) != 1 {
+		t.Fatalf("claim after the demand = %v, %v", again, err)
+	}
+	if ok, err := s.Complete(ctx, "w2", again[0], "ok", time.Now().Add(24*time.Hour)); err != nil || !ok {
+		t.Fatalf("Complete = %v, %v", ok, err)
+	}
+	if got := s.score(t, r.ID); got < time.Now().Add(23*time.Hour).UnixMilli() {
+		t.Errorf("due score = %d; the rerun demand was not cleared", got)
+	}
+}
+
+// The inventory refresh must not touch the queue entry of a repository that is already in
+// it: that would undo a claim's visibility bump or a pending demand.
+func TestUpsertLeavesAQueuedRepositoryAlone(t *testing.T) {
+	s := testStore(t)
+	ctx := t.Context()
+	r := testRepo("git.example/o/n", time.Now().Add(-time.Minute))
+	if _, err := s.Upsert(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	if claimed, err := s.Claim(ctx, "w1", allBuckets(), 1, time.Minute); err != nil || len(claimed) != 1 {
+		t.Fatalf("claim = %v, %v", claimed, err)
+	}
+	leased := s.score(t, r.ID)
+	if _, err := s.Upsert(ctx, testRepo(r.ID, time.Now().Add(-time.Hour))); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.score(t, r.ID); got != leased {
+		t.Errorf("the inventory refresh moved a leased repository's due score from %d to %d", leased, got)
+	}
+	// A repository that was disabled and comes back does get a fresh queue entry.
+	if err := s.Disable(ctx, r.ID); err != nil {
+		t.Fatal(err)
+	}
+	back := testRepo(r.ID, time.Now().Add(2*time.Hour))
+	if _, err := s.Upsert(ctx, back); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.c.Do(ctx, s.c.B().Zscore().Key(keyDueAll).Member(r.ID).Build()).AsFloat64(); err != nil {
+		t.Errorf("a re-enabled repository has no queue entry: %v", err)
 	}
 }

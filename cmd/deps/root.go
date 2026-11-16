@@ -97,6 +97,9 @@ type rootOpts struct {
 	allowTasks   []string // --allow-tasks of apply and run
 	renovate     bool     // --renovate: compatibility mode (renovateMode)
 	repositories []string // --repositories of plan and explain: remote repositories to scan
+	// collect receives the summary of a command that produced one, instead of a --report
+	// file: `deps serve` stores the counts and the report document itself.
+	collect func(*summary)
 }
 
 // allowTasksFlag is --allow-tasks of apply and run.
@@ -177,7 +180,7 @@ func newRoot() *cli.Command {
 			&cli.StringFlag{Name: "cpuprofile", Hidden: true, Destination: &o.prof.cpu, Usage: "write a CPU profile to this file"},
 			&cli.StringFlag{Name: "memprofile", Hidden: true, Destination: &o.prof.mem, Usage: "write an allocation profile to this file on exit"},
 		},
-		Commands: append([]*cli.Command{newPlan(o), newApply(o), newRun(o), newVersion(), newExplain(o), newPreview(o), newSubmit(o), newMigrate(o), newSchema(), newDocs(), newConfig(o), newInit(o), newHelp()},
+		Commands: append([]*cli.Command{newPlan(o), newApply(o), newRun(o), newServe(o), newVersion(), newExplain(o), newPreview(o), newSubmit(o), newMigrate(o), newSchema(), newDocs(), newConfig(o), newInit(o), newHelp()},
 			newHelpTopics()...),
 	}
 	_ = root.Walk(func(c *cli.Command) error {
