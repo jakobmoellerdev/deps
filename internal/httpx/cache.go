@@ -255,7 +255,13 @@ type entry struct {
 }
 
 var (
-	zstdEnc, _ = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest))
+	// EncodeAll keeps one history buffer per concurrent call, sized by the window, for the life
+	// of the encoder: at GOMAXPROCS of them that is hundreds of megabytes the daemon never gives
+	// back (184 MB, 86 % of the live heap, measured over one pass of an organization). Bodies
+	// here are at most maxCacheBody, so a 128 KiB window leaves the ratio alone (0.1435 against
+	// 0.1434 on a 200 KB registry document) and four encoder states are plenty.
+	zstdEnc, _ = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest),
+		zstd.WithWindowSize(1<<17), zstd.WithEncoderConcurrency(4))
 	zstdDec, _ = zstd.NewReader(nil)
 )
 
