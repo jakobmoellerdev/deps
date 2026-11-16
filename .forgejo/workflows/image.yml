@@ -1,0 +1,59 @@
+name: image
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to build and push (defaults to the ref name)
+        required: false
+
+# One run per tag; a release is never cancelled by another.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: docker/setup-qemu-action@v3.6.0
+      - uses: docker/setup-buildx-action@v3.11.1
+      - id: meta
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+          version="${INPUT_TAG:-$GITHUB_REF_NAME}"
+          registry="${GITHUB_SERVER_URL#https://}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "image=$registry/$GITHUB_REPOSITORY" >> "$GITHUB_OUTPUT"
+      - name: Log in to the container registry
+        env:
+          REGISTRY: ${{ steps.meta.outputs.image }}
+          # The job token can write packages of this repository.
+          TOKEN: ${{ github.token }}
+        run: echo "$TOKEN" | docker login "${REGISTRY%%/*}" -u "${GITHUB_REPOSITORY_OWNER}" --password-stdin
+      - name: Build and push
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --build-arg "VERSION=$VERSION" \
+            --tag "$IMAGE:$VERSION" \
+            --tag "$IMAGE:latest" \
+            --push .
+      - name: Smoke-test the pushed image
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          # The image must carry git (the daemon clones with it) and report the version it
+          # was built with; the toolchains are downloaded at runtime and are not in it.
+          docker run --rm --platform linux/amd64 "$IMAGE:$VERSION" version
+          docker run --rm --platform linux/amd64 --entrypoint git "$IMAGE:$VERSION" --version

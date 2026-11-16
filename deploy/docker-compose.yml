@@ -1,0 +1,58 @@
+# A single-node self-hosted install of `deps serve`: one Valkey and one deps replica.
+# Put the credentials in a .env file next to this one (DEPS_API_TOKEN,
+# DEPS_FORGEJO_TOKEN, DEPS_FORGEJO_WEBHOOK_SECRET, …) and the serve configuration in
+# serve.yaml.
+services:
+  valkey:
+    image: valkey/valkey:8-alpine
+    # Both the control plane and the metadata cache are rebuildable, so there is no
+    # persistence: a restart costs one inventory refresh and some cache misses.
+    command:
+      - valkey-server
+      - --maxmemory
+      - 4gb
+      - --maxmemory-policy
+      - allkeys-lru
+      - --appendonly
+      - "no"
+      - --save
+      - ""
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  deps:
+    image: ${DEPS_IMAGE:-git.jakob-moeller.cloud/jakobmoellerdev/deps:latest}
+    depends_on:
+      valkey:
+        condition: service_healthy
+    command: ["serve", "--config", "/etc/deps/serve.yaml"]
+    environment:
+      # Roughly 80 % of the memory limit: cycles run in process, so the worker count and
+      # this limit are what keep the replica alive.
+      GOMEMLIMIT: ${DEPS_GOMEMLIMIT:-3200MiB}
+      DEPS_LOG_LEVEL: ${DEPS_LOG_LEVEL:-info}
+      DEPS_LOG_FORMAT: json
+      DEPS_API_TOKEN: ${DEPS_API_TOKEN:-}
+      DEPS_FORGEJO_TOKEN: ${DEPS_FORGEJO_TOKEN:-}
+      DEPS_FORGEJO_WEBHOOK_SECRET: ${DEPS_FORGEJO_WEBHOOK_SECRET:-}
+      DEPS_GITHUB_TOKEN: ${DEPS_GITHUB_TOKEN:-}
+      DEPS_GITHUB_WEBHOOK_SECRET: ${DEPS_GITHUB_WEBHOOK_SECRET:-}
+    volumes:
+      - ./serve.yaml:/etc/deps/serve.yaml:ro
+      - deps-cache:/var/lib/deps
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/deps", "version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    mem_limit: 4g
+    restart: unless-stopped
+
+volumes:
+  deps-cache:

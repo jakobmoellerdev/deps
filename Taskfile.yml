@@ -170,6 +170,17 @@ tasks:
     cmds:
       - go build -trimpath -ldflags "-s -w -X main.version={{.VERSION}}" -o bin/deps ./cmd/deps
 
+  image:
+    desc: Build the `deps serve` container image for linux/amd64 and linux/arm64 (IMAGE=<ref>, PUSH=true to push)
+    vars:
+      IMAGE: '{{.IMAGE | default "git.jakob-moeller.cloud/jakobmoellerdev/deps:dev"}}'
+      PLATFORMS: '{{.PLATFORMS | default "linux/amd64,linux/arm64"}}'
+      # buildx cannot load a multi-platform image into the local daemon, so a build without
+      # PUSH leaves it in the build cache only.
+      OUTPUT: '{{if eq .PUSH "true"}}--push{{else}}--output=type=cacheonly{{end}}'
+    cmds:
+      - docker buildx build --platform {{.PLATFORMS}} --build-arg VERSION={{.VERSION}} -t {{.IMAGE}} {{.OUTPUT}} .
+
   release:build:
     desc: Build static release binaries for linux, darwin and windows (amd64, arm64) into dist/bin/, their archives, deps.schema.json (with the release's $id) and checksums into dist/
     env:

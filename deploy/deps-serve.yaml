@@ -1,0 +1,140 @@
+# `deps serve` as a StatefulSet, not a Deployment: each replica needs its own cache volume.
+# The git mirrors and the installed toolchains are local files, and an RWX volume shared by
+# every replica would serialise the install locks and make the mirrors contend; a per-replica
+# volume keeps both local. If the cluster can only offer RWX storage, keep the toolchain
+# cache shared (the install lock makes it correct) and move the mirrors to an emptyDir,
+# accepting the re-clone cost.
+apiVersion: v1
+kind: Service
+metadata:
+  name: deps
+  labels: {app.kubernetes.io/name: deps, app.kubernetes.io/part-of: deps}
+spec:
+  selector: {app.kubernetes.io/name: deps}
+  ports:
+    - {name: http, port: 8080, targetPort: http}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: deps-serve-config
+  labels: {app.kubernetes.io/name: deps, app.kubernetes.io/part-of: deps}
+data:
+  serve.yaml: |
+    valkey: {url: "redis://valkey:6379/0"}
+    listen: ":8080"
+    apiTokenEnv: DEPS_API_TOKEN
+    workers: 8
+    concurrency: 32
+    interval: 24h
+    cycleTimeout: 30m
+    cacheDir: /var/lib/deps
+    cloneCacheMaxBytes: 214748364800
+    toolCacheMaxBytes: 21474836480
+    toolPins: {go: "1.27.4", node: "24.11.0", uv: "0.9.7", java: "21"}
+    inventoryInterval: 1h
+    maxNewPRs: 10
+    allowTasks: []
+    author: {name: "deps[bot]", email: "deps-bot@noreply.invalid"}
+    forges:
+      - name: forge
+        kind: forgejo
+        apiUrl: https://git.example.com/api/v1
+        serverUrl: https://git.example.com
+        tokenEnv: DEPS_FORGEJO_TOKEN
+        webhookSecretEnv: DEPS_FORGEJO_WEBHOOK_SECRET
+        repositories:
+          - {match: "my-org/*", mode: run}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: deps
+  labels: {app.kubernetes.io/name: deps, app.kubernetes.io/part-of: deps}
+spec:
+  serviceName: deps
+  replicas: 2
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels: {app.kubernetes.io/name: deps}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: deps, app.kubernetes.io/part-of: deps}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      # A cycle in flight should finish rather than be killed; the lease would hand the
+      # repository back anyway, but a half-written PR is noise.
+      terminationGracePeriodSeconds: 120
+      containers:
+        - name: deps
+          image: git.jakob-moeller.cloud/jakobmoellerdev/deps:latest
+          args: ["serve", "--config", "/etc/deps/serve.yaml"]
+          ports:
+            - {name: http, containerPort: 8080}
+          env:
+            # Cycles run in process, so an out-of-memory kill takes the replica down with
+            # everything it is running: GOMEMLIMIT at ~80 % of the limit, and `workers`
+            # sized against it.
+            - {name: GOMEMLIMIT, value: "6400MiB"}
+            - {name: DEPS_LOG_LEVEL, value: info}
+            - {name: DEPS_LOG_FORMAT, value: json}
+            - name: DEPS_API_TOKEN
+              valueFrom: {secretKeyRef: {name: deps-credentials, key: apiToken}}
+            - name: DEPS_FORGEJO_TOKEN
+              valueFrom: {secretKeyRef: {name: deps-credentials, key: forgejoToken}}
+            - name: DEPS_FORGEJO_WEBHOOK_SECRET
+              valueFrom: {secretKeyRef: {name: deps-credentials, key: webhookSecret}}
+          resources:
+            requests: {cpu: "2", memory: 4Gi}
+            limits: {memory: 8Gi}
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false # the toolchains and the mirrors are written at runtime
+            capabilities: {drop: ["ALL"]}
+          volumeMounts:
+            - {name: config, mountPath: /etc/deps, readOnly: true}
+            - {name: cache, mountPath: /var/lib/deps}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: config
+          configMap: {name: deps-serve-config}
+        - name: tmp
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: cache
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests: {storage: 300Gi}
+---
+# Only the webhook endpoints are exposed; the API and the metrics stay inside the cluster.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: deps-webhooks
+  labels: {app.kubernetes.io/name: deps, app.kubernetes.io/part-of: deps}
+spec:
+  rules:
+    - host: deps.example.com
+      http:
+        paths:
+          - path: /webhooks/
+            pathType: Prefix
+            backend:
+              service:
+                name: deps
+                port: {name: http}
