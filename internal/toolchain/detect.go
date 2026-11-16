@@ -45,6 +45,8 @@ func Detect(root string) map[Tool]string {
 	set(Java, readFile(root, ".java-version"))
 	set(Java, readFile(root, ".sdkmanrc-java"))
 	set(Terraform, readFile(root, ".terraform-version"))
+	set(Ruby, readFile(root, ".ruby-version"))
+	set(PHP, readFile(root, ".php-version"))
 	set(OpenTofu, readFile(root, ".opentofu-version"))
 	set(Julia, readFile(root, ".julia-version"))
 	set(Dart, readFile(root, ".dart-version"))
@@ -65,6 +67,7 @@ var toolVersionNames = map[string]Tool{
 	"bazelisk": Bazelisk, "bazel": Bazelisk,
 	"erlang": Erlang, "elixir": Elixir, "gleam": Gleam,
 	"jb": JB, "jsonnet-bundler": JB,
+	"ruby": Ruby, "php": PHP,
 }
 
 // toolVersions reads .tool-versions (asdf, mise): one `<tool> <version>` line each, the

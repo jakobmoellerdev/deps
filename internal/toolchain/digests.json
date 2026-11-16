@@ -1,0 +1,22 @@
+{
+  "php": {
+    "8.3.9": {
+      "linux-amd64": "6c7b45dabc362c9c447c6c9688f8922d0cfa3d5c4618d632c504342d37085e2f",
+      "linux-arm64": "e437d8c2eced10e5f4d78d4d99062b64a2a5d53ed7df57e3e53cdb7d319aa36f"
+    },
+    "8.4.1": {
+      "linux-amd64": "a753e00af02cf483c91c80bace02e2cc6a8babe699e0ca8a250a3f0577c10a5c",
+      "linux-arm64": "187124829b00ab20d2ea7925874b56471e1330ee57bb0efc09a7533bc3ea2f22"
+    }
+  },
+  "ruby": {
+    "3.3.13": {
+      "linux-amd64": "5daba6f968ccfb3c6701c5eb8afe946140af47dd621669baf32861b004bfacaf",
+      "linux-arm64": "87b35fa0fe6b014c874cc9dbd684648b59bc28b57ff2e1bc4efb36ee87345e9b"
+    },
+    "3.4.12": {
+      "linux-amd64": "c711e610c39b1e341138e78a2adeecd378e7b4ded326ae8ff601d3ea29443f2b",
+      "linux-arm64": "1c239219eb0b6d2fc6388daa7311db9c98619b71f12edab84f0031bae4fa10e8"
+    }
+  }
+}

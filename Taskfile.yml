@@ -73,6 +73,13 @@ tasks:
       - task: tidy:check
       - task: docs:check
 
+  toolchain:digests:
+    desc: Record the sha256 of the toolchain artifacts deps digests itself (TOOLS='ruby@3.4.12 php@8.3.9'), updating internal/toolchain/digests.json
+    requires:
+      vars: [TOOLS]
+    cmds:
+      - go run ./hack/digests {{.TOOLS}}
+
   docs:
     desc: Regenerate docs/reference/*.md and deps.schema.json from the schema, the command tree, action.yml and the managers
     cmds:

@@ -329,16 +329,20 @@ func (m *Manager) install(ctx context.Context, e Entry, dir, version string, req
 			return fmt.Errorf("toolchain %s %s: %w", e.Tool, version, err)
 		}
 	}
-	if e.Setup != nil {
-		if err := e.Setup(ctx, m, tmp, version, reqs); err != nil {
-			return fmt.Errorf("toolchain %s %s: %w", e.Tool, version, err)
-		}
-	}
 	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
 		return err
 	}
 	if err := os.Rename(tmp, dir); err != nil {
 		return err
+	}
+	// Setup runs on the final path, not the temporary one: it bakes that path into the
+	// installation (the Erlang launchers, the Ruby shebangs). Only the .ok marker after it
+	// makes the directory count as installed, so a failure here is cleaned up by the next
+	// attempt.
+	if e.Setup != nil {
+		if err := e.Setup(ctx, m, dir, version, reqs); err != nil {
+			return fmt.Errorf("toolchain %s %s: %w", e.Tool, version, err)
+		}
 	}
 	f, err := os.Create(filepath.Join(dir, okFile))
 	if err != nil {

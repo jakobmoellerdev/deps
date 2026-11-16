@@ -18,11 +18,11 @@ import (
 )
 
 // The tools of the catalog. A tool is here only when its download can be verified: against
-// the publisher's own checksum artifact, or, for a tool built from source, against the Go
-// module checksum database. The ones that can be neither stay out, and the manager that
-// needs them reports them as not found, exactly as on a machine without them: nix (which
-// also needs a daemon or a root-owned store) and the Ruby and PHP builds of
-// ruby/ruby-builder and static-php-cli, which publish their binaries without a digest.
+// the publisher's own checksum artifact, against the Go module checksum database for one
+// built from source (jb), or against a digest deps publishes itself for the few builds that
+// come with none (Ruby and PHP, see pinned.go). nix stays out entirely: it needs a daemon
+// or a root-owned store, and the manager that needs it reports it as not found, exactly as
+// on a machine without it.
 const (
 	Go        Tool = "go"
 	Node      Tool = "node"
@@ -44,6 +44,8 @@ const (
 	Elixir    Tool = "elixir"
 	Gleam     Tool = "gleam"
 	JB        Tool = "jb"
+	Ruby      Tool = "ruby"
+	PHP       Tool = "php"
 )
 
 // Catalog is every installable tool by name.
@@ -68,6 +70,8 @@ var Catalog = map[Tool]Entry{
 	Elixir:    elixirEntry,
 	Gleam:     gleamEntry,
 	JB:        jbEntry,
+	Ruby:      rubyEntry,
+	PHP:       phpEntry,
 }
 
 // provider indexes the catalog by command name: which tool provides `npx`, `mvn`, `tofu`.

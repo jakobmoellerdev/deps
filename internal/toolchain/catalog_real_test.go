@@ -38,6 +38,9 @@ func TestCatalogResolvesRealDownloads(t *testing.T) {
 		Elixir:    "1.18",   // a line; Resolve pairs it with an OTP major
 		Gleam:     "1.19.2",
 		JB:        "0.6.0",
+		// Self-digested; the versions must be ones digests.json covers.
+		Ruby: PinnedVersions(Ruby)[0],
+		PHP:  PinnedVersions(PHP)[0],
 	}
 	for _, tool := range Tools() {
 		t.Run(string(tool), func(t *testing.T) {
