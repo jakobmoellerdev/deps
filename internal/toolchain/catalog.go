@@ -17,9 +17,11 @@ import (
 )
 
 // The tools of the catalog. A tool is here only when its publisher ships a checksum artifact
-// deps can verify the download against; the ones that do not (nix, which needs a daemon or a
-// root-owned store, and the community builds of ruby, PHP and Erlang/Elixir) stay out, and
-// the manager that needs them reports them as not found, exactly as on a machine without them.
+// deps can verify the download against. The ones that do not stay out, and the manager that
+// needs them reports them as not found, exactly as on a machine without them: nix (which
+// also needs a daemon or a root-owned store), the Ruby builds of ruby/ruby-builder, the PHP
+// builds of static-php-cli and the jsonnet-bundler releases all ship their binaries without
+// a digest.
 const (
 	Go        Tool = "go"
 	Node      Tool = "node"
@@ -37,6 +39,9 @@ const (
 	Flutter   Tool = "flutter"
 	DotNet    Tool = "dotnet"
 	Bazelisk  Tool = "bazelisk"
+	Erlang    Tool = "erlang"
+	Elixir    Tool = "elixir"
+	Gleam     Tool = "gleam"
 )
 
 // Catalog is every installable tool by name.
@@ -57,6 +62,9 @@ var Catalog = map[Tool]Entry{
 	Flutter:   flutterEntry,
 	DotNet:    dotnetEntry,
 	Bazelisk:  bazeliskEntry,
+	Erlang:    erlangEntry,
+	Elixir:    elixirEntry,
+	Gleam:     gleamEntry,
 }
 
 // provider indexes the catalog by command name: which tool provides `npx`, `mvn`, `tofu`.
@@ -797,6 +805,181 @@ var bazeliskEntry = Entry{
 	Provides: map[string]string{"bazel": "bazel", "bazelisk": "bazel"},
 	Env: func(m *Manager, dir string) []string {
 		return []string{pathEnv(dir), "BAZELISK_HOME=" + m.state("bazelisk")}
+	},
+}
+
+// --- erlang, elixir and gleam ------------------------------------------------
+
+// hexBuilds is the build index of builds.hex.pm: one `<ref> <git-sha> <timestamp> <sha256>`
+// line per build, newest first. The digest in it is the publisher's own, which is what makes
+// the BEAM toolchain installable at all: the Erlang and Elixir releases themselves ship
+// source, not verified Linux binaries.
+func (m *Manager) hexBuilds(ctx context.Context, path string) (map[string]string, []string, error) {
+	doc, err := m.doc(ctx, "https://builds.hex.pm/builds/"+path+"/builds.txt")
+	if err != nil {
+		return nil, nil, err
+	}
+	sums := map[string]string{}
+	var refs []string
+	for line := range strings.Lines(string(doc)) {
+		f := strings.Fields(line)
+		if len(f) < 4 || !isHex(f[3]) {
+			continue
+		}
+		if _, dup := sums[f[0]]; !dup {
+			sums[f[0]] = strings.ToLower(f[3])
+			refs = append(refs, f[0])
+		}
+	}
+	if len(refs) == 0 {
+		return nil, nil, fmt.Errorf("builds.hex.pm/%s: no builds listed", path)
+	}
+	return sums, refs, nil
+}
+
+// hexOTPPath is where the OTP builds of a platform live. The builds are made on Ubuntu
+// 24.04, whose glibc is older than the image's, so they run on it; there is no build for a
+// Debian release.
+func hexOTPPath(goarch string) string {
+	return "otp/" + arch(goarch, "amd64", "arm64") + "/ubuntu-24.04"
+}
+
+var erlangEntry = Entry{
+	Tool: Erlang,
+	// .tool-versions names a release ("27.3.4.9") or a major ("27"), and Elixir asks for the
+	// major it was built against; both resolve to the newest matching build.
+	Resolve: func(ctx context.Context, m *Manager, version string) (string, error) {
+		v := strings.TrimPrefix(strings.TrimPrefix(version, "OTP-"), "v")
+		_, refs, err := m.hexBuilds(ctx, hexOTPPath(m.goarch()))
+		if err != nil {
+			return "", err
+		}
+		want := "OTP-" + v
+		for _, ref := range refs { // newest first
+			if ref == want || strings.HasPrefix(ref, want+".") {
+				return ref, nil
+			}
+		}
+		return "", fmt.Errorf("no Erlang/OTP build for %q", version)
+	},
+	Download: func(ctx context.Context, m *Manager, version, goos, goarch string) (Download, error) {
+		if err := linux(goos, goarch); err != nil {
+			return Download{}, err
+		}
+		path := hexOTPPath(goarch)
+		sums, _, err := m.hexBuilds(ctx, path)
+		if err != nil {
+			return Download{}, err
+		}
+		sum, ok := sums[version]
+		if !ok {
+			return Download{}, fmt.Errorf("no checksum for Erlang/OTP %s", version)
+		}
+		return Download{URL: "https://builds.hex.pm/builds/" + path + "/" + version + ".tar.gz", Sum: sum, Hash: SHA256}, nil
+	},
+	Archive: TarGz,
+	Strip:   1,
+	// An OTP binary distribution carries no bin/erl until its Install script writes the
+	// launchers with the absolute paths of this installation.
+	Setup: func(ctx context.Context, _ *Manager, dir, _ string) error {
+		cmd, cancel := toolrun.Command(ctx, filepath.Join(dir, "Install"), "-minimal", dir)
+		defer cancel()
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("OTP Install: %w: %s", err, toolrun.Tail(out, 10))
+		}
+		return nil
+	},
+	Provides: map[string]string{"erl": "bin/erl", "erlc": "bin/erlc", "escript": "bin/escript"},
+	Env: func(_ *Manager, dir string) []string {
+		return []string{pathEnv(filepath.Join(dir, "bin")), "ERLANG_HOME=" + dir}
+	},
+}
+
+var elixirEntry = Entry{
+	Tool: Elixir,
+	// A build is named v<elixir>-otp-<otp major>, so resolving the Elixir version also
+	// decides which Erlang it pairs with.
+	Resolve: func(ctx context.Context, m *Manager, version string) (string, error) {
+		v := strings.TrimPrefix(version, "v")
+		if strings.Contains(v, "-otp-") {
+			return "v" + v, nil
+		}
+		_, refs, err := m.hexBuilds(ctx, "elixir")
+		if err != nil {
+			return "", err
+		}
+		best := ""
+		for _, ref := range refs {
+			name, _, ok := strings.Cut(strings.TrimPrefix(ref, "v"), "-otp-")
+			if !ok || (name != v && !strings.HasPrefix(name, v+".")) {
+				continue
+			}
+			// Among the builds of one Elixir version, take the newest OTP it was built for.
+			if best == "" || ref > best {
+				best = ref
+			}
+		}
+		if best == "" {
+			return "", fmt.Errorf("no Elixir build for %q", version)
+		}
+		return best, nil
+	},
+	Requires: func(version string) []Need {
+		if _, otp, ok := strings.Cut(version, "-otp-"); ok {
+			return []Need{{Tool: Erlang, Version: otp}}
+		}
+		return []Need{{Tool: Erlang}}
+	},
+	Download: func(ctx context.Context, m *Manager, version, goos, goarch string) (Download, error) {
+		if err := linux(goos, goarch); err != nil {
+			return Download{}, err
+		}
+		sums, _, err := m.hexBuilds(ctx, "elixir")
+		if err != nil {
+			return Download{}, err
+		}
+		sum, ok := sums[version]
+		if !ok {
+			return Download{}, fmt.Errorf("no checksum for Elixir %s", version)
+		}
+		return Download{URL: "https://builds.hex.pm/builds/elixir/" + version + ".zip", Sum: sum, Hash: SHA256}, nil
+	},
+	Archive:  Zip,
+	Provides: map[string]string{"elixir": "bin/elixir", "elixirc": "bin/elixirc", "mix": "bin/mix", "iex": "bin/iex"},
+	Env: func(m *Manager, dir string) []string {
+		return []string{
+			pathEnv(filepath.Join(dir, "bin")),
+			"MIX_HOME=" + m.state("mix"),
+			"HEX_HOME=" + m.state("hex"),
+			// A slim image carries no locale, and Elixir then warns on every invocation
+			// that the VM runs with latin1 name encoding; +fnu is the documented fix.
+			"ELIXIR_ERL_OPTIONS=+fnu",
+			"LANG=C.UTF-8",
+		}
+	},
+}
+
+var gleamEntry = Entry{
+	Tool: Gleam,
+	Download: func(ctx context.Context, m *Manager, version, goos, goarch string) (Download, error) {
+		if err := linux(goos, goarch); err != nil {
+			return Download{}, err
+		}
+		v := strings.TrimPrefix(version, "v")
+		// The musl build is static, so it does not care which libc the image has.
+		file := "gleam-v" + v + "-" + arch(goarch, "x86_64", "aarch64") + "-unknown-linux-musl.tar.gz"
+		url := "https://github.com/gleam-lang/gleam/releases/download/v" + v + "/" + file
+		sum, err := m.sibling(ctx, url, ".sha256", file)
+		if err != nil {
+			return Download{}, err
+		}
+		return Download{URL: url, Sum: sum, Hash: SHA256}, nil
+	},
+	Archive:  TarGz,
+	Provides: map[string]string{"gleam": "gleam"},
+	Env: func(m *Manager, dir string) []string {
+		return []string{pathEnv(dir), "HEX_HOME=" + m.state("hex")}
 	},
 }
 

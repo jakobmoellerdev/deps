@@ -63,6 +63,7 @@ var toolVersionNames = map[string]Tool{
 	"terraform": Terraform, "opentofu": OpenTofu, "julia": Julia,
 	"dart": Dart, "flutter": Flutter, "dotnet": DotNet, "dotnet-core": DotNet,
 	"bazelisk": Bazelisk, "bazel": Bazelisk,
+	"erlang": Erlang, "elixir": Elixir, "gleam": Gleam,
 }
 
 // toolVersions reads .tool-versions (asdf, mise): one `<tool> <version>` line each, the

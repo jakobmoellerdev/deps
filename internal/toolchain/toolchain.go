@@ -85,6 +85,11 @@ type Entry struct {
 	Archive  Archive
 	// Strip is how many leading path components the archive's entries carry.
 	Strip int
+	// Requires are the tools that must be installed before this one and whose environment a
+	// run of it needs: Elixir is useless without the Erlang it was built against. The
+	// version of each is derived from the dependent's resolved version, so the pair always
+	// matches; an empty one falls back to what the repository declares, else the pin.
+	Requires func(version string) []Need
 	// Setup runs in the install directory after extraction, before it is marked complete.
 	Setup func(ctx context.Context, m *Manager, dir, version string) error
 	// Provides maps a command name to its path below the install directory.
@@ -101,6 +106,13 @@ type Installed struct {
 	Env     []string
 	// Bins maps each command the entry provides to its absolute path.
 	Bins map[string]string
+}
+
+// Need is one tool another one depends on; an empty Version falls back to the declaration
+// or the pin.
+type Need struct {
+	Tool    Tool
+	Version string
 }
 
 // Manager installs tools into Root and keeps their own caches (the Go module cache, the npm
@@ -206,6 +218,18 @@ func (m *Manager) Ensure(ctx context.Context, tool Tool, version string) (Instal
 	if done {
 		return in, nil
 	}
+	// Requirements are installed first and their environment comes first too, so the
+	// dependent's own entries win where both set a variable.
+	var env []string
+	if e.Requires != nil {
+		for _, need := range e.Requires(version) {
+			req, err := m.Ensure(ctx, need.Tool, need.Version)
+			if err != nil {
+				return Installed{}, fmt.Errorf("toolchain %s %s needs %s: %w", tool, version, need.Tool, err)
+			}
+			env = append(env, req.Env...)
+		}
+	}
 	dir := filepath.Join(m.Root, string(tool), version, m.goos()+"-"+m.goarch())
 	err = m.install(ctx, e, dir, version)
 	if m.OnInstall != nil {
@@ -219,8 +243,9 @@ func (m *Manager) Ensure(ctx context.Context, tool Tool, version string) (Instal
 		in.Bins[name] = filepath.Join(dir, filepath.FromSlash(rel))
 	}
 	if e.Env != nil {
-		in.Env = e.Env(m, dir)
+		env = append(env, e.Env(m, dir)...)
 	}
+	in.Env = env
 	m.mu.Lock()
 	if m.installed == nil {
 		m.installed = map[string]Installed{}

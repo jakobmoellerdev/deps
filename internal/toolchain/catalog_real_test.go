@@ -34,6 +34,9 @@ func TestCatalogResolvesRealDownloads(t *testing.T) {
 		Flutter:   "3.27.1",
 		DotNet:    "9.0",
 		Bazelisk:  "1.30.0", // the first releases shipped no checksum asset
+		Erlang:    "27",     // a major, so Resolve picks the newest build
+		Elixir:    "1.18",   // a line; Resolve pairs it with an OTP major
+		Gleam:     "1.19.2",
 	}
 	for _, tool := range Tools() {
 		t.Run(string(tool), func(t *testing.T) {
