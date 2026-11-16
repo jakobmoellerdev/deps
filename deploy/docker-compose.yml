@@ -44,6 +44,11 @@ services:
     volumes:
       - ./serve.yaml:/etc/deps/serve.yaml:ro
       - deps-cache:/var/lib/deps
+    # Everything written at runtime is the cache volume or /tmp, so the image itself needs
+    # no writable layer.
+    read_only: true
+    tmpfs:
+      - /tmp:exec,mode=1777
     ports:
       - "127.0.0.1:8080:8080"
     healthcheck:

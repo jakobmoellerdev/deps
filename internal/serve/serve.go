@@ -216,9 +216,36 @@ func (v Valkey) TLSConfig() (*tls.Config, error) {
 	return conf, nil
 }
 
+// makeCacheDirs creates every directory the daemon and its tools write to. They all live
+// under the cache volume, which starts empty, so creating them here is what lets the
+// image's root filesystem be mounted read-only: the only other path written at runtime is
+// $TMPDIR, where the post-processors mirror a scope before running the ecosystem tool.
+func (d *Daemon) makeCacheDirs() error {
+	dirs := []string{d.cfg.CacheDir, d.cache.Root, d.tools.Root, d.tools.State}
+	// A HOME inside the cache volume keeps the tools' dotfiles off the root filesystem.
+	if home := os.Getenv("HOME"); home != "" && underCache(d.cfg.CacheDir, home) {
+		dirs = append(dirs, home)
+	}
+	for _, dir := range dirs {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// underCache reports whether p is the cache directory or below it.
+func underCache(cacheDir, p string) bool {
+	rel, err := filepath.Rel(cacheDir, p)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
 // Run starts the HTTP surface, the worker loop and the scheduler duties and returns when ctx
 // ends. With Once it refreshes the inventory, runs every repository that is due and returns.
 func (d *Daemon) Run(ctx context.Context) error {
+	if err := d.makeCacheDirs(); err != nil {
+		return err
+	}
 	if err := d.cache.PruneWork(ctx); err != nil {
 		slog.WarnContext(ctx, "pruning leftover work trees", "err", err)
 	}

@@ -102,7 +102,10 @@ spec:
             periodSeconds: 20
           securityContext:
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false # the toolchains and the mirrors are written at runtime
+            # Everything written at runtime goes to the cache volume (git mirrors, work
+            # trees, toolchains, their caches and $HOME) or to /tmp, where the
+            # post-processors mirror a scope before running an ecosystem tool.
+            readOnlyRootFilesystem: true
             capabilities: {drop: ["ALL"]}
           volumeMounts:
             - {name: config, mountPath: /etc/deps, readOnly: true}

@@ -538,7 +538,10 @@ var mavenEntry = Entry{
 		}
 		major, _, _ := strings.Cut(version, ".")
 		file := "apache-maven-" + version + "-bin.tar.gz"
-		url := "https://dlcdn.apache.org/maven/maven-" + major + "/" + version + "/binaries/" + file
+		// archive.apache.org, not the dlcdn mirror: dlcdn carries only the current release
+		// of each line and drops the tarball of older ones (while keeping their checksum
+		// files, so a checksum-only check would not notice).
+		url := "https://archive.apache.org/dist/maven/maven-" + major + "/" + version + "/binaries/" + file
 		sum, err := m.sibling(ctx, url, ".sha512", file)
 		if err != nil {
 			return Download{}, err

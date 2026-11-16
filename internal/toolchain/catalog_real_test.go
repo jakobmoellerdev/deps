@@ -1,6 +1,7 @@
 package toolchain
 
 import (
+	"net/http"
 	"strings"
 	"testing"
 
@@ -60,6 +61,21 @@ func TestCatalogResolvesRealDownloads(t *testing.T) {
 			}
 			if len(d.Sum) != want || !isHex(d.Sum) {
 				t.Errorf("%s checksum = %q, want %d hex characters", d.Hash, d.Sum, want)
+			}
+			// The artifact itself, not only its checksum: a publisher can keep the checksum
+			// file of a release while dropping the archive (Apache's dlcdn mirror does), and
+			// a checksum-only check would call that healthy.
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodHead, d.URL, http.NoBody)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp, err := m.client().Do(req)
+			if err != nil {
+				t.Fatalf("HEAD %s: %v", d.URL, err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Errorf("HEAD %s: HTTP %d", d.URL, resp.StatusCode)
 			}
 		})
 	}
