@@ -5,11 +5,14 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"git.jakob-moeller.cloud/jakobmoellerdev/deps/internal/toolrun"
 )
 
 // Some publishers ship Linux builds with no digest at all: ruby/ruby-builder (which
@@ -165,5 +168,82 @@ var phpEntry = Entry{
 	Provides: map[string]string{"php": "php"},
 	Env: func(m *Manager, dir string) []string {
 		return []string{pathEnv(dir), "COMPOSER_HOME=" + m.state("composer")}
+	},
+}
+
+// --- nix ---------------------------------------------------------------------
+
+// nixStore is where a nix installation has to live. The released nix is dynamically linked
+// against libraries in its own store path, so the store cannot be relocated: a single-user
+// installation is a writable /nix, which needs no daemon and no root. The deployments mount
+// the cache volume there; without a writable /nix the entry reports nix as not found, which
+// is the behavior of a machine without it.
+const nixStore = "/nix"
+
+var nixEntry = Entry{
+	Tool: Nix,
+	Download: func(ctx context.Context, m *Manager, version, goos, goarch string) (Download, error) {
+		if err := linux(goos, goarch); err != nil {
+			return Download{}, err
+		}
+		v := strings.TrimPrefix(version, "v")
+		file := "nix-" + v + "-" + arch(goarch, "x86_64", "aarch64") + "-linux.tar.xz"
+		url := "https://releases.nixos.org/nix/nix-" + v + "/" + file
+		sum, err := m.sibling(ctx, url, ".sha256", file)
+		if err != nil {
+			return Download{}, err
+		}
+		return Download{URL: url, Sum: sum, Hash: SHA256}, nil
+	},
+	Archive: TarXz,
+	Strip:   1,
+	// The tarball is an installer plus the closure it would install. deps does the
+	// single-user part of that installation itself: copy the closure into /nix/store and
+	// link the nix of this version into the install directory, so Provides can name it.
+	Setup: func(_ context.Context, _ *Manager, dir, version string, _ []Installed) error {
+		store := filepath.Join(nixStore, "store")
+		if err := os.MkdirAll(filepath.Join(nixStore, "var", "nix"), 0o755); err != nil {
+			return fmt.Errorf("%s is not writable, so nix cannot be installed single-user: %w: %w",
+				nixStore, err, exec.ErrNotFound)
+		}
+		if err := os.MkdirAll(store, 0o755); err != nil {
+			return fmt.Errorf("%s: %w: %w", store, err, exec.ErrNotFound)
+		}
+		entries, err := os.ReadDir(filepath.Join(dir, "store"))
+		if err != nil {
+			return err
+		}
+		var nixPath string
+		want := "-nix-" + strings.TrimPrefix(version, "v")
+		for _, e := range entries {
+			src := filepath.Join(dir, "store", e.Name())
+			dst := filepath.Join(store, e.Name())
+			// A store path is immutable and named by its hash, so one that is there already
+			// is the same closure, whichever installation put it there.
+			if _, err := os.Stat(dst); err != nil {
+				if err := toolrun.CopyTree(src, dst, func(string, fs.DirEntry) bool { return false }); err != nil {
+					return err
+				}
+			}
+			if strings.HasSuffix(e.Name(), want) {
+				nixPath = filepath.Join(dst, "bin", "nix")
+			}
+		}
+		if nixPath == "" {
+			return fmt.Errorf("no nix-%s in the downloaded closure", version)
+		}
+		if err := os.MkdirAll(filepath.Join(dir, "bin"), 0o755); err != nil {
+			return err
+		}
+		return os.Symlink(nixPath, filepath.Join(dir, "bin", "nix"))
+	},
+	Provides: map[string]string{"nix": "bin/nix"},
+	Env: func(_ *Manager, dir string) []string {
+		return []string{
+			pathEnv(filepath.Join(dir, "bin")),
+			// A single-user installation has no build users; without this nix warns about
+			// the missing nixbld group on every invocation.
+			"NIX_CONFIG=build-users-group =",
+		}
 	},
 }

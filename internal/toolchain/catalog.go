@@ -20,9 +20,9 @@ import (
 // The tools of the catalog. A tool is here only when its download can be verified: against
 // the publisher's own checksum artifact, against the Go module checksum database for one
 // built from source (jb), or against a digest deps publishes itself for the few builds that
-// come with none (Ruby and PHP, see pinned.go). nix stays out entirely: it needs a daemon
-// or a root-owned store, and the manager that needs it reports it as not found, exactly as
-// on a machine without it.
+// come with none (Ruby and PHP, see pinned.go). Every tool of the catalog is here; a
+// manager whose tool deps cannot install reports it as not found, exactly as on a machine
+// without it.
 const (
 	Go        Tool = "go"
 	Node      Tool = "node"
@@ -46,6 +46,7 @@ const (
 	JB        Tool = "jb"
 	Ruby      Tool = "ruby"
 	PHP       Tool = "php"
+	Nix       Tool = "nix"
 )
 
 // Catalog is every installable tool by name.
@@ -72,6 +73,7 @@ var Catalog = map[Tool]Entry{
 	JB:        jbEntry,
 	Ruby:      rubyEntry,
 	PHP:       phpEntry,
+	Nix:       nixEntry,
 }
 
 // provider indexes the catalog by command name: which tool provides `npx`, `mvn`, `tofu`.

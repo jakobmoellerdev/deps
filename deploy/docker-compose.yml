@@ -44,6 +44,8 @@ services:
     volumes:
       - ./serve.yaml:/etc/deps/serve.yaml:ro
       - deps-cache:/var/lib/deps
+      # A nix installation cannot be relocated: single-user nix needs a writable /nix.
+      - deps-nix:/nix
     # Everything written at runtime is the cache volume or /tmp, so the image itself needs
     # no writable layer.
     read_only: true
@@ -61,3 +63,4 @@ services:
 
 volumes:
   deps-cache:
+  deps-nix:

@@ -110,6 +110,8 @@ spec:
           volumeMounts:
             - {name: config, mountPath: /etc/deps, readOnly: true}
             - {name: cache, mountPath: /var/lib/deps}
+            # A nix installation cannot be relocated, so a single-user nix needs /nix itself.
+            - {name: cache, mountPath: /nix, subPath: nix}
             - {name: tmp, mountPath: /tmp}
       volumes:
         - name: config

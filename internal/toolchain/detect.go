@@ -67,7 +67,7 @@ var toolVersionNames = map[string]Tool{
 	"bazelisk": Bazelisk, "bazel": Bazelisk,
 	"erlang": Erlang, "elixir": Elixir, "gleam": Gleam,
 	"jb": JB, "jsonnet-bundler": JB,
-	"ruby": Ruby, "php": PHP,
+	"ruby": Ruby, "php": PHP, "nix": Nix,
 }
 
 // toolVersions reads .tool-versions (asdf, mise): one `<tool> <version>` line each, the

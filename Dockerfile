@@ -31,14 +31,17 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates git tar xz-utils \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --uid 65532 --no-create-home --home-dir /var/lib/deps/home --shell /usr/sbin/nologin deps \
-    && mkdir -p /var/lib/deps && chown 65532:65532 /var/lib/deps
+    && mkdir -p /var/lib/deps /nix && chown 65532:65532 /var/lib/deps /nix
 COPY --from=build /out/deps /usr/local/bin/deps
 # Repository code runs in the worker (gradle, bundler, setup.py), so the process is not root.
 USER 65532:65532
 # Both paths are created by the daemon at startup; nothing outside them is ever written.
 ENV HOME=/var/lib/deps/home \
     TMPDIR=/tmp
-VOLUME /var/lib/deps
+# /nix is a mount of its own: a nix installation cannot be relocated (its binaries are linked
+# against their own store paths), so a single-user nix needs a writable /nix. Without that
+# mount the toolchain reports nix as not found, which is the behaviour of a machine without it.
+VOLUME /var/lib/deps /nix
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/deps"]
 CMD ["serve"]

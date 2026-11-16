@@ -41,6 +41,7 @@ func TestCatalogResolvesRealDownloads(t *testing.T) {
 		// Self-digested; the versions must be ones digests.json covers.
 		Ruby: PinnedVersions(Ruby)[0],
 		PHP:  PinnedVersions(PHP)[0],
+		Nix:  "2.35.6",
 	}
 	for _, tool := range Tools() {
 		t.Run(string(tool), func(t *testing.T) {
