@@ -35,11 +35,11 @@ jobs:
             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$AUD" | jq -r .value)
           echo "::add-mask::$jwt"
           echo "jwt=$jwt" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           token: ${{ steps.jwt.outputs.jwt }}
       # The published release, as users run it; deps bumps this pin itself after each release.
-      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@v0.18.1
+      - uses: https://git.jakob-moeller.cloud/jakobmoellerdev/deps@9bb024709b2b0e611561117f48e7edd58f2d0e74 # v0.18.1
         with:
           token: ${{ steps.jwt.outputs.jwt }}
           signing-key: ${{ secrets.DEPS_SIGNING_KEY }}
@@ -56,14 +56,14 @@ jobs:
       group: deps-dry-run-${{ github.event.pull_request.number }}
       cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: pr
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.base.ref }}
           path: base
-      - uses: actions/setup-go@v7.1.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: pr/go.mod
           cache: false # shared Go cache volumes on the runners, see ci.yml

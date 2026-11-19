@@ -3,6 +3,9 @@
 version: 1
 dashboard:
   enabled: true
+# Actions are pinned to the commit SHA with the version in a comment, so a moved tag cannot
+# change what CI runs; deps refreshes both the digest and the comment.
+pin: digest
 # The deps release pinned in the examples of the README and the docs. They share the name of the
 # action pin in .gitea/workflows/deps.yml, Formula/deps.rb and flake.nix, so a deps release is
 # one PR across all of them.
