@@ -1,7 +1,7 @@
 {
   description = "Renovate-style dependency update pull requests from one static binary";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.11";
 
   outputs =
     { self, nixpkgs }:
